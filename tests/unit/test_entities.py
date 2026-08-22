@@ -19,7 +19,7 @@ def test_create_project_entity() -> None:
     assert entity.title == "Build TrajectoryOS V0"
     assert entity.entity_type is EntityType.PROJECT
     assert entity.status is EntityStatus.ACTIVE
-    assert entity.source is SourceKind.USER
+    assert entity.source is SourceKind.USER_CONFIRMED
     assert entity.confidence == 1.0
 
 

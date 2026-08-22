@@ -43,7 +43,7 @@ class EntityStatus(StrEnum):
 class SourceKind(StrEnum):
     """Origin of an entity or assertion."""
 
-    USER = "user"
+    USER_CONFIRMED = "user_confirmed"
     IMPORTED = "imported"
     AI_INFERRED = "ai_inferred"
     AI_RECOMMENDED = "ai_recommended"
@@ -60,7 +60,7 @@ class TrajectoryEntity(BaseModel):
     description: str | None = None
     status: EntityStatus = EntityStatus.INCUBATOR
 
-    source: SourceKind = SourceKind.USER
+    source: SourceKind = SourceKind.USER_CONFIRMED
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
 
     created_at: datetime = Field(
