@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated, Literal, Protocol
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from trajectory_os.domain.entities import EntityType, SourceKind, TrajectoryEntity
 
@@ -19,6 +19,8 @@ class EntityClassificationProposal(BaseModel):
     A proposal never mutates the canonical entity and never becomes
     ``USER_CONFIRMED`` provenance on its own.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     entity_id: UUID
     proposed_entity_type: EntityType
@@ -62,7 +64,9 @@ def classify_entity(
     if not isinstance(proposal, EntityClassificationProposal):
         raise TypeError("classifier must return an EntityClassificationProposal")
     # Revalidate the current state from serialized data; the returned
-    # instance must not be trusted as-is (pydantic models are mutable).
+    # instance must not be trusted as-is. The model is frozen, but an
+    # untrusted classifier could still bypass assignment protection (e.g.
+    # object.__setattr__), so field-level validation still applies.
     revalidated = EntityClassificationProposal.model_validate(proposal.model_dump())
     if revalidated.entity_id != entity.id:
         raise ValueError("proposal targets a different entity than the classified one")

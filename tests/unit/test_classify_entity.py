@@ -150,7 +150,12 @@ def test_mutating_classifier_cannot_change_canonical_entity() -> None:
 
 
 class CorruptingClassifier:
-    """Deliberately untrusted fake: builds a valid proposal, then mutates it."""
+    """Deliberately untrusted fake: builds a valid proposal, then corrupts it.
+
+    The proposal model is frozen, so ordinary assignment is blocked; these
+    fakes bypass assignment protection with object.__setattr__ to simulate a
+    corrupted model instance arriving from an untrusted classifier.
+    """
 
     def __init__(self, entity_id: object) -> None:
         self.entity_id = entity_id
@@ -165,8 +170,8 @@ class CorruptingClassifier:
             model_id="fake-model",
         )
         # Corrupt after construction, after its own validation already ran.
-        proposal.confidence = 1.7
-        proposal.source = SourceKind.IMPORTED
+        object.__setattr__(proposal, "confidence", 1.7)
+        object.__setattr__(proposal, "source", SourceKind.IMPORTED)
         return proposal
 
 
@@ -191,11 +196,37 @@ def test_corrupted_confidence_alone_is_still_rejected() -> None:
                 classifier_id="fake-classifier",
                 model_id="fake-model",
             )
-            proposal.confidence = 2.0
+            object.__setattr__(proposal, "confidence", 2.0)
             return proposal
 
     with pytest.raises(ValidationError):
         classify_entity(entity, CorruptingConfidenceOnlyClassifier())
+
+
+def test_returned_proposal_confidence_cannot_be_mutated() -> None:
+    entity = make_entity()
+
+    proposal = classify_entity(entity, RecordingClassifier(EntityType.PROGRAM, entity.id))
+    before = proposal.model_dump()
+
+    with pytest.raises(ValidationError):
+        proposal.confidence = 1.7
+
+    assert proposal.model_dump() == before
+    assert proposal.confidence == 0.4
+
+
+def test_returned_proposal_source_cannot_be_mutated() -> None:
+    entity = make_entity()
+
+    proposal = classify_entity(entity, RecordingClassifier(EntityType.PROGRAM, entity.id))
+    before = proposal.model_dump()
+
+    with pytest.raises(ValidationError):
+        proposal.source = SourceKind.IMPORTED
+
+    assert proposal.model_dump() == before
+    assert proposal.source is SourceKind.AI_RECOMMENDED
 
 
 class MalformedClassifier:
