@@ -1,5 +1,10 @@
 """Canonical domain model for TrajectoryOS."""
 
+from trajectory_os.domain.classification import (
+    EntityClassificationProposal,
+    EntityClassifier,
+    classify_entity,
+)
 from trajectory_os.domain.entities import (
     EntityStatus,
     EntityType,
@@ -10,6 +15,8 @@ from trajectory_os.domain.portfolio import Portfolio
 from trajectory_os.domain.relations import RelationType, TrajectoryRelation
 
 __all__ = [
+    "EntityClassificationProposal",
+    "EntityClassifier",
     "EntityStatus",
     "EntityType",
     "Portfolio",
@@ -17,4 +24,5 @@ __all__ = [
     "SourceKind",
     "TrajectoryEntity",
     "TrajectoryRelation",
+    "classify_entity",
 ]
