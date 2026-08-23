@@ -25,11 +25,5 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --dev
 
-      - name: Run tests
-        run: uv run pytest
-
-      - name: Run Ruff
-        run: uv run ruff check .
-
-      - name: Run mypy
-        run: uv run mypy src
+      - name: Run canonical quality gate
+        run: bash scripts/quality.sh
