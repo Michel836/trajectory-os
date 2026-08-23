@@ -1,0 +1,83 @@
+name: Feature
+
+description: Propose a focused TrajectoryOS feature or milestone increment
+
+title: "feat: "
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for a focused, reviewable change. Keep scope small enough to be implemented, tested, reviewed, and demonstrated in one pull request where practical.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What observable outcome should be achieved?
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: What is intentionally out of scope?
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: List observable, testable evidence of success.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Architecture, dependency, compatibility, data, security, or human-approval constraints.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Required evidence
+      description: What executable or reproducible demonstration will prove completion?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: architecture_change
+    attributes:
+      label: Architecture change?
+      description: Does this materially change architecture, persistence, provider boundaries, security posture, or core domain semantics?
+      options:
+        - "No"
+        - "Yes — ADR required"
+    validations:
+      required: true
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks / uncertainties
+      description: Known risks, assumptions, unknowns, or areas requiring review.
+
+  - type: checkboxes
+    id: readiness
+    attributes:
+      label: Ready for implementation
+      options:
+        - label: The scope is focused and reviewable.
+          required: true
+        - label: Acceptance criteria are testable or demonstrable.
+          required: true
+        - label: No dependency is requested without a demonstrated need.
+          required: true
