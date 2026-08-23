@@ -38,7 +38,7 @@ def _to_text(value: UUID) -> str:
 
 
 def _to_datetime_text(value: datetime) -> str:
-    """Store an aware datetime as ISO-8601 text, preserving its UTC offset."""
+    """Store a datetime as ISO-8601 text, preserving its UTC offset when present."""
     return value.isoformat()
 
 

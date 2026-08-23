@@ -235,6 +235,43 @@ def test_empty_portfolio_round_trip(tmp_path: Path) -> None:
     fresh.close()
 
 
+def test_cross_portfolio_relation_is_rejected(tmp_path: Path) -> None:
+    """The database itself must reject relations whose endpoints span portfolios.
+
+    Both endpoint entities exist in the database; only the composite
+    (portfolio_id, id) foreign key can reject this. The old standalone
+    source_id/target_id foreign keys would have accepted the insert.
+    """
+    database = tmp_path / "portfolio.db"
+    first = _build_portfolio()
+    second = _build_portfolio()
+
+    repository = SqlitePortfolioRepository(database)
+    repository.save(first)
+    repository.save(second)
+
+    try:
+        with repository.engine.begin() as connection:
+            connection.execute(
+                insert(RelationRow).values(
+                    id=str(uuid4()),
+                    portfolio_id=str(first.id),
+                    source_id=str(first.entities[0].id),
+                    target_id=str(second.entities[0].id),
+                    relation_type=RelationType.BELONGS_TO.value,
+                    source=SourceKind.USER_CONFIRMED.value,
+                    confidence=0.5,
+                )
+            )
+    except IntegrityError:
+        pass
+    else:
+        msg = "cross-portfolio relation was not rejected by the database"
+        raise AssertionError(msg)
+    finally:
+        repository.close()
+
+
 def test_portfolio_identity_is_stable(tmp_path: Path) -> None:
     portfolio = _build_portfolio()
     assert isinstance(portfolio.id, UUID)

@@ -4,7 +4,8 @@ The storage representation is intentionally explicit:
 
 - UUID values are stored as 36-character text (RFC 4122 string form);
 - domain enums are stored by their string value;
-- aware datetimes are stored as ISO-8601 text preserving the UTC offset;
+- datetime values are stored as ISO-8601 text, preserving the timezone
+  offset when present; reconstruction uses ``datetime.fromisoformat()``;
 - confidence is stored as a float.
 
 Semantic reconstruction of domain values happens explicitly at the
@@ -14,7 +15,7 @@ pretending to have native UUID, enum, or timezone-aware datetime semantics.
 
 from __future__ import annotations
 
-from sqlalchemy import Float, ForeignKey, String
+from sqlalchemy import Float, ForeignKey, ForeignKeyConstraint, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -35,6 +36,12 @@ class EntityRow(Base):
     """One trajectory entity, owned by a portfolio."""
 
     __tablename__ = "entities"
+
+    # The composite unique constraint is the referenced target of the
+    # same-portfolio relation foreign keys below.
+    __table_args__ = (
+        UniqueConstraint("portfolio_id", "id", name="uq_entities_portfolio_id_entity_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     portfolio_id: Mapped[str] = mapped_column(
@@ -57,22 +64,32 @@ class RelationRow(Base):
 
     __tablename__ = "relations"
 
+    # The composite foreign keys prove that both endpoints are owned by
+    # this relation's portfolio, not merely that the entities exist
+    # somewhere in the database.
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["portfolio_id", "source_id"],
+            ["entities.portfolio_id", "entities.id"],
+            name="fk_relations_portfolio_id_source_entity",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["portfolio_id", "target_id"],
+            ["entities.portfolio_id", "entities.id"],
+            name="fk_relations_portfolio_id_target_entity",
+            ondelete="CASCADE",
+        ),
+    )
+
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     portfolio_id: Mapped[str] = mapped_column(
         ForeignKey("portfolios.id", ondelete="CASCADE"),
         index=True,
         nullable=False,
     )
-    source_id: Mapped[str] = mapped_column(
-        ForeignKey("entities.id", ondelete="CASCADE"),
-        index=True,
-        nullable=False,
-    )
-    target_id: Mapped[str] = mapped_column(
-        ForeignKey("entities.id", ondelete="CASCADE"),
-        index=True,
-        nullable=False,
-    )
+    source_id: Mapped[str] = mapped_column(String(), index=True, nullable=False)
+    target_id: Mapped[str] = mapped_column(String(), index=True, nullable=False)
     relation_type: Mapped[str] = mapped_column(String(), nullable=False)
     source: Mapped[str] = mapped_column(String(), nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
