@@ -11,6 +11,20 @@ Current development target:
 The immediate objective is to transform unstructured intentions, projects,
 tasks, decisions and ideas into a reliable structured portfolio.
 
+## Canonical development process
+
+All substantial work must follow the repository development lifecycle defined in:
+
+- `docs/development/PROCESS.md`
+- `docs/development/DEFINITION_OF_DONE.md`
+- `docs/development/AGENT_WORKFLOW.md`
+
+The canonical sequence is:
+
+**Issue → branch → implementation → quality gate → review → pull request → CI → merge → evidence**
+
+Do not bypass this lifecycle for convenience.
+
 ## Core engineering principles
 
 1. Think V5. Build V0.
@@ -31,7 +45,7 @@ tasks, decisions and ideas into a reliable structured portfolio.
 - Never commit secrets.
 - Never commit personal or client data.
 - Every feature requires tests.
-- Run tests before declaring work complete.
+- Run the canonical quality gate before declaring work complete.
 - Prefer typed Python.
 - Prefer explicit domain models.
 - Keep provider-specific integrations behind adapters.
@@ -39,14 +53,32 @@ tasks, decisions and ideas into a reliable structured portfolio.
 - Do not introduce dependencies without demonstrated need.
 - Prefer simple deterministic components before agentic complexity.
 - Preserve provenance and confidence for AI-generated information.
+- Keep changes focused on the linked issue.
+- Do not weaken tests, linting, typing, security, or CI to make a change pass.
+- Do not merge or force-push protected history unless explicitly authorized.
 
 ## Required quality gate
 
-Before declaring a task complete:
+Humans, coding agents, and CI must use the same command:
 
-    uv run pytest
-    uv run ruff check .
-    uv run mypy src
+```bash
+bash scripts/quality.sh
+```
+
+This script is the canonical executable definition of repository quality checks.
+Do not duplicate or silently replace the checks elsewhere.
+
+## Agent task contract
+
+Before substantial implementation, establish:
+
+- GOAL
+- NON-GOALS
+- ACCEPTANCE CRITERIA
+- CONSTRAINTS
+- REQUIRED EVIDENCE
+
+Read the linked Issue and relevant ADRs before editing.
 
 ## Agent handoff format
 
@@ -60,3 +92,6 @@ Every substantial agent task should finish with:
 - UNCERTAINTIES
 - RISKS
 - RECOMMENDED NEXT ACTION
+
+A task is not complete because an agent reports success. It is complete only when the
+acceptance criteria and applicable items in `docs/development/DEFINITION_OF_DONE.md` are satisfied.
