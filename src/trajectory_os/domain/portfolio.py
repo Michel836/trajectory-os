@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Self
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -14,6 +14,7 @@ from trajectory_os.domain.relations import TrajectoryRelation
 class Portfolio(BaseModel):
     """Collection of entities and relations forming a coherent trajectory graph."""
 
+    id: UUID = Field(default_factory=uuid4)
     name: str = Field(min_length=1)
     entities: list[TrajectoryEntity] = Field(default_factory=list)
     relations: list[TrajectoryRelation] = Field(default_factory=list)
