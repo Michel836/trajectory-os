@@ -18,6 +18,14 @@ from trajectory_os.domain.work_breakdown import (
     WorkBreakdownNode,
     WorkBreakdownStructure,
     build_work_breakdown,
+    is_work_breakdown_containment_allowed,
+)
+from trajectory_os.domain.work_breakdown_proposals import (
+    ProposedWorkNode,
+    ValidatedWorkBreakdownProposal,
+    WorkBreakdownProposal,
+    WorkBreakdownProposalError,
+    validate_work_breakdown_proposal,
 )
 
 __all__ = [
@@ -26,13 +34,19 @@ __all__ = [
     "EntityStatus",
     "EntityType",
     "Portfolio",
+    "ProposedWorkNode",
     "RelationType",
     "SourceKind",
     "TrajectoryEntity",
     "TrajectoryRelation",
+    "ValidatedWorkBreakdownProposal",
     "WorkBreakdownError",
     "WorkBreakdownNode",
+    "WorkBreakdownProposal",
+    "WorkBreakdownProposalError",
     "WorkBreakdownStructure",
     "build_work_breakdown",
     "classify_entity",
+    "is_work_breakdown_containment_allowed",
+    "validate_work_breakdown_proposal",
 ]
