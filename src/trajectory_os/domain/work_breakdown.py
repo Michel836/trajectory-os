@@ -81,6 +81,20 @@ _ALLOWED_CONTAINMENT: Final[frozenset[tuple[EntityType, EntityType]]] = (
 )
 
 
+def is_work_breakdown_containment_allowed(
+    parent_type: EntityType,
+    child_type: EntityType,
+) -> bool:
+    """Report whether ``parent_type`` may directly contain ``child_type`` in a WBS.
+
+    This is the single public source of the WBS containment grammar and
+    the only predicate consumers outside this module should use to decide
+    containment validity.
+    """
+
+    return (parent_type, child_type) in _ALLOWED_CONTAINMENT
+
+
 def _children_by_parent(portfolio: Portfolio) -> dict[UUID, set[UUID]]:
     """Map each ``BELONGS_TO`` parent id to the set of its child ids.
 
@@ -125,7 +139,7 @@ def _valid_wbs_parents(
         if child is None or parent is None:
             continue
 
-        if (parent.entity_type, child.entity_type) not in _ALLOWED_CONTAINMENT:
+        if not is_work_breakdown_containment_allowed(parent.entity_type, child.entity_type):
             continue
 
         valid.setdefault(relation.source_id, set()).add(relation.target_id)
@@ -183,7 +197,7 @@ def _discover_from_root(
 
         node_type = entities[node_id].entity_type
 
-        if (node_type, child_type) not in _ALLOWED_CONTAINMENT:
+        if not is_work_breakdown_containment_allowed(node_type, child_type):
             raise WorkBreakdownError(
                 "invalid WBS containment: "
                 f"{node_type.value} may not contain {child_type.value} "
