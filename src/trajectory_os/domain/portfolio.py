@@ -7,8 +7,13 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
-from trajectory_os.domain.entities import TrajectoryEntity
-from trajectory_os.domain.relations import TrajectoryRelation
+from trajectory_os.domain.entities import (
+    EntityStatus,
+    EntityType,
+    SourceKind,
+    TrajectoryEntity,
+)
+from trajectory_os.domain.relations import RelationType, TrajectoryRelation
 
 
 class Portfolio(BaseModel):
@@ -58,3 +63,73 @@ class Portfolio(BaseModel):
             (entity for entity in self.entities if entity.id == entity_id),
             None,
         )
+
+    def filter_entities(
+        self,
+        *,
+        entity_type: EntityType | None = None,
+        status: EntityStatus | None = None,
+        source: SourceKind | None = None,
+    ) -> list[TrajectoryEntity]:
+        """Return entities matching all supplied equality filters.
+
+        Filters combine with logical AND and are evaluated against the
+        canonical enum values. Order follows ``Portfolio.entities``. The
+        portfolio is not mutated and a new list is always returned.
+        """
+
+        return [
+            entity
+            for entity in self.entities
+            if (entity_type is None or entity.entity_type == entity_type)
+            and (status is None or entity.status == status)
+            and (source is None or entity.source == source)
+        ]
+
+    def _require_member(self, entity_id: UUID) -> None:
+        """Raise ``ValueError`` when ``entity_id`` is not part of this portfolio."""
+
+        if self.get_entity(entity_id) is None:
+            raise ValueError(f"unknown entity in portfolio: {entity_id}")
+
+    def outgoing_relations(
+        self,
+        entity_id: UUID,
+        *,
+        relation_type: RelationType | None = None,
+    ) -> list[TrajectoryRelation]:
+        """Return relations for which ``entity_id`` is the source.
+
+        Relations are returned in ``Portfolio.relations`` order. The
+        portfolio is not mutated and a new list is always returned.
+        """
+
+        self._require_member(entity_id)
+
+        return [
+            relation
+            for relation in self.relations
+            if relation.source_id == entity_id
+            and (relation_type is None or relation.relation_type == relation_type)
+        ]
+
+    def incoming_relations(
+        self,
+        entity_id: UUID,
+        *,
+        relation_type: RelationType | None = None,
+    ) -> list[TrajectoryRelation]:
+        """Return relations for which ``entity_id`` is the target.
+
+        Relations are returned in ``Portfolio.relations`` order. The
+        portfolio is not mutated and a new list is always returned.
+        """
+
+        self._require_member(entity_id)
+
+        return [
+            relation
+            for relation in self.relations
+            if relation.target_id == entity_id
+            and (relation_type is None or relation.relation_type == relation_type)
+        ]
