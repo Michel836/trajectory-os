@@ -47,10 +47,13 @@ def _to_domain_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
-def _entity_to_row(portfolio_id: UUID, entity: TrajectoryEntity) -> dict[str, Any]:
+def _entity_to_row(
+    portfolio_id: UUID, entity: TrajectoryEntity, position: int
+) -> dict[str, Any]:
     return {
         "id": _to_text(entity.id),
         "portfolio_id": _to_text(portfolio_id),
+        "position": position,
         "entity_type": entity.entity_type.value,
         "title": entity.title,
         "description": entity.description,
@@ -76,10 +79,13 @@ def _entity_from_row(row: EntityRow) -> TrajectoryEntity:
     )
 
 
-def _relation_to_row(portfolio_id: UUID, relation: TrajectoryRelation) -> dict[str, Any]:
+def _relation_to_row(
+    portfolio_id: UUID, relation: TrajectoryRelation, position: int
+) -> dict[str, Any]:
     return {
         "id": _to_text(relation.id),
         "portfolio_id": _to_text(portfolio_id),
+        "position": position,
         "source_id": _to_text(relation.source_id),
         "target_id": _to_text(relation.target_id),
         "relation_type": relation.relation_type.value,
@@ -178,15 +184,15 @@ class SqlitePortfolioRepository:
             session.execute(delete(EntityRow).where(EntityRow.portfolio_id == portfolio_id))
 
             entity_rows = [
-                _entity_to_row(portfolio.id, entity)
-                for entity in portfolio.entities
+                _entity_to_row(portfolio.id, entity, position)
+                for position, entity in enumerate(portfolio.entities)
             ]
             if entity_rows:
                 session.execute(insert(EntityRow), entity_rows)
 
             relation_rows = [
-                _relation_to_row(portfolio.id, relation)
-                for relation in portfolio.relations
+                _relation_to_row(portfolio.id, relation, position)
+                for position, relation in enumerate(portfolio.relations)
             ]
             if relation_rows:
                 session.execute(insert(RelationRow), relation_rows)
@@ -205,15 +211,22 @@ class SqlitePortfolioRepository:
             if header is None:
                 return None
 
+            # The portfolio snapshot lists are ordered canonically, and the
+            # saved positions record that order; load it back explicitly
+            # rather than relying on SQLite's default row order.
             entity_rows: list[EntityRow] = list(
                 session.scalars(
-                    select(EntityRow).where(EntityRow.portfolio_id == stored_id)
+                    select(EntityRow)
+                    .where(EntityRow.portfolio_id == stored_id)
+                    .order_by(EntityRow.position)
                 ).all()
             )
 
             relation_rows: list[RelationRow] = list(
                 session.scalars(
-                    select(RelationRow).where(RelationRow.portfolio_id == stored_id)
+                    select(RelationRow)
+                    .where(RelationRow.portfolio_id == stored_id)
+                    .order_by(RelationRow.position)
                 ).all()
             )
 
