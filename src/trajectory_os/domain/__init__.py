@@ -13,6 +13,12 @@ from trajectory_os.domain.entities import (
 )
 from trajectory_os.domain.portfolio import Portfolio
 from trajectory_os.domain.relations import RelationType, TrajectoryRelation
+from trajectory_os.domain.work_breakdown import (
+    WorkBreakdownError,
+    WorkBreakdownNode,
+    WorkBreakdownStructure,
+    build_work_breakdown,
+)
 
 __all__ = [
     "EntityClassificationProposal",
@@ -24,5 +30,9 @@ __all__ = [
     "SourceKind",
     "TrajectoryEntity",
     "TrajectoryRelation",
+    "WorkBreakdownError",
+    "WorkBreakdownNode",
+    "WorkBreakdownStructure",
+    "build_work_breakdown",
     "classify_entity",
 ]
