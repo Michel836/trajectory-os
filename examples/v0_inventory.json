@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "source_namespace": "trajectory-os-demo",
+  "portfolio": {
+    "external_id": "trajectory-os-v0-demo",
+    "name": "TrajectoryOS V0 Demo Inventory"
+  },
+  "entities": [
+    {
+      "external_id": "goal-v0",
+      "entity_type": "goal",
+      "title": "Prove the TrajectoryOS V0 gate",
+      "description": "Show that unstructured work can become a reliable, queryable, deterministic portfolio without ML.",
+      "status": "active",
+      "confidence": 1.0,
+      "created_at": "2026-01-01T09:00:00Z",
+      "updated_at": "2026-01-01T09:00:00Z"
+    },
+    {
+      "external_id": "program-v0",
+      "entity_type": "program",
+      "title": "TrajectoryOS V0 — Trajectory Mirror",
+      "description": "Transform intentions, projects, decisions and ideas into a structured portfolio.",
+      "status": "active",
+      "confidence": 1.0,
+      "created_at": "2026-01-01T09:05:00Z",
+      "updated_at": "2026-01-01T09:05:00Z"
+    },
+    {
+      "external_id": "project-v06",
+      "entity_type": "project",
+      "title": "V0.6 inventory proof",
+      "description": "Prove the V0 inventory end-to-end with a public fixture and local privacy guard.",
+      "status": "active",
+      "confidence": 1.0,
+      "created_at": "2026-01-01T09:10:00Z",
+      "updated_at": "2026-01-15T10:00:00Z"
+    },
+    {
+      "external_id": "deliverable-v0-gate",
+      "entity_type": "deliverable",
+      "title": "Executable V0 gate evidence",
+      "description": "Commands and outputs that demonstrate the V0 gate is real, not asserted.",
+      "status": "active",
+      "confidence": 0.95,
+      "created_at": "2026-01-01T09:15:00Z",
+      "updated_at": "2026-01-01T09:15:00Z"
+    },
+    {
+      "external_id": "wp-inventory-proof",
+      "entity_type": "work_package",
+      "title": "Build public inventory evidence",
+      "description": "Create the public fixture and verify it round-trips through the importer unchanged.",
+      "status": "active",
+      "confidence": 0.95,
+      "created_at": "2026-01-01T09:20:00Z",
+      "updated_at": "2026-01-01T09:20:00Z"
+    },
+    {
+      "external_id": "task-public-fixture",
+      "entity_type": "task",
+      "title": "Create public inventory fixture",
+      "description": "Author examples/v0_inventory.json with the V0.3 ImportEnvelope schema. No private data.",
+      "status": "completed",
+      "confidence": 1.0,
+      "created_at": "2026-01-01T09:25:00Z",
+      "updated_at": "2026-01-15T09:30:00Z"
+    },
+    {
+      "external_id": "task-roundtrip",
+      "entity_type": "task",
+      "title": "Verify persistence round-trip",
+      "description": "Import the fixture, persist it locally, and confirm an identical read-back.",
+      "status": "incubator",
+      "confidence": 0.8,
+      "created_at": "2026-01-01T09:30:00Z",
+      "updated_at": "2026-01-01T09:30:00Z"
+    },
+    {
+      "external_id": "decision-public-private",
+      "entity_type": "decision",
+      "title": "Separate public demo data from private local inventory",
+      "description": "Public fixtures live in the repository; local data stays out of version control.",
+      "status": "completed",
+      "confidence": 1.0,
+      "created_at": "2026-01-01T09:35:00Z",
+      "updated_at": "2026-01-01T09:35:00Z"
+    },
+    {
+      "external_id": "research-query-proof",
+      "entity_type": "research",
+      "title": "Validate portfolio query coverage",
+      "description": "Check that the deterministic query methods cover the concepts a V0 inventory must answer.",
+      "status": "active",
+      "confidence": 0.9,
+      "created_at": "2026-01-01T09:40:00Z",
+      "updated_at": "2026-01-01T09:40:00Z"
+    },
+    {
+      "external_id": "waiting-ci",
+      "entity_type": "waiting",
+      "title": "GitHub CI confirmation",
+      "description": "Waiting on CI to confirm the quality gate passes before merge.",
+      "status": "waiting",
+      "confidence": 0.9,
+      "created_at": "2026-01-01T09:45:00Z",
+      "updated_at": "2026-01-15T11:00:00Z"
+    },
+    {
+      "external_id": "resource-import-schema",
+      "entity_type": "resource",
+      "title": "V0.3 JSON import schema",
+      "description": "ImportEnvelope: schema_version 1, portfolio header, entities, relations.",
+      "status": "active",
+      "confidence": 1.0,
+      "created_at": "2026-01-01T09:50:00Z",
+      "updated_at": "2026-01-01T09:50:00Z"
+    },
+    {
+      "external_id": "idea-v1",
+      "entity_type": "idea",
+      "title": "Transition from V0 mirror to V1 execution",
+      "description": "Once the mirror is trusted, layer adaptive execution and decision intelligence on top.",
+      "status": "incubator",
+      "confidence": 0.6,
+      "created_at": "2026-01-01T09:55:00Z",
+      "updated_at": "2026-01-01T09:55:00Z"
+    }
+  ],
+  "relations": [
+    {
+      "external_id": "rel-program-v0-contributes-to-goal-v0",
+      "source_external_id": "program-v0",
+      "target_external_id": "goal-v0",
+      "relation_type": "contributes_to",
+      "confidence": 1.0
+    },
+    {
+      "external_id": "rel-project-v06-belongs-to-program-v0",
+      "source_external_id": "project-v06",
+      "target_external_id": "program-v0",
+      "relation_type": "belongs_to",
+      "confidence": 1.0
+    },
+    {
+      "external_id": "rel-project-v06-produces-deliverable-v0-gate",
+      "source_external_id": "project-v06",
+      "target_external_id": "deliverable-v0-gate",
+      "relation_type": "produces",
+      "confidence": 0.95
+    },
+    {
+      "external_id": "rel-wp-inventory-proof-belongs-to-project-v06",
+      "source_external_id": "wp-inventory-proof",
+      "target_external_id": "project-v06",
+      "relation_type": "belongs_to",
+      "confidence": 1.0
+    },
+    {
+      "external_id": "rel-task-public-fixture-belongs-to-wp-inventory-proof",
+      "source_external_id": "task-public-fixture",
+      "target_external_id": "wp-inventory-proof",
+      "relation_type": "belongs_to",
+      "confidence": 1.0
+    },
+    {
+      "external_id": "rel-task-roundtrip-belongs-to-wp-inventory-proof",
+      "source_external_id": "task-roundtrip",
+      "target_external_id": "wp-inventory-proof",
+      "relation_type": "belongs_to",
+      "confidence": 1.0
+    },
+    {
+      "external_id": "rel-task-public-fixture-uses-resource-import-schema",
+      "source_external_id": "task-public-fixture",
+      "target_external_id": "resource-import-schema",
+      "relation_type": "uses",
+      "confidence": 1.0
+    },
+    {
+      "external_id": "rel-task-roundtrip-requires-task-public-fixture",
+      "source_external_id": "task-roundtrip",
+      "target_external_id": "task-public-fixture",
+      "relation_type": "requires",
+      "confidence": 1.0
+    },
+    {
+      "external_id": "rel-task-public-fixture-precedes-task-roundtrip",
+      "source_external_id": "task-public-fixture",
+      "target_external_id": "task-roundtrip",
+      "relation_type": "precedes",
+      "confidence": 1.0
+    },
+    {
+      "external_id": "rel-research-query-proof-contributes-to-project-v06",
+      "source_external_id": "research-query-proof",
+      "target_external_id": "project-v06",
+      "relation_type": "contributes_to",
+      "confidence": 0.9
+    },
+    {
+      "external_id": "rel-waiting-ci-waiting-for-task-roundtrip",
+      "source_external_id": "waiting-ci",
+      "target_external_id": "task-roundtrip",
+      "relation_type": "waiting_for",
+      "confidence": 0.9
+    },
+    {
+      "external_id": "rel-decision-public-private-related-to-project-v06",
+      "source_external_id": "decision-public-private",
+      "target_external_id": "project-v06",
+      "relation_type": "related_to",
+      "confidence": 1.0
+    },
+    {
+      "external_id": "rel-idea-v1-generated-from-deliverable-v0-gate",
+      "source_external_id": "idea-v1",
+      "target_external_id": "deliverable-v0-gate",
+      "relation_type": "generated_from",
+      "confidence": 0.6
+    },
+    {
+      "external_id": "rel-deliverable-v0-gate-depends-on-task-roundtrip",
+      "source_external_id": "deliverable-v0-gate",
+      "target_external_id": "task-roundtrip",
+      "relation_type": "depends_on",
+      "confidence": 0.95
+    }
+  ]
+}
