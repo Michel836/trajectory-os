@@ -6,16 +6,30 @@ The storage representation is intentionally explicit:
 - domain enums are stored by their string value;
 - datetime values are stored as ISO-8601 text, preserving the timezone
   offset when present; reconstruction uses ``datetime.fromisoformat()``;
-- confidence is stored as a float.
+- confidence is stored as a float;
+- ``entities.position`` and ``relations.position`` store the zero-based
+  ordinal of the row inside the portfolio's canonical ordered list, so
+  ``save()``/``load()`` round-trip list order exactly.
 
 Semantic reconstruction of domain values happens explicitly at the
 adapter boundary (see ``sqlite.py``); the tables never rely on SQLite
 pretending to have native UUID, enum, or timezone-aware datetime semantics.
+
+V0 pre-release note: the schema is intentionally unversioned and there is
+no migration framework. Databases created before the ``position`` columns
+existed must be recreated during V0 development.
 """
 
 from __future__ import annotations
 
-from sqlalchemy import Float, ForeignKey, ForeignKeyConstraint, String, UniqueConstraint
+from sqlalchemy import (
+    Float,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -49,6 +63,9 @@ class EntityRow(Base):
         index=True,
         nullable=False,
     )
+    # Zero-based ordinal in the Portfolio.entities snapshot list. Storage
+    # representation only; it is not a domain field.
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
     entity_type: Mapped[str] = mapped_column(String(), nullable=False)
     title: Mapped[str] = mapped_column(String(), nullable=False)
     description: Mapped[str | None] = mapped_column(String(), nullable=True)
@@ -88,6 +105,9 @@ class RelationRow(Base):
         index=True,
         nullable=False,
     )
+    # Zero-based ordinal in the Portfolio.relations snapshot list. Storage
+    # representation only; it is not a domain field.
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
     source_id: Mapped[str] = mapped_column(String(), index=True, nullable=False)
     target_id: Mapped[str] = mapped_column(String(), index=True, nullable=False)
     relation_type: Mapped[str] = mapped_column(String(), nullable=False)
