@@ -37,6 +37,30 @@ class Base(DeclarativeBase):
     """Declarative base for the SQLite persistence schema."""
 
 
+class ExecutionEffortObservationRow(Base):
+    """One durable execution-effort observation, owned by a portfolio.
+
+    Append-only: the row has no update or delete representation fields.
+    ``entity_id`` is intentionally NOT a foreign key into
+    ``entities.id``: historical observations must remain independent from
+    the replaceable per-portfolio entity snapshot rows, so deleting an
+    entity from (or out of) a portfolio must never delete history.
+    """
+
+    __tablename__ = "execution_effort_observations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    portfolio_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    entity_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    observed_at: Mapped[str] = mapped_column(String(), nullable=False)
+    source: Mapped[str] = mapped_column(String(), nullable=False)
+
+
 class PortfolioRow(Base):
     """One canonical portfolio."""
 
