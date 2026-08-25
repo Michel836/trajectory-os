@@ -25,6 +25,13 @@ from trajectory_os.domain.work_breakdown_acceptance import (
     WorkBreakdownAcceptanceResult,
     accept_work_breakdown_proposal,
 )
+from trajectory_os.domain.work_breakdown_production import (
+    WorkBreakdownProposalContextItem,
+    WorkBreakdownProposalProducer,
+    WorkBreakdownProposalProductionError,
+    WorkBreakdownProposalRequest,
+    propose_work_breakdown,
+)
 from trajectory_os.domain.work_breakdown_proposals import (
     ProposedWorkNode,
     ValidatedWorkBreakdownProposal,
@@ -50,11 +57,16 @@ __all__ = [
     "WorkBreakdownError",
     "WorkBreakdownNode",
     "WorkBreakdownProposal",
+    "WorkBreakdownProposalContextItem",
     "WorkBreakdownProposalError",
+    "WorkBreakdownProposalProducer",
+    "WorkBreakdownProposalProductionError",
+    "WorkBreakdownProposalRequest",
     "WorkBreakdownStructure",
     "accept_work_breakdown_proposal",
     "build_work_breakdown",
     "classify_entity",
     "is_work_breakdown_containment_allowed",
+    "propose_work_breakdown",
     "validate_work_breakdown_proposal",
 ]
