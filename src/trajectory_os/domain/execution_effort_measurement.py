@@ -210,11 +210,20 @@ def _revalidate_observation(candidate: object) -> ExecutionEffortObservation:
             "every observation must be an ExecutionEffortObservation instance"
         )
 
+    # Access fields directly instead of serializing the caller-owned instance.
+    # This avoids serializer warnings for deliberately hostile ``model_construct``
+    # values while still forcing every field back through normal strict validation.
+    payload = {
+        "id": getattr(candidate, "id", None),
+        "portfolio_id": getattr(candidate, "portfolio_id", None),
+        "entity_id": getattr(candidate, "entity_id", None),
+        "duration_seconds": getattr(candidate, "duration_seconds", None),
+        "observed_at": getattr(candidate, "observed_at", None),
+        "source": getattr(candidate, "source", None),
+    }
+
     try:
-        return ExecutionEffortObservation.model_validate(
-            candidate.model_dump(mode="python"),
-            strict=True,
-        )
+        return ExecutionEffortObservation.model_validate(payload, strict=True)
     except ValidationError as exc:
         raise ExecutionEffortMeasurementError(
             "invalid execution-effort observation supplied to measurement"
