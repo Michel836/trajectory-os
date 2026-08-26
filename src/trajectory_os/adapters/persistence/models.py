@@ -61,6 +61,29 @@ class ExecutionEffortObservationRow(Base):
     source: Mapped[str] = mapped_column(String(), nullable=False)
 
 
+class ExecutionEffortEstimateRow(Base):
+    """One durable planned direct-effort estimate, owned by a portfolio.
+
+    Append-only: the row has no update or delete representation fields.
+    ``entity_id`` is intentionally NOT a foreign key into
+    ``entities.id``: historical estimates must remain independent from
+    the replaceable per-portfolio entity snapshot rows, so deleting an
+    entity from (or out of) a portfolio must never delete history.
+    """
+
+    __tablename__ = "execution_effort_estimates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    portfolio_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    entity_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    estimated_at: Mapped[str] = mapped_column(String(), nullable=False)
+    source: Mapped[str] = mapped_column(String(), nullable=False)
+
+
 class PortfolioRow(Base):
     """One canonical portfolio."""
 
