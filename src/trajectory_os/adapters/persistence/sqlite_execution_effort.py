@@ -13,11 +13,11 @@ Representation mapping is explicit at this boundary:
   offset; reconstruction uses ``datetime.fromisoformat()``;
 - ``duration_seconds`` is stored as an integer.
 
-Load reconstructs a REAL ``ExecutionEffortObservation`` through normal,
-strict Pydantic validation (never ``model_construct``), so model-level
-invariants are revalidated on every ``get()``.
+Load/read reconstructs REAL ``ExecutionEffortObservation`` values through
+normal strict Pydantic validation (never ``model_construct``), so model-level
+invariants are revalidated on every read.
 
-Append-only contract:
+Append-only V1.8 contract:
 
 - ``add()`` only INSERTs; it never updates or replaces existing rows;
 - a duplicate observation id raises
@@ -25,6 +25,13 @@ Append-only contract:
   transaction, leaving the existing row untouched;
 - no concurrency or distributed-transaction guarantees are claimed; a
   database-level uniqueness violation may still propagate in a race.
+
+Read-only V1.9 contract:
+
+- ``list_for_portfolio()`` and ``list_for_entity()`` never mutate rows;
+- results are ordered by actual aware ``observed_at`` instant ascending and
+  then observation UUID ascending, never by insertion order or lexical ISO text;
+- no SQL aggregation, recursive WBS query, analytics table, or cache is used.
 
 ``entity_id`` carries no foreign key to ``entities.id`` by design:
 historical observations must survive the replacement or removal of
@@ -64,8 +71,27 @@ def _to_domain_datetime(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+def _row_to_domain(row: ExecutionEffortObservationRow) -> ExecutionEffortObservation:
+    """Reconstruct one strict immutable domain observation from a stored row."""
+    return ExecutionEffortObservation(
+        id=UUID(row.id),
+        portfolio_id=UUID(row.portfolio_id),
+        entity_id=UUID(row.entity_id),
+        duration_seconds=int(row.duration_seconds),
+        observed_at=_to_domain_datetime(row.observed_at),
+        source=SourceKind(row.source),
+    )
+
+
+def _observation_sort_key(
+    observation: ExecutionEffortObservation,
+) -> tuple[datetime, int]:
+    """Order by chronological instant, with UUID as deterministic tie-breaker."""
+    return observation.observed_at, observation.id.int
+
+
 class SqliteExecutionEffortObservationRepository:
-    """Append-only, durable storage of execution-effort observations.
+    """Append-only durable storage plus deterministic read-only V1.9 queries.
 
     The engine is owned by the repository; close it with ``close()`` when
     done. One connection is used per operation, so the repository can be
@@ -146,8 +172,6 @@ class SqliteExecutionEffortObservationRepository:
     ) -> ExecutionEffortObservation | None:
         """Load the stored observation, or return ``None`` if absent.
 
-        Reconstructs a fresh ``ExecutionEffortObservation`` through
-        strict domain validation and does not mutate or delete anything.
         The lookup does not require the entity to still exist in the
         current portfolio; ``entity_id`` is deliberately not an FK.
         """
@@ -163,11 +187,59 @@ class SqliteExecutionEffortObservationRepository:
         if row is None:
             return None
 
-        return ExecutionEffortObservation(
-            id=UUID(row.id),
-            portfolio_id=UUID(row.portfolio_id),
-            entity_id=UUID(row.entity_id),
-            duration_seconds=int(row.duration_seconds),
-            observed_at=_to_domain_datetime(row.observed_at),
-            source=SourceKind(row.source),
-        )
+        return _row_to_domain(row)
+
+    def list_for_portfolio(
+        self,
+        portfolio_id: UUID,
+    ) -> tuple[ExecutionEffortObservation, ...]:
+        """Return all observations for one portfolio in deterministic time order.
+
+        Rows are reconstructed before sorting so aware datetimes with different
+        UTC offsets are compared by their actual chronological instant rather
+        than by the lexical ordering of their stored ISO-8601 text.
+        """
+        stored_portfolio_id = _to_text(portfolio_id)
+
+        with Session(self._engine) as session:
+            rows = tuple(
+                session.scalars(
+                    select(ExecutionEffortObservationRow).where(
+                        ExecutionEffortObservationRow.portfolio_id
+                        == stored_portfolio_id
+                    )
+                ).all()
+            )
+
+        observations = [_row_to_domain(row) for row in rows]
+        observations.sort(key=_observation_sort_key)
+        return tuple(observations)
+
+    def list_for_entity(
+        self,
+        portfolio_id: UUID,
+        entity_id: UUID,
+    ) -> tuple[ExecutionEffortObservation, ...]:
+        """Return exact portfolio/entity history in deterministic time order.
+
+        Entity membership in the CURRENT Portfolio is intentionally not checked:
+        historical observations remain queryable after snapshot replacement or
+        entity removal.
+        """
+        stored_portfolio_id = _to_text(portfolio_id)
+        stored_entity_id = _to_text(entity_id)
+
+        with Session(self._engine) as session:
+            rows = tuple(
+                session.scalars(
+                    select(ExecutionEffortObservationRow).where(
+                        ExecutionEffortObservationRow.portfolio_id
+                        == stored_portfolio_id,
+                        ExecutionEffortObservationRow.entity_id == stored_entity_id,
+                    )
+                ).all()
+            )
+
+        observations = [_row_to_domain(row) for row in rows]
+        observations.sort(key=_observation_sort_key)
+        return tuple(observations)

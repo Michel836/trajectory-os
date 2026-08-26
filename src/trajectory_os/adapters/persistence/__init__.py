@@ -1,5 +1,13 @@
-"""SQLite persistence adapter for the canonical portfolio domain."""
+"""SQLite persistence adapters for TrajectoryOS."""
 
 from trajectory_os.adapters.persistence.sqlite import SqlitePortfolioRepository
+from trajectory_os.adapters.persistence.sqlite_execution_effort import (
+    DuplicateExecutionEffortObservationError,
+    SqliteExecutionEffortObservationRepository,
+)
 
-__all__ = ["SqlitePortfolioRepository"]
+__all__ = [
+    "DuplicateExecutionEffortObservationError",
+    "SqliteExecutionEffortObservationRepository",
+    "SqlitePortfolioRepository",
+]
