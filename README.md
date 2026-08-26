@@ -74,3 +74,17 @@ Quality gate:
     uv run mypy src
 
 No production-ready release is available yet.
+
+## License
+
+TrajectoryOS is licensed under the
+[GNU Affero General Public License v3.0 only](LICENSE) (`AGPL-3.0-only`)
+unless a separate written license agreement applies.
+
+Commercial use is permitted under `AGPL-3.0-only` when its terms are followed.
+Alternative proprietary or commercial licensing may also be available
+separately from the copyright holder.
+
+See [LICENSING.md](LICENSING.md) for the project licensing policy and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for third-party dependency
+license information.
