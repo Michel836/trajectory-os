@@ -3,6 +3,8 @@ name = "trajectory-os"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
 authors = [
     { name = "Michel836", email = "183355836+Michel836@users.noreply.github.com" }
 ]
