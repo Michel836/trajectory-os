@@ -11,11 +11,23 @@ from trajectory_os.application.execution_effort import (
     ExecutionEffortPortfolioNotFoundError,
     record_execution_effort_durably,
 )
+from trajectory_os.application.execution_effort_estimates import (
+    DurableExecutionEffortEstimateError,
+    ExecutionEffortEstimatePortfolioNotFoundError,
+    ExecutionEffortEstimateRepository,
+    record_execution_effort_estimate_durably,
+)
 from trajectory_os.application.execution_effort_measurement import (
     DurableExecutionEffortMeasurementError,
     ExecutionEffortMeasurementPortfolioNotFoundError,
     ExecutionEffortObservationReader,
     measure_work_breakdown_effort_durably,
+)
+from trajectory_os.application.execution_effort_planning import (
+    DurableExecutionEffortPlanningError,
+    ExecutionEffortEstimateReader,
+    ExecutionEffortPlanningPortfolioNotFoundError,
+    plan_work_breakdown_effort_durably,
 )
 from trajectory_os.application.work_breakdown_acceptance import (
     DurableWorkBreakdownAcceptanceError,
@@ -27,17 +39,25 @@ from trajectory_os.application.work_breakdown_acceptance import (
 __all__ = [
     "DurableEntityStatusTransitionError",
     "DurableExecutionEffortError",
+    "DurableExecutionEffortEstimateError",
     "DurableExecutionEffortMeasurementError",
+    "DurableExecutionEffortPlanningError",
     "DurableWorkBreakdownAcceptanceError",
+    "ExecutionEffortEstimatePortfolioNotFoundError",
+    "ExecutionEffortEstimateReader",
+    "ExecutionEffortEstimateRepository",
     "ExecutionEffortMeasurementPortfolioNotFoundError",
     "ExecutionEffortObservationReader",
     "ExecutionEffortObservationRepository",
+    "ExecutionEffortPlanningPortfolioNotFoundError",
     "ExecutionEffortPortfolioNotFoundError",
     "PortfolioNotFoundError",
     "PortfolioRepository",
     "StatusTransitionPortfolioNotFoundError",
     "accept_work_breakdown_proposal_durably",
     "measure_work_breakdown_effort_durably",
+    "plan_work_breakdown_effort_durably",
+    "record_execution_effort_estimate_durably",
     "record_execution_effort_durably",
     "transition_entity_status_durably",
 ]
