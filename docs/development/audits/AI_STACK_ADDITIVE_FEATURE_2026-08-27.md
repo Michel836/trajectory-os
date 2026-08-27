@@ -57,109 +57,49 @@ Harness self-reports never overrode deterministic evidence.
 | G1 | OpenCode 1.18.23 | Qwen3-Coder 30B | non-reasoning | 1084.74 s | FAIL |
 | H | Aider 0.86.2 | Qwen3-Coder 30B | non-reasoning | 554.04 s | FAIL |
 | I | Pi 0.84.3 | Qwen3-Coder 30B | off | 117.06 s | FAIL |
-| J | Pi 0.84.3 | Qwen3.8 27B | medium | **736.39 s** | **PASS** |
+| J | Pi 0.84.3 | Qwen3.8 27B | medium | 736.39 s | PASS |
+| K | Aider 0.86.2 | Qwen3.8 27B | medium | **534.29 s** | **PASS** |
 
 Token accounting differs by harness and must not be read as raw model throughput. It is retained only as operational context.
 
 ## OpenCode + Qwen3-Coder
 
-### Tool-call configuration incident
+The initial OpenCode attempt did not enter an agent loop because the custom-model metadata lacked `tool_call: true`. Direct non-streaming and streaming calls against Ollama's OpenAI-compatible endpoint both returned correct structured `tool_calls`. Adding `tool_call: true` repaired the tool loop.
 
-The initial OpenCode attempt did not enter an agent loop. Qwen3-Coder emitted a textual representation of a tool call and OpenCode terminated the turn as text.
+The subsequent feature run genuinely edited all five surfaces but generated invalid Pydantic typing that broke collection. Hidden acceptance and the canonical quality gate failed, while the final handoff incorrectly claimed all tests passed.
 
-Direct non-streaming and streaming calls against Ollama's OpenAI-compatible endpoint both returned correct structured `tool_calls`, proving that Qwen3-Coder and Ollama were capable of standard tool calling.
-
-Adding the model metadata:
-
-```json
-"tool_call": true
-```
-
-to the OpenCode custom-model configuration repaired the tool loop. A read-only smoke test then executed `pwd` as a real tool call and continued correctly.
-
-This configuration requirement is reusable operational knowledge for the tested OpenCode 1.18.23 custom-model setup.
-
-### G1 feature result
-
-After repairing the tool loop, OpenCode genuinely attempted the feature:
-
-- elapsed: **1084.74 s**;
-- 131 model steps;
-- 128 tool calls;
-- ~4.165M cumulative step tokens;
-- all five requested surfaces were created or modified;
-- `git diff --check` was clean.
-
-The generated domain module nevertheless contained an invalid Pydantic annotation equivalent to:
-
-```python
-Annotated[StrictInt] | None
-```
-
-which failed import/collection. The hidden acceptance failed and the canonical quality gate failed with collection errors.
-
-The final OpenCode message nevertheless claimed that all tests passed. That handoff was contradicted by deterministic evidence.
-
-**Conclusion:** OpenCode + Qwen3-Coder is not validated for this additive feature. The false-success handoff is itself a material reliability signal.
+**Conclusion:** OpenCode + Qwen3-Coder is not validated for this additive feature. Deterministic evidence overrode the fluent but false-success handoff.
 
 ## Aider + Qwen3-Coder
 
-Run H used the same frozen contract with the five editable surfaces explicitly scoped and relevant existing implementation/tests supplied read-only.
-
-Observed result:
-
-- elapsed: **554.04 s**;
-- approximately **205.8k** reported sent+received tokens across the displayed interactions;
-- all five requested surfaces were created or modified;
-- `git diff --check` was clean;
-- hidden acceptance failed;
-- canonical quality gate failed with **16 failed, 699 passed**.
-
-The production model constrained `variance_seconds >= 0`, directly contradicting the contract requirement that negative variance be valid when actual effort is below planned effort.
-
-Aider also generated invalid test fixtures using ad-hoc objects where concrete Pydantic `WorkBreakdownEffortPlanItem` instances were required. It recognized this problem late, but recovery then failed because the model did not conform to Aider's SEARCH/REPLACE edit format.
+Run H created all five surfaces but violated the signed-variance contract and generated invalid Pydantic test fixtures. Hidden acceptance failed and the canonical quality gate ended with 16 failed, 699 passed. Recovery then hit SEARCH/REPLACE edit-format failures.
 
 **Conclusion:** explicit file scoping remains valuable, but Aider + Qwen3-Coder is not validated for this substantive additive feature.
 
 ## Pi + Qwen3-Coder
 
-Run I held the harness fixed at Pi 0.84.3 and used Qwen3-Coder with thinking disabled.
+Run I created only the two new implementation modules, then stopped before public exports or tests. The final text was a continuation marker. Hidden acceptance failed immediately because the public durable function was not exported, and the quality gate also failed on Ruff violations in the partial implementation.
 
-Observed result:
+Observed metrics:
 
-- elapsed: **117.06 s**;
+- elapsed: 117.06 s;
 - 13 assistant messages;
 - 9 tool calls;
-- 75,233 cumulative input tokens;
-- 2,856 output tokens;
-- 78,089 cumulative total tokens;
-- 3 retry starts and only 1 retry end;
-- zero compactions;
-- only the two new implementation modules were created;
-- public exports and both required test files were never completed.
+- 78,089 cumulative tokens;
+- 3 retry starts, 1 retry end;
+- zero compactions.
 
-The last assistant text was effectively a continuation marker stating that `application/__init__.py` would be updated next. The run then ended.
+**Conclusion:** Pi + Qwen3-Coder remains validated for prior bounded repair/navigation benchmarks, not for this substantive additive feature.
 
-External hidden acceptance failed immediately because the public durable function was not exported. The quality gate also failed on Ruff violations in the partial implementation.
+## Pi + Qwen3.8 — Run J PASS
 
-**Conclusion:** Pi + Qwen3-Coder was fast only because the task was incomplete. It remains validated for prior bounded repair/navigation benchmarks, not for this substantive additive feature.
-
-## Pi + Qwen3.8 — PASS
-
-Run J changed one major variable from Run I: the Pi harness, commit, frozen feature prompt, hidden acceptance, machine, runtime family, 64k context target, and deterministic gates remained the same, while the model changed from Qwen3-Coder 30B to Qwen3.8 27B with `--thinking medium`.
+Run J changed the model while holding Pi, the commit, frozen feature prompt, hidden acceptance, runtime family, 64k context target, and deterministic gates constant.
 
 Observed result:
 
 - elapsed: **736.39 s**;
-- user CPU: 5.17 s;
-- system CPU: 0.71 s;
-- maximum harness RSS: 119,136 KB;
 - 34 assistant messages;
-- 42 tool calls:
-  - 23 `bash`;
-  - 11 `edit`;
-  - 4 `read`;
-  - 4 `write`;
+- 42 tool calls;
 - 1 successful compaction pair;
 - 0 retries;
 - 1,130,070 cumulative input tokens;
@@ -178,13 +118,9 @@ mypy: success in 38 source files
 git diff --check: clean
 ```
 
-The feature added **35 tests** above the 691-test baseline.
-
-The final handoff accurately described the task, files, design, tests, quality-gate result, Git state, and limitations.
+The feature added 35 tests above the 691-test baseline. The final handoff accurately described the task, files, design, tests, quality-gate result, Git state, and limitations.
 
 ### Frozen Run J evidence
-
-The final local evidence was SHA-256 frozen as follows:
 
 ```text
 8769d299c89fabed0b0cb2bf65569964b1cbc77f2ca5799b6db164e5a2172dd2  feature-pi-qwen38.jsonl
@@ -197,65 +133,104 @@ d3e83ad2579c3d5069845d1b451a4b680584a433054d27deac31a3b240bd11b7  feature-pi-qwe
 2396fcfacdea2fb2754dae1404d24322ae95554912a7841c071ead858e2d76c3  feature-pi-qwen38-generated-files.tar.gz
 ```
 
-The stderr hash is the SHA-256 of an empty file.
+## Aider + Qwen3.8 — Run K PASS
+
+Run K held the successful Qwen3.8 model, 64k Ollama alias, baseline, feature contract, and hidden acceptance constant while changing to Aider 0.86.2 configured for `--reasoning-effort medium`.
+
+The five feature surfaces were explicitly supplied as editable, relevant existing implementation/tests were supplied read-only, and the shared deterministic public-validation helper was used as Aider's `--test-cmd`.
+
+Observed result:
+
+- elapsed: **534.29 s**;
+- user CPU: 10.76 s;
+- system CPU: 3.65 s;
+- maximum harness RSS: 274,224 KB;
+- 2 Aider-reported interactions;
+- approximately 89,000 sent tokens + 16,500 received tokens = 105,500 reported total;
+- effective Ollama context: 65,536;
+- all five requested surfaces created or modified;
+- stderr empty;
+- known `.aider.tags.cache.v4/` artifact remained.
+
+Deterministic result:
+
+```text
+HIDDEN_ACCEPTANCE: PASS
+724 tests passed
+Ruff: all checks passed
+mypy: success in 38 source files
+git diff --check: clean
+```
+
+The feature added 33 tests above baseline. The exact count differs from Run J, but both satisfy the independent hidden acceptance and canonical quality gate.
+
+Run K was approximately **27.4% faster** than Run J (534.29 s vs 736.39 s). Pi took approximately **1.38x** as long on this known-surface feature.
+
+Token accounting is not directly comparable: Pi's cumulative JSONL accounting and Aider's displayed sent/received totals use different semantics. The lower repeated-context overhead observed under Aider is nevertheless consistent with the earlier bounded-edit results when file scope is known explicitly.
 
 ## Interpretation
 
-The strongest controlled comparison is Pi Run I versus Pi Run J because the harness and task contract were held constant.
+The additive-feature campaign now supports two distinct conclusions.
 
-Under Pi:
+### Model selection is task-dependent
+
+Across the tested substantive feature:
 
 ```text
-Qwen3-Coder 30B → incomplete FAIL
-Qwen3.8 27B     → deterministic PASS
+Qwen3-Coder + OpenCode -> FAIL
+Qwen3-Coder + Aider    -> FAIL
+Qwen3-Coder + Pi       -> incomplete FAIL
+Qwen3.8 + Pi           -> PASS
+Qwen3.8 + Aider        -> PASS
 ```
 
-This does not prove that Qwen3.8 universally dominates Qwen3-Coder. Earlier controlled benchmarks show the opposite latency result for tiny bounded fixes, where Qwen3-Coder was materially faster and fully correct.
+This is strong evidence that Qwen3.8 provides materially better end-to-end reliability for this deeper semantic feature class, while earlier bounded-edit evidence still favors Qwen3-Coder for narrow repairs.
 
-The evidence therefore supports **task-dependent routing** rather than one universal coding model:
+### Harness selection depends on scope knowledge
 
-- Qwen3-Coder remains the preferred fast model for small bounded repairs and explicitly scoped multi-file fixes;
-- Qwen3.8 is now validated under Pi for at least one substantive additive feature requiring deeper semantic reasoning, test design, repeated validation, and long-session endurance;
-- successful Pi compaction during Run J is positive evidence for long-session continuity;
-- deterministic gates remain authoritative because OpenCode G1 demonstrated that a fluent final handoff can contradict actual test state.
+With Qwen3.8 held constant, both Pi and Aider pass. Aider is faster for the tested feature when the editable surfaces are known and can be explicitly scoped. Pi retains advantages when the agent must discover or navigate broader scope autonomously, and Pi demonstrated successful long-session compaction continuity with no Aider-style tag-cache residue.
 
-## Provisional routing after Run J
+The comparison is operational rather than a claim that every harness-internal variable was identical: explicit file scoping and test-command integration are native parts of the Aider configuration being evaluated.
+
+## Evidence-based routing after Run K
 
 ```text
 architecture / arbitration / current external research
-    → cloud reasoning when marginal value justifies it
+    -> cloud reasoning when marginal value justifies it
 
 small bounded edit
-    → Aider + Qwen3-Coder
+    -> Aider + Qwen3-Coder
 
 bounded multi-file repair with known target files
-    → explicitly file-scoped Aider + Qwen3-Coder
+    -> explicitly file-scoped Aider + Qwen3-Coder
 
-broader bounded repair/navigation
-    → Pi + Qwen3-Coder, where prior benchmark evidence applies
+substantive additive feature with known editable surfaces
+    -> explicitly file-scoped Aider + Qwen3.8, medium reasoning
 
-substantive additive feature / deeper local reasoning
-    → Pi + Qwen3.8, validated by Run J
+substantive feature requiring broader autonomous scope discovery/navigation
+    -> Pi + Qwen3.8, medium reasoning
+
+broader bounded repair/navigation where prior benchmark evidence applies
+    -> Pi + Qwen3-Coder
 
 bounded read-only adversarial review
-    → Qwen3.6 35B
+    -> Qwen3.6 35B
 
 all accepted implementation work
-    → deterministic quality gate + CI + human merge authority
+    -> deterministic pytest/Ruff/mypy/CI + human merge authority
 ```
 
-This routing is evidence-based but still subject to further controlled comparison.
+No universal single model/harness is promoted.
 
-## Next discriminating experiment
+## Next validation
 
-The highest-value remaining comparison is to hold **Qwen3.8 27B** and the feature contract constant while changing only the harness:
+Repeating the same additive feature now has diminishing value. The next benchmark should change task class, preferably one where file scope is less obvious so that Aider's scoping advantage and Pi's autonomous-navigation advantage are meaningfully stressed.
 
-```text
-Pi + Qwen3.8
-vs
-Aider + Qwen3.8
-```
+High-value candidates include:
 
-If explicitly scoped Aider + Qwen3.8 also passes, latency/context efficiency can decide the preferred feature harness. If it fails while Pi continues to pass, the evidence for the Pi + Qwen3.8 pairing becomes materially stronger.
+1. a second substantive feature with less obvious file scope;
+2. a refactor-without-regressions benchmark;
+3. a hostile-input / adversarial-test-design benchmark;
+4. a small-model mechanical-work benchmark.
 
-Do not repeat additional Qwen3-Coder runs on this exact feature merely to accumulate samples without changing a meaningful variable.
+Fine-tuning remains deferred.
