@@ -6,5 +6,6 @@ Audits preserve measured state before configuration changes; benchmark reports r
 
 - `AI_STACK_AUDIT_2026-08-26.md` — initial Ollama/Pi/Qwen runtime and context-alignment audit.
 - `AI_STACK_BENCHMARK_2026-08-26.md` — post-audit V1.10 runtime, harness, model, efficiency, and reviewer benchmark evidence.
+- `AI_STACK_BOUNDED_EDIT_AB_2026-08-27.md` — controlled same-harness A/B comparison of Qwen3.8 27B and Qwen3-Coder 30B on an identical bounded semantic repair.
 
 Do not commit raw local logs, hostnames, tokens, credentials, or personal/client data here.
