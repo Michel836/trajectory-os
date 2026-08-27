@@ -8,5 +8,6 @@ Audits preserve measured state before configuration changes; benchmark reports r
 - `AI_STACK_BENCHMARK_2026-08-26.md` — post-audit V1.10 runtime, harness, model, efficiency, and reviewer benchmark evidence.
 - `AI_STACK_BOUNDED_EDIT_AB_2026-08-27.md` — controlled same-harness A/B comparison of Qwen3.8 27B and Qwen3-Coder 30B on an identical bounded semantic repair.
 - `AI_STACK_AIDER_QWEN3CODER_2026-08-27.md` — controlled harness-isolation run showing Aider + Qwen3-Coder on the same bounded repair, with timing, token, quality, and cache-hygiene evidence.
+- `AI_STACK_AIDER_QWEN38_2026-08-27.md` — Aider + Qwen3.8 run completing the 2x2 Pi/Aider × Qwen3.8/Qwen3-Coder bounded-edit matrix and recording the Qwen3.8 summarizer failure signal.
 
 Do not commit raw local logs, hostnames, tokens, credentials, or personal/client data here.
