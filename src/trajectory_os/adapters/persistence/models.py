@@ -84,6 +84,46 @@ class ExecutionEffortEstimateRow(Base):
     source: Mapped[str] = mapped_column(String(), nullable=False)
 
 
+class ExecutionEffortCalibrationFactorDecisionRow(Base):
+    """One durable, immutable human decision over a V1.15 factor proposal.
+
+    Append-only: the row has no update or delete representation fields.
+    ``portfolio_id``/``project_id``/``entity_type`` record the exact scope
+    of the reviewed segment; every V1.15 evidence value is a fixed
+    snapshot (exact INTEGER numerator/denominator, never REAL) and later
+    V1.15 drift must not change stored rows.
+    """
+
+    __tablename__ = "execution_effort_calibration_factor_decisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    portfolio_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    project_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(), nullable=False)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    minimum_required_sample_count: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )
+    total_planned_duration_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )
+    total_actual_duration_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )
+    # Exact boolean snapshot stored as 0/1 integer; there is no SQLite
+    # boolean semantic assumption.
+    proposal_available: Mapped[int] = mapped_column(Integer, nullable=False)
+    proposal_reason: Mapped[str] = mapped_column(String(), nullable=False)
+    factor_numerator: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    factor_denominator: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    decision: Mapped[str] = mapped_column(String(), nullable=False)
+    decided_at: Mapped[str] = mapped_column(String(), nullable=False)
+
+
 class PortfolioRow(Base):
     """One canonical portfolio."""
 
