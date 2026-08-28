@@ -83,6 +83,26 @@ not replace deterministic checks or human judgment.
 Use different models to increase diversity of review, not to create competing uncontrolled
 editors of the same branch.
 
+## Local-first model routing
+
+Prefer local models for high-volume repository work when they can satisfy the task reliably,
+including implementation loops, test generation, bounded refactors, lint/type repair, and
+adversarial review.
+
+Use scarce cloud reasoning capacity where its marginal value is higher, such as architecture,
+current external research, difficult arbitration, and consequential final review.
+
+Do not make model or harness selection permanent from reputation alone. Validate combinations
+against real TrajectoryOS work, deterministic quality gates, and human correction burden.
+
+The operational routing, runtime-audit checklist, model/harness roles, quota-preservation
+strategy, benchmark plan, and current/proposed/validated status are maintained in:
+
+- `docs/development/AI_DEVELOPMENT_STACK.md`
+
+Specific model names and tool choices in that document are replaceable implementation details.
+The authority model and deterministic quality requirements in this workflow remain canonical.
+
 ## Learning from failures
 
 When an agent repeatedly makes a class of mistake, encode the lesson in one or more of:
@@ -92,6 +112,8 @@ When an agent repeatedly makes a class of mistake, encode the lesson in one or m
 - `scripts/quality.sh`;
 - CI;
 - an ADR;
-- this workflow.
+- this workflow;
+- `docs/development/AI_DEVELOPMENT_STACK.md` when the lesson concerns model routing, runtime,
+  context/output budgets, agent harnesses, or local/cloud workflow.
 
 The objective is to make project discipline persistent across model changes and sessions.
