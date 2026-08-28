@@ -47,6 +47,7 @@ from trajectory_os.domain.entities import (
 from trajectory_os.domain.execution_effort import ExecutionEffortObservation
 from trajectory_os.domain.execution_effort_calibration_factor_decisions import (
     EffortCalibrationDecision,
+    EffortCalibrationFactorDecision,
 )
 from trajectory_os.domain.execution_effort_calibration_factor_proposals import (
     EffortCalibrationFactorProposalReason,
@@ -549,3 +550,38 @@ def test_sqlite_history_reader_never_rederives_v115(
         first[0].model_dump(mode="python")
         == second[0].model_dump(mode="python")
     )
+
+
+def test_sqlite_hostile_input_rejected_before_insert(
+    repos: SimpleNamespace,
+) -> None:
+    """A model_construct() instance is freshly revalidated before INSERT."""
+
+    # Bypass Pydantic validation deliberately. 6/8 represents the same
+    # ratio as 3/4 but violates the V1.16 canonical gcd == 1 invariant.
+    hostile_decision = EffortCalibrationFactorDecision.model_construct(
+        decision_id=DECISION_ID_1,
+        portfolio_id=PORTFOLIO_ID,
+        project_id=PROJECT_ID,
+        entity_type=EntityType.TASK,
+        sample_count=2,
+        minimum_required_sample_count=1,
+        total_planned_duration_seconds=200,
+        total_actual_duration_seconds=150,
+        proposal_available=True,
+        proposal_reason=EffortCalibrationFactorProposalReason.AVAILABLE,
+        factor_numerator=6,
+        factor_denominator=8,
+        decision=EffortCalibrationDecision.ACCEPT,
+        decided_at=datetime(2025, 7, 1, 8, 30, tzinfo=UTC),
+    )
+
+    with pytest.raises(ValueError, match="gcd"):
+        repos.decisions.add(hostile_decision)
+
+    # The hostile object must fail before INSERT.
+    assert repos.decisions.list_history(
+        PORTFOLIO_ID,
+        PROJECT_ID,
+        EntityType.TASK,
+    ) == ()

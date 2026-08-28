@@ -169,8 +169,24 @@ class SqliteExecutionEffortCalibrationFactorDecisionRepository:
         id is detected and
         :class:`DuplicateEffortCalibrationFactorDecisionError` is raised;
         the existing row is never updated or replaced.
+
+        The input is strictly validated before any field access to prevent
+        bypass of domain validation via model_construct().
         """
-        stored_id = _to_text(decision.decision_id)
+        # This is a public persistence boundary. Require the expected
+        # domain type, then rebuild it from ordinary Python data so even an
+        # instance created through model_construct() is freshly validated.
+        if not isinstance(decision, EffortCalibrationFactorDecision):
+            raise TypeError(
+                "decision must be an EffortCalibrationFactorDecision instance"
+            )
+
+        validated_decision = EffortCalibrationFactorDecision.model_validate(
+            decision.model_dump(mode="python"),
+            strict=True,
+        )
+
+        stored_id = _to_text(validated_decision.decision_id)
 
         with Session(self._engine) as session:
             existing = session.scalar(
@@ -188,25 +204,25 @@ class SqliteExecutionEffortCalibrationFactorDecisionRepository:
             session.execute(
                 insert(ExecutionEffortCalibrationFactorDecisionRow).values(
                     id=stored_id,
-                    portfolio_id=_to_text(decision.portfolio_id),
-                    project_id=_to_text(decision.project_id),
-                    entity_type=decision.entity_type.value,
-                    sample_count=decision.sample_count,
+                    portfolio_id=_to_text(validated_decision.portfolio_id),
+                    project_id=_to_text(validated_decision.project_id),
+                    entity_type=validated_decision.entity_type.value,
+                    sample_count=validated_decision.sample_count,
                     minimum_required_sample_count=(
-                        decision.minimum_required_sample_count
+                        validated_decision.minimum_required_sample_count
                     ),
                     total_planned_duration_seconds=(
-                        decision.total_planned_duration_seconds
+                        validated_decision.total_planned_duration_seconds
                     ),
                     total_actual_duration_seconds=(
-                        decision.total_actual_duration_seconds
+                        validated_decision.total_actual_duration_seconds
                     ),
-                    proposal_available=int(decision.proposal_available),
-                    proposal_reason=decision.proposal_reason.value,
-                    factor_numerator=decision.factor_numerator,
-                    factor_denominator=decision.factor_denominator,
-                    decision=decision.decision.value,
-                    decided_at=decision.decided_at.isoformat(),
+                    proposal_available=int(validated_decision.proposal_available),
+                    proposal_reason=validated_decision.proposal_reason.value,
+                    factor_numerator=validated_decision.factor_numerator,
+                    factor_denominator=validated_decision.factor_denominator,
+                    decision=validated_decision.decision.value,
+                    decided_at=validated_decision.decided_at.isoformat(),
                 )
             )
 
