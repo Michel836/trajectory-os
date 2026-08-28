@@ -11,6 +11,13 @@ from trajectory_os.domain.entities import (
     SourceKind,
     TrajectoryEntity,
 )
+from trajectory_os.domain.execution_effort_comparison import (
+    EffortVariance,
+    ExecutionEffortComparisonError,
+    WorkBreakdownEffortComparison,
+    WorkBreakdownEffortComparisonItem,
+    compare_work_breakdown_effort,
+)
 from trajectory_os.domain.portfolio import Portfolio
 from trajectory_os.domain.relations import RelationType, TrajectoryRelation
 from trajectory_os.domain.work_breakdown import (
@@ -41,10 +48,12 @@ from trajectory_os.domain.work_breakdown_proposals import (
 )
 
 __all__ = [
+    "EffortVariance",
     "EntityClassificationProposal",
     "EntityClassifier",
     "EntityStatus",
     "EntityType",
+    "ExecutionEffortComparisonError",
     "Portfolio",
     "ProposedWorkNode",
     "RelationType",
@@ -54,6 +63,8 @@ __all__ = [
     "ValidatedWorkBreakdownProposal",
     "WorkBreakdownAcceptanceError",
     "WorkBreakdownAcceptanceResult",
+    "WorkBreakdownEffortComparison",
+    "WorkBreakdownEffortComparisonItem",
     "WorkBreakdownError",
     "WorkBreakdownNode",
     "WorkBreakdownProposal",
@@ -66,6 +77,7 @@ __all__ = [
     "accept_work_breakdown_proposal",
     "build_work_breakdown",
     "classify_entity",
+    "compare_work_breakdown_effort",
     "is_work_breakdown_containment_allowed",
     "propose_work_breakdown",
     "validate_work_breakdown_proposal",
