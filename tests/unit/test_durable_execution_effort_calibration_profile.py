@@ -242,6 +242,26 @@ def test_observation_reader_failure_propagates() -> None:
         )
 
 
+def test_domain_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail_measurement(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("domain failure")
+
+    monkeypatch.setattr(
+        profile_app,
+        "measure_work_breakdown_effort",
+        fail_measurement,
+    )
+
+    with pytest.raises(RuntimeError, match="domain failure"):
+        build_effort_calibration_profile_durably(
+            PORTFOLIO_ID,
+            PROJECT_ID,
+            FakePortfolioRepository(_portfolio()),
+            FakeEstimateReader(),
+            FakeObservationReader(),
+        )
+
+
 def test_no_repository_save_occurs() -> None:
     portfolio = _portfolio()
     repo = FakePortfolioRepository(portfolio)
