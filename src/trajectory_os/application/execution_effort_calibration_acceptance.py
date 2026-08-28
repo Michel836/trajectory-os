@@ -178,11 +178,14 @@ class AcceptedCalibratedEstimateRevision(BaseModel):
     ``source_proposal`` is deliberately a genuine V1.20 domain object
     (itself strict, frozen, with its after-validator), not a dict, not a
     JSON string, and not a pickle: the provenance chain is reconstructable,
-    type-checked, and re-validated on every round-trip through this model
-    (field validation at construction time guarantees it).
+    type-checked, and freshly re-validated on EVERY construction — the
+    after-validator rebuilds it from ``model_dump(mode="python")``
+    through ``model_validate(..., strict=True)``, so a hostile
+    ``model_construct()`` nested V1.20/V1.19/V1.18 chain cannot survive
+    ordinary nested model-instance adoption.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     estimate_id: UUID
     portfolio_id: UUID
@@ -206,8 +209,18 @@ class AcceptedCalibratedEstimateRevision(BaseModel):
         NOT cross-checked against the snapshot: V1.20 proposals carry no
         timestamp; it belongs to the new V1.10 estimate (checked at the
         result level against ``estimate.estimated_at``).
+
+        The ``source_proposal`` nested instance is FIRST freshly rebuilt
+        from ``model_dump(mode="python")`` through
+        ``model_validate(..., strict=True)`` (defeating a hostile
+        ``model_construct()`` nested V1.20/V1.19/V1.18 chain that would
+        otherwise be adopted as-is and only value-compared here), and the
+        cross-field checks below run against that rebuilt, genuine
+        instance.
         """
-        p = self.source_proposal
+        p = CalibratedEstimateRevisionProposal.model_validate(
+            self.source_proposal.model_dump(mode="python"), strict=True
+        )
         checks: list[tuple[object, object]] = [
             (self.portfolio_id, p.portfolio_id),
             (self.project_id, p.project_id),
@@ -229,16 +242,23 @@ class AcceptedCalibratedEstimateRevision(BaseModel):
 class AcceptedCalibratedEstimateRevisionResult(BaseModel):
     """The exact in-memory outcome of one explicit V1.21 acceptance.
 
-    Strict (``frozen=True, extra='forbid'``) and cross-field validated:
-    ``estimate`` and ``provenance`` must agree on the estimate identity,
-    the accepted duration, the timestamp, the estimate source
+    Strict (``strict=True, frozen=True, extra='forbid'``) and cross-field
+    validated: ``estimate`` and ``provenance`` must agree on the estimate
+    identity, the accepted duration, the timestamp, the estimate source
     (``USER_CONFIRMED``), and the proposal status (``READY``). A
     ``NO_ACTION``/no-op field deliberately does not exist: the only
     successful state is "one estimate + one provenance record appended
     atomically".
+
+    Both nested instances are FIRST freshly rebuilt from
+    ``model_dump(mode="python")`` through ``model_validate(...,
+    strict=True)`` (defeating hostile ``model_construct()`` inputs that
+    could hide a bad type behind Python equality, e.g. a float where an
+    int duration is required), and the cross-field checks run against the
+    rebuilt, genuine instances.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
 
     estimate: ExecutionEffortEstimate
     provenance: AcceptedCalibratedEstimateRevision
@@ -247,8 +267,12 @@ class AcceptedCalibratedEstimateRevisionResult(BaseModel):
     def _enforce_estimate_provenance_consistency(
         self,
     ) -> AcceptedCalibratedEstimateRevisionResult:
-        est = self.estimate
-        prov = self.provenance
+        est = ExecutionEffortEstimate.model_validate(
+            self.estimate.model_dump(mode="python"), strict=True
+        )
+        prov = AcceptedCalibratedEstimateRevision.model_validate(
+            self.provenance.model_dump(mode="python"), strict=True
+        )
         if est.id != prov.estimate_id:
             raise ValueError("estimate.id and provenance.estimate_id disagree")
         if est.portfolio_id != prov.portfolio_id:

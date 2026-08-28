@@ -358,6 +358,155 @@ def test_error_hierarchy_is_precise() -> None:
     assert issubclass(NoEffectiveFactorCannotBeAcceptedError, AcceptCalibratedEstimateRevisionError)
 
 
+# --- Hostile model_construct() rejection (V1.21 strict rebuild) ------------
+
+
+def _genuine_estimate_for(record: AcceptedCalibratedEstimateRevision) -> ExecutionEffortEstimate:
+    return ExecutionEffortEstimate(
+        id=record.estimate_id,
+        portfolio_id=record.portfolio_id,
+        entity_id=record.entity_id,
+        duration_seconds=record.calibrated_duration_seconds,
+        estimated_at=record.estimated_at,
+        source=SourceKind.USER_CONFIRMED,
+    )
+
+
+def test_result_rejects_hostile_model_constructed_estimate_with_float_duration() -> None:
+    """Hostile float 450.0 == int 450 must NOT hide the wrong type.
+
+    A ``model_construct()`` estimate with ``duration_seconds=450.0`` passes
+    ANY value-equality cross-field check (``450.0 == 450``), so only the
+    strict fresh rebuild can reject it.
+    """
+    prov = _record()
+    hostile_estimate = ExecutionEffortEstimate.model_construct(
+        id=prov.estimate_id,
+        portfolio_id=prov.portfolio_id,
+        entity_id=prov.entity_id,
+        duration_seconds=450.0,  # pyright: ignore[reportCallIssue] - the hostile value
+        estimated_at=prov.estimated_at,
+        source=SourceKind.USER_CONFIRMED,
+    )
+    with pytest.raises(ValidationError):
+        AcceptedCalibratedEstimateRevisionResult(
+            estimate=hostile_estimate, provenance=prov
+        )
+
+
+def test_result_rejects_hostile_model_constructed_revision_record() -> None:
+    """Hostile record with float 300.0 == int 300 must be rejected by the
+    result's own strict rebuild of ``provenance`` (not by value equality)."""
+    good = _record()
+    hostile_record = AcceptedCalibratedEstimateRevision.model_construct(
+        estimate_id=good.estimate_id,
+        portfolio_id=good.portfolio_id,
+        project_id=good.project_id,
+        entity_id=good.entity_id,
+        entity_type=good.entity_type,
+        candidate_duration_seconds=300.0,  # pyright: ignore[reportCallIssue] - hostile float
+        calibrated_duration_seconds=good.calibrated_duration_seconds,
+        estimated_at=good.estimated_at,
+        source_proposal=good.source_proposal,
+    )
+    with pytest.raises(ValidationError):
+        AcceptedCalibratedEstimateRevisionResult(
+            estimate=_genuine_estimate_for(good), provenance=hostile_record
+        )
+
+
+def test_record_rejects_hostile_model_constructed_nested_proposal() -> None:
+    """Hostile V1.20 proposal (float candidate, value-equal to the int)
+    nested inside the record must be defeated by the record's strict
+    rebuild of ``source_proposal`` — even though every cross-field
+    ``==`` check would pass."""
+    good = _record()
+    proposal = good.source_proposal
+    hostile_proposal = CalibratedEstimateRevisionProposal.model_construct(
+        portfolio_id=proposal.portfolio_id,
+        project_id=proposal.project_id,
+        entity_id=proposal.entity_id,
+        entity_type=proposal.entity_type,
+        candidate_duration_seconds=300.0,  # pyright: ignore[reportCallIssue] - hostile float
+        status=proposal.status,
+        calibrated_duration_seconds=proposal.calibrated_duration_seconds,
+        source_result=proposal.source_result,
+    )
+    with pytest.raises(ValidationError):
+        AcceptedCalibratedEstimateRevision(
+            **_record_kwargs(source_proposal=hostile_proposal)
+        )
+
+
+def test_record_rejects_hostile_model_constructed_nested_chain_entirely() -> None:
+    """Even a wholly-forged nested chain (V1.20 -> V1.19 -> V1.18) whose
+    values are all value-equal to the genuine ones must be rejected, not
+    just the top-level scalars."""
+    good = _record()
+    src = good.source_proposal.source_result
+    assert src.proposal is not None  # READY path always carries the V1.18 proposal
+    forged_v119 = EffectiveCalibrationApplicationResult.model_construct(
+        portfolio_id=src.portfolio_id,
+        project_id=src.project_id,
+        entity_type=src.entity_type,
+        candidate_duration_seconds=300.0,  # pyright: ignore[reportCallIssue] - hostile float
+        status=src.status,
+        proposal=src.proposal,
+    )
+    hostile_proposal = CalibratedEstimateRevisionProposal.model_construct(
+        portfolio_id=good.portfolio_id,
+        project_id=good.project_id,
+        entity_id=good.entity_id,
+        entity_type=good.entity_type,
+        candidate_duration_seconds=300.0,  # pyright: ignore[reportCallIssue] - hostile float
+        status=CalibratedEstimateRevisionProposalStatus.READY,
+        calibrated_duration_seconds=good.calibrated_duration_seconds,
+        source_result=forged_v119,
+    )
+    with pytest.raises(ValidationError):
+        AcceptedCalibratedEstimateRevision(
+            **_record_kwargs(source_proposal=hostile_proposal)
+        )
+
+
+def test_strict_model_construction_rejects_coercible_scalar_values() -> None:
+    """Ordinary coercible str UUID / str datetime / str int / dict inputs
+    are rejected where strict model construction applies (no coercion)."""
+    # str UUID (coercible in lax mode) must be rejected.
+    with pytest.raises(ValidationError):
+        _record(estimate_id=str(uuid4()))
+    # str datetime (coercible in lax mode) must be rejected.
+    with pytest.raises(ValidationError):
+        _record(estimated_at="2026-09-01T08:00:00+00:00")
+    # str int (coercible in lax mode) must be rejected.
+    with pytest.raises(ValidationError):
+        _record(candidate_duration_seconds="300")
+    # A string where a genuine estimate instance is required must be
+    # rejected (strict type: no str->model coercion).
+    with pytest.raises(ValidationError):
+        AcceptedCalibratedEstimateRevisionResult(
+            **_result_kwargs(estimate="not-an-estimate"),
+        )
+    # A str where a genuine provenance instance is required must be rejected.
+    with pytest.raises(ValidationError):
+        AcceptedCalibratedEstimateRevisionResult(
+            **_result_kwargs(provenance="not-a-record"),
+        )
+    # A dict estimate carries a coercible str UUID — the strict rebuild of
+    # the nested estimate must reject the coerced scalar as well.
+    with pytest.raises(ValidationError):
+        AcceptedCalibratedEstimateRevisionResult(
+            **_result_kwargs(
+                estimate={
+                    "id": str(uuid4()),
+                    "portfolio_id": str(PORTFOLIO_ID),
+                    "entity_id": str(TASK_A1_ID),
+                    "duration_seconds": str(CANDIDATE * 3 // 2),
+                    "estimated_at": "2026-09-01T08:00:00+00:00",
+                    "source": SourceKind.USER_CONFIRMED,
+                },
+            ),
+        )
 # --- Input strictness (before ANY repository touch) -------------------------
 
 
