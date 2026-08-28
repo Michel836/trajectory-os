@@ -84,6 +84,70 @@ class ExecutionEffortEstimateRow(Base):
     source: Mapped[str] = mapped_column(String(), nullable=False)
 
 
+class AcceptedCalibratedEstimateRevisionRow(Base):
+    """One durable, immutable calibrated-estimate-revision provenance row.
+
+    Append-only: the row has no update or delete representation fields.
+
+    One-to-one identity: ``estimate_id`` IS the primary key and references
+    exactly one row of ``execution_effort_estimates.id``. A row exists
+    only for an estimate accepted through V1.21, so ``estimate_id`` is
+    always present on stored provenance rows; plain V1.10 estimates
+    simply have no provenance row at all (the estimate table, not this
+    table, remains the source of truth for the estimate itself), and the
+    one-to-one identity prevents the same estimate from ever carrying two
+    different accepted calibrated revisions.
+
+    ``portfolio_id`` is a foreign key into ``portfolios.id`` with
+    ``ON DELETE CASCADE`` (same convention as the estimate/observation
+    tables). ``project_id`` / ``entity_id`` / ``entity_type`` are
+    explicit immutable snapshot columns and carry NO foreign keys into
+    ``entities.id`` by design: historical provenance must survive the
+    replacement or removal of entity snapshot rows in later portfolio
+    saves.
+
+    The exact accepted V1.20 snapshot (with its nested V1.19 result and
+    V1.18 proposal provenance chain) is retained as deterministic
+    explicit JSON in ``accepted_v120_snapshot``, produced by Pydantic
+    JSON-compatible serialization and re-validated through ``model_validate``
+    on read-back. This is NOT a pickle and NOT an opaque binary blob;
+    every core identifier and the accepted arithmetic (candidate /
+    calibrated durations) is additionally stored in the dedicated
+    INTEGER/TEXT columns above for queryability and direct corruption
+    visibility, and ``entity_type`` is stored by its enum ``.value``.
+    """
+
+    __tablename__ = "accepted_calibrated_estimate_revisions"
+
+    # Exact one-to-one link into ``execution_effort_estimates.id``;
+    # PRIMARY KEY and always present on stored rows (see class doc).
+    # Deliberately NOT a foreign key into the estimate table: historical
+    # history must not be deleted by dropping/recreating the estimate
+    # snapshot table during V0 development, and no SQLite-specific
+    # NULL-PK behavior is ever relied upon (stored values are always
+    # present, so portability across SQLite versions is never an issue).
+    estimate_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    portfolio_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # Explicit immutable snapshot columns (no FKs into entities.id, so
+    # provenance survives entity replacement/removal via portfolio save).
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    entity_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(), nullable=False)
+    # Exact INTEGER snapshots of the accepted V1.20 arithmetic; the
+    # durations are never stored as REAL.
+    candidate_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    calibrated_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    # ISO-8601 aware timestamp text, same convention as the estimate row.
+    estimated_at: Mapped[str] = mapped_column(String(), nullable=False)
+    # Deterministic explicit JSON of the EXACT accepted V1.20 snapshot
+    # (V1.20 -> V1.19 -> V1.18 provenance chain). Never a pickle.
+    accepted_v120_snapshot: Mapped[str] = mapped_column(String(), nullable=False)
+
+
 class ExecutionEffortCalibrationFactorDecisionRow(Base):
     """One durable, immutable human decision over a V1.15 factor proposal.
 

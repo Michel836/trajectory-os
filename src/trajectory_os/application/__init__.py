@@ -11,6 +11,14 @@ from trajectory_os.application.execution_effort import (
     ExecutionEffortPortfolioNotFoundError,
     record_execution_effort_durably,
 )
+from trajectory_os.application.execution_effort_calibration_acceptance import (
+    AcceptCalibratedEstimateRevisionError,
+    AcceptedCalibratedEstimateRevision,
+    AcceptedCalibratedEstimateRevisionResult,
+    CalibratedEstimateRevisionRepository,
+    NoEffectiveFactorCannotBeAcceptedError,
+    accept_calibrated_estimate_revision_durably,
+)
 from trajectory_os.application.execution_effort_comparison import (
     DurableExecutionEffortComparisonError,
     ExecutionEffortComparisonPortfolioNotFoundError,
@@ -42,6 +50,10 @@ from trajectory_os.application.work_breakdown_acceptance import (
 )
 
 __all__ = [
+    "AcceptCalibratedEstimateRevisionError",
+    "AcceptedCalibratedEstimateRevision",
+    "AcceptedCalibratedEstimateRevisionResult",
+    "CalibratedEstimateRevisionRepository",
     "DurableEntityStatusTransitionError",
     "DurableExecutionEffortComparisonError",
     "DurableExecutionEffortError",
@@ -58,9 +70,11 @@ __all__ = [
     "ExecutionEffortObservationRepository",
     "ExecutionEffortPlanningPortfolioNotFoundError",
     "ExecutionEffortPortfolioNotFoundError",
+    "NoEffectiveFactorCannotBeAcceptedError",
     "PortfolioNotFoundError",
     "PortfolioRepository",
     "StatusTransitionPortfolioNotFoundError",
+    "accept_calibrated_estimate_revision_durably",
     "accept_work_breakdown_proposal_durably",
     "compare_work_breakdown_effort_durably",
     "measure_work_breakdown_effort_durably",
