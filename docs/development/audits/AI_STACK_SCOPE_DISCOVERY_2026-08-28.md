@@ -31,6 +31,7 @@ The hidden acceptance was never supplied to the agents.
 | M1 | Aider 0.86.2 + Qwen3.8 medium | disposable `GIT_INDEX_FILE` | 796.33 s | PASS | 716 tests + Ruff + mypy PASS | byte-for-byte unchanged | PASS |
 | M2 | Aider 0.86.2 + Qwen3.8 medium | disposable `GIT_INDEX_FILE` | 662.73 s | FAIL | 8 failed / 708 passed | byte-for-byte unchanged | feature FAIL / failure-aware termination |
 | M3 | Aider 0.86.2 + Qwen3.8 medium | disposable `GIT_INDEX_FILE` | 531.22 s | PASS | 19 failed / 701 passed | byte-for-byte unchanged | hidden semantics PASS / self-test generation FAIL / overall FAIL |
+| H1 | Pi read-only discovery → scoped Aider + Qwen3.8 | disposable `GIT_INDEX_FILE` for Aider | 69.17 s + 597.59 s = 666.76 s | PASS | 14 failed / 704 passed | byte-for-byte unchanged | hybrid FAIL / self-test fixture failure |
 
 ## Scope-discovery findings
 
@@ -54,6 +55,29 @@ However, reproducibility was materially weaker in free-scope mode:
 
 Among the three disposable-index replications, only 1/3 passed the full canonical gate. The sample is small and must not be interpreted as a population failure rate, but it is sufficient to reject automatic promotion of unscoped Aider as the default substantive-feature route.
 
+## Hybrid H1 finding
+
+H1 tested whether scope discovery and implementation should be split between harnesses rather than asking Aider to discover and implement in one run.
+
+Pi performed read-only discovery in **69.17 s**, exited cleanly, made no repository changes, and selected exactly these six editable surfaces:
+
+- `src/trajectory_os/domain/__init__.py`;
+- `src/trajectory_os/domain/entity_status_transition_batch.py`;
+- `src/trajectory_os/application/__init__.py`;
+- `src/trajectory_os/application/entity_status_transition_batch.py`;
+- `tests/unit/test_entity_status_transition_batch.py`;
+- `tests/unit/test_durable_entity_status_transition_batch.py`.
+
+The scope was therefore not the problem. Scoped Aider then completed in **597.59 s**, preserved the real Git index through the disposable-index wrapper, passed the hidden acceptance, and passed `git diff --check`, but the independent canonical gate failed with **14 failed / 704 passed**.
+
+The failures came from Aider-authored tests constructing `Portfolio` fixtures without the required `name` field. The underlying implementation still satisfied the hidden semantics.
+
+Nominal combined H1 wall time was **666.76 s**, approximately **16.6% faster** than Pi-only Run L at 799.70 s. That latency advantage is not operationally useful because the canonical gate rejected the result.
+
+H1 therefore shows that separating discovery from implementation does not solve the recurring Aider self-test-generation reliability problem for this task class. The additional orchestration is not justified as a default workflow.
+
+Decision: **do not run H2**. Close this synthetic benchmark campaign and return to real TrajectoryOS work.
+
 ## Git-index finding
 
 Native Aider creation of new files staged empty blobs in the real index before filling the working-tree files. The staged blob was the canonical empty-file blob:
@@ -67,7 +91,7 @@ GIT_INDEX_FILE=<disposable-index>
 git read-tree HEAD
 ```
 
-M1, M2, and M3 all left the real worktree index byte-for-byte unchanged while Aider continued to maintain its own staged empty-file placeholders in the disposable index.
+M1, M2, M3, and H1 all left the real worktree index byte-for-byte unchanged while Aider continued to operate with Git/repo-map behavior isolated from the authoritative index.
 
 This validates disposable-index isolation as an effective Git-hygiene control when Aider repository mapping/discovery is desired.
 
@@ -87,7 +111,13 @@ M3 satisfied the independent hidden acceptance, which indicates that the request
 
 Classification: **hidden semantics PASS / self-test generation FAIL / overall FAIL**.
 
-This is a particularly important reminder that agent-authored tests are not authoritative merely because the implementation itself appears semantically correct.
+### H1
+
+H1 also satisfied hidden acceptance but failed because self-authored fixtures omitted the required `Portfolio.name` field. Since Pi had already discovered the correct editable scope, this failure cannot reasonably be attributed to scope discovery.
+
+Classification: **hidden semantics PASS / self-test fixture FAIL / overall FAIL**.
+
+These failures reinforce that agent-authored tests are not authoritative merely because the implementation itself appears semantically correct.
 
 ## Performance observations
 
@@ -106,9 +136,11 @@ The disposable index is not intrinsically responsible for M1's slower run: M2 us
 
 Observed latency variance is therefore dominated by agent/model trajectory and runtime variability rather than by a demonstrated deterministic cost of `GIT_INDEX_FILE`.
 
+H1 adds a separate **69.17 s** discovery stage and still fails the canonical gate. Its nominal total of **666.76 s** is faster than Pi L, but a failed quality gate makes that speed advantage irrelevant for production routing.
+
 ## Routing conclusion
 
-Validated working routing after S1:
+Validated working routing after S1 and H1:
 
 ```text
 substantive feature + editable surfaces known
@@ -118,9 +150,13 @@ substantive feature + scope must be discovered autonomously
     → Pi + Qwen3.8 medium (conservative default)
 
 Aider + Qwen3.8 + repo-map + disposable Git index
-    → validated experimental alternative for unknown-scope work;
-      discovery works and Git hygiene works,
-      but end-to-end reproducibility is not yet sufficient for default routing
+    → experimental only for unknown-scope work;
+      discovery and Git hygiene work,
+      but end-to-end reproducibility is insufficient for default routing
+
+Pi read-only discovery → scoped Aider
+    → not adopted as default;
+      correct discovery did not eliminate Aider self-test failures
 ```
 
 Deterministic pytest/Ruff/mypy/CI remains mandatory in every path. Human merge authority remains unchanged.
@@ -130,6 +166,13 @@ Deterministic pytest/Ruff/mypy/CI remains mandatory in every path. Human merge a
 - It does not prove Pi is universally more accurate than Aider for unknown-scope work.
 - It does not establish a statistically meaningful success probability from three Aider replications.
 - It does not show that disposable-index isolation causes a latency penalty.
+- It does not prove that every future hybrid discovery/implementation pipeline would fail.
 - It does not validate autonomous merge authority.
 
 The result is a routing decision for the current TrajectoryOS stack based on the measured evidence available today.
+
+## Benchmark stop rule
+
+This synthetic task class is now closed. No H2 or further repetition is justified by the routing uncertainty it would resolve.
+
+Future model/harness measurements should be collected during real TrajectoryOS Issues unless a concrete new uncertainty could materially change routing.
