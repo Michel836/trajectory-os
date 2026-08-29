@@ -197,6 +197,17 @@ STATUS_LOG="$RUN_DIR/status.log"
 START_EPOCH="$(date +%s)"
 START_TEXT="$(date --iso-8601=seconds)"
 
+BASELINE_STATUS="$(status_fingerprint)"
+BASELINE_COUNT="$(
+    if [[ -n "$BASELINE_STATUS" ]]; then
+        printf '%s
+' "$BASELINE_STATUS" | wc -l
+    else
+        printf '0
+'
+    fi
+)"
+
 cat > "$META" <<EOF
 trajectory_pi_version=$VERSION
 started_at=$START_TEXT
@@ -230,8 +241,16 @@ gpu_line() {
     }'
 }
 
+current_status() {
+    git status --porcelain 2>/dev/null
+}
+
 changed_count() {
-    git status --porcelain 2>/dev/null | wc -l
+    current_status | wc -l
+}
+
+status_fingerprint() {
+    current_status | sort
 }
 
 notify() {
@@ -254,8 +273,12 @@ printf "ETA            %s\n" "$ETA"
 printf "Model          %s\n" "$MODEL"
 printf "Thinking       %s\n" "$THINKING"
 printf "Branch         %s\n" "$BRANCH"
-printf "HEAD           %.12s\n" "$HEAD_BEFORE"
-printf "Log            %s\n" "$LOG"
+printf "HEAD           %.12s
+" "$HEAD_BEFORE"
+printf "Baseline files %s
+" "$BASELINE_COUNT"
+printf "Log            %s
+" "$LOG"
 echo "============================================================"
 echo
 
@@ -300,6 +323,17 @@ while kill -0 "$PI_PID" 2>/dev/null; do
     ELAPSED_H="$(human_duration "$ELAPSED")"
 
     CHANGED="$(changed_count)"
+    CURRENT_STATUS="$(status_fingerprint)"
+
+    AGENT_CHANGED="$(
+        comm -13 \
+          <(printf '%s
+' "$BASELINE_STATUS" | sed '/^$/d') \
+          <(printf '%s
+' "$CURRENT_STATUS" | sed '/^$/d') \
+          | wc -l
+    )"
+
     GPU="$(gpu_line)"
     [[ -n "$GPU" ]] || GPU="GPU unavailable"
 
@@ -323,7 +357,7 @@ while kill -0 "$PI_PID" 2>/dev/null; do
         "$(date +%H:%M:%S)" \
         "$ELAPSED_H" \
         "$ETA_STATE" \
-        "$CHANGED" \
+        "$CHANGED (+$AGENT_CHANGED)" \
         "$OLLAMA_STATE" \
         "$GPU"
     )"
@@ -357,7 +391,22 @@ echo " TRAJECTORY-PI FINISHED"
 echo "============================================================"
 printf "Runtime        %s\n" "$ELAPSED_H"
 printf "Pi exit code   %s\n" "$PI_RC"
-printf "Files changed  %s\n" "$CHANGED_AFTER"
+CURRENT_STATUS_AFTER="$(status_fingerprint)"
+AGENT_CHANGED_AFTER="$(
+    comm -13 \
+      <(printf '%s
+' "$BASELINE_STATUS" | sed '/^$/d') \
+      <(printf '%s
+' "$CURRENT_STATUS_AFTER" | sed '/^$/d') \
+      | wc -l
+)"
+
+printf "Baseline files %s
+" "$BASELINE_COUNT"
+printf "Current files  %s
+" "$CHANGED_AFTER"
+printf "Agent-added    %s
+" "$AGENT_CHANGED_AFTER"
 
 if [[ "$HEAD_AFTER" != "$HEAD_BEFORE" ]]; then
     echo
