@@ -240,7 +240,34 @@ changed_count() {
 }
 
 status_fingerprint() {
-    current_status | sort
+    current_status
+}
+
+count_added_since_baseline() {
+    local current="$1"
+    local baseline_file
+    local current_file
+
+    baseline_file="$(mktemp)"
+    current_file="$(mktemp)"
+
+    printf '%s\n' "$BASELINE_STATUS" | sed '/^$/d' > "$baseline_file"
+    printf '%s\n' "$current" | sed '/^$/d' > "$current_file"
+
+    awk '
+        NR == FNR {
+            baseline[$0] = 1
+            next
+        }
+        !($0 in baseline) {
+            added++
+        }
+        END {
+            print added + 0
+        }
+    ' "$baseline_file" "$current_file"
+
+    rm -f "$baseline_file" "$current_file"
 }
 
 # Capture Git baseline after status helper functions are defined.
@@ -323,14 +350,7 @@ while kill -0 "$PI_PID" 2>/dev/null; do
     CHANGED="$(changed_count)"
     CURRENT_STATUS="$(status_fingerprint)"
 
-    AGENT_CHANGED="$(
-        comm -13 \
-          <(printf '%s
-' "$BASELINE_STATUS" | sed '/^$/d') \
-          <(printf '%s
-' "$CURRENT_STATUS" | sed '/^$/d') \
-          | wc -l
-    )"
+    AGENT_CHANGED="$(count_added_since_baseline "$CURRENT_STATUS")"
 
     GPU="$(gpu_line)"
     [[ -n "$GPU" ]] || GPU="GPU unavailable"
@@ -390,14 +410,7 @@ echo "============================================================"
 printf "Runtime        %s\n" "$ELAPSED_H"
 printf "Pi exit code   %s\n" "$PI_RC"
 CURRENT_STATUS_AFTER="$(status_fingerprint)"
-AGENT_CHANGED_AFTER="$(
-    comm -13 \
-      <(printf '%s
-' "$BASELINE_STATUS" | sed '/^$/d') \
-      <(printf '%s
-' "$CURRENT_STATUS_AFTER" | sed '/^$/d') \
-      | wc -l
-)"
+AGENT_CHANGED_AFTER="$(count_added_since_baseline "$CURRENT_STATUS_AFTER")"
 
 printf "Baseline files %s
 " "$BASELINE_COUNT"
