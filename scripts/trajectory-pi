@@ -197,16 +197,6 @@ STATUS_LOG="$RUN_DIR/status.log"
 START_EPOCH="$(date +%s)"
 START_TEXT="$(date --iso-8601=seconds)"
 
-BASELINE_STATUS="$(status_fingerprint)"
-BASELINE_COUNT="$(
-    if [[ -n "$BASELINE_STATUS" ]]; then
-        printf '%s
-' "$BASELINE_STATUS" | wc -l
-    else
-        printf '0
-'
-    fi
-)"
 
 cat > "$META" <<EOF
 trajectory_pi_version=$VERSION
@@ -252,6 +242,14 @@ changed_count() {
 status_fingerprint() {
     current_status | sort
 }
+
+# Capture Git baseline after status helper functions are defined.
+BASELINE_STATUS="$(status_fingerprint)"
+if [[ -n "$BASELINE_STATUS" ]]; then
+    BASELINE_COUNT="$(printf '%s\n' "$BASELINE_STATUS" | wc -l)"
+else
+    BASELINE_COUNT=0
+fi
 
 notify() {
     [[ "$NOTIFY" -eq 1 ]] || return 0
