@@ -40,6 +40,12 @@ from trajectory_os.application.execution_effort_effective_plan import (
     WorkBreakdownEffectivePlanItem,
     build_effective_work_breakdown_effort_plan_durably,
 )
+from trajectory_os.application.execution_effort_effective_summary import (
+    WorkBreakdownEffectiveEffortSummary,
+    WorkBreakdownEffectiveSummaryError,
+    build_effective_work_breakdown_effort_summary_durably,
+    summarize_effective_work_breakdown_effort_plan,
+)
 from trajectory_os.application.execution_effort_estimates import (
     DurableExecutionEffortEstimateError,
     ExecutionEffortEstimatePortfolioNotFoundError,
@@ -85,8 +91,10 @@ __all__ = [
     "EffectiveExecutionEffortEstimateStatus",
     "ExecutionEffortComparisonPortfolioNotFoundError",
     "WorkBreakdownEffectiveEffortPlan",
+    "WorkBreakdownEffectiveEffortSummary",
     "WorkBreakdownEffectivePlanItem",
     "WorkBreakdownEffectivePlanError",
+    "WorkBreakdownEffectiveSummaryError",
     "ExecutionEffortEstimatePortfolioNotFoundError",
     "ExecutionEffortEstimateReader",
     "ExecutionEffortEstimateRepository",
@@ -103,11 +111,13 @@ __all__ = [
     "accept_work_breakdown_proposal_durably",
     "compare_work_breakdown_effort_durably",
     "build_effective_work_breakdown_effort_plan_durably",
+    "build_effective_work_breakdown_effort_summary_durably",
     "measure_work_breakdown_effort_durably",
     "plan_work_breakdown_effort_durably",
     "record_execution_effort_estimate_durably",
     "record_execution_effort_durably",
     "resolve_effective_execution_effort_estimate",
     "resolve_effective_execution_effort_estimate_durably",
+    "summarize_effective_work_breakdown_effort_plan",
     "transition_entity_status_durably",
 ]
