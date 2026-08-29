@@ -1,0 +1,399 @@
+#!/usr/bin/env bash
+set -u
+
+# ============================================================
+# trajectory-pi V0.1
+# Observable + safe runner for TrajectoryOS Pi workloads.
+#
+# AI proposes.
+# Deterministic code validates.
+# Human decides.
+# ============================================================
+
+VERSION="0.1.0"
+
+usage() {
+cat <<'EOF'
+trajectory-pi V0.1
+
+Usage:
+  scripts/trajectory-pi [options] -- "prompt"
+
+Options:
+  --class CLASS        smoke|repair|recovery|feature|complex
+  --model MODEL        Pi/Ollama model (default: qwen3.8-dev64)
+  --thinking LEVEL     default: medium
+  --prompt-file FILE   use @FILE plus a short user message
+  --interval SEC       heartbeat interval (default: 10)
+  --dirty-ok           permit pre-existing working-tree changes
+  --no-notify          disable KDE notification
+  --help
+  --version
+
+Examples:
+
+  scripts/trajectory-pi \
+    --class repair \
+    --model qwen3.8-dev64 \
+    -- "Inspect and repair the current implementation."
+
+  scripts/trajectory-pi \
+    --class complex \
+    --prompt-file /tmp/v122.md \
+    -- "Implement the attached V1.22 specification."
+EOF
+}
+
+RUN_CLASS="feature"
+MODEL="qwen3.8-dev64"
+THINKING="medium"
+PROMPT_FILE=""
+INTERVAL=10
+DIRTY_OK=0
+NOTIFY=1
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --class)
+            RUN_CLASS="${2:?missing class}"
+            shift 2
+            ;;
+        --model)
+            MODEL="${2:?missing model}"
+            shift 2
+            ;;
+        --thinking)
+            THINKING="${2:?missing thinking level}"
+            shift 2
+            ;;
+        --prompt-file)
+            PROMPT_FILE="${2:?missing prompt file}"
+            shift 2
+            ;;
+        --interval)
+            INTERVAL="${2:?missing interval}"
+            shift 2
+            ;;
+        --dirty-ok)
+            DIRTY_OK=1
+            shift
+            ;;
+        --no-notify)
+            NOTIFY=0
+            shift
+            ;;
+        --version)
+            echo "trajectory-pi $VERSION"
+            exit 0
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            echo "ERROR: unknown option: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+PROMPT="${*:-}"
+
+case "$RUN_CLASS" in
+    smoke)
+        ETA="under 2 min"
+        ETA_LOW=0
+        ETA_HIGH=2
+        ;;
+    repair)
+        ETA="5-15 min"
+        ETA_LOW=5
+        ETA_HIGH=15
+        ;;
+    recovery)
+        ETA="5-15 min"
+        ETA_LOW=5
+        ETA_HIGH=15
+        ;;
+    feature)
+        ETA="20-45 min"
+        ETA_LOW=20
+        ETA_HIGH=45
+        ;;
+    complex)
+        ETA="45-75 min"
+        ETA_LOW=45
+        ETA_HIGH=75
+        ;;
+    *)
+        echo "ERROR: invalid class: $RUN_CLASS" >&2
+        exit 2
+        ;;
+esac
+
+REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "ERROR: not inside a Git repository." >&2
+    exit 2
+}
+
+cd "$REPO"
+
+BRANCH="$(git branch --show-current)"
+HEAD_BEFORE="$(git rev-parse HEAD)"
+
+# ------------------------------------------------------------
+# Safety
+# ------------------------------------------------------------
+
+if [[ "$BRANCH" == "main" || "$BRANCH" == "master" ]]; then
+    echo
+    echo "SAFETY STOP"
+    echo "trajectory-pi refuses writable agent work on branch: $BRANCH"
+    echo
+    echo "Create/switch to a feature branch first."
+    exit 3
+fi
+
+DIRTY_BEFORE="$(git status --porcelain)"
+
+if [[ -n "$DIRTY_BEFORE" && "$DIRTY_OK" -ne 1 ]]; then
+    echo
+    echo "SAFETY STOP"
+    echo "Working tree is already dirty."
+    echo
+    git status --short
+    echo
+    echo "Use --dirty-ok only for an intentional recovery/resume run."
+    exit 4
+fi
+
+if [[ -n "$PROMPT_FILE" && ! -f "$PROMPT_FILE" ]]; then
+    echo "ERROR: prompt file not found: $PROMPT_FILE" >&2
+    exit 2
+fi
+
+if [[ -z "$PROMPT" ]]; then
+    echo "ERROR: no user message supplied after --" >&2
+    exit 2
+fi
+
+# ------------------------------------------------------------
+# Runtime files
+# ------------------------------------------------------------
+
+STAMP="$(date +%Y%m%d-%H%M%S)"
+RUN_DIR="$REPO/.trajectory-pi/runs/$STAMP"
+mkdir -p "$RUN_DIR"
+
+LOG="$RUN_DIR/pi.log"
+META="$RUN_DIR/meta.txt"
+STATUS_LOG="$RUN_DIR/status.log"
+
+START_EPOCH="$(date +%s)"
+START_TEXT="$(date --iso-8601=seconds)"
+
+cat > "$META" <<EOF
+trajectory_pi_version=$VERSION
+started_at=$START_TEXT
+run_class=$RUN_CLASS
+eta=$ETA
+model=$MODEL
+thinking=$THINKING
+branch=$BRANCH
+head_before=$HEAD_BEFORE
+prompt_file=$PROMPT_FILE
+EOF
+
+human_duration() {
+    local total="$1"
+    printf '%02d:%02d:%02d' \
+        $((total / 3600)) \
+        $(((total % 3600) / 60)) \
+        $((total % 60))
+}
+
+gpu_line() {
+    nvidia-smi \
+      --query-gpu=utilization.gpu,power.draw,memory.used,memory.total \
+      --format=csv,noheader,nounits 2>/dev/null |
+    awk -F',' '{
+      gsub(/^[ \t]+|[ \t]+$/, "", $1)
+      gsub(/^[ \t]+|[ \t]+$/, "", $2)
+      gsub(/^[ \t]+|[ \t]+$/, "", $3)
+      gsub(/^[ \t]+|[ \t]+$/, "", $4)
+      printf "GPU %s%% | %s W | VRAM %s/%s MiB", $1,$2,$3,$4
+    }'
+}
+
+changed_count() {
+    git status --porcelain 2>/dev/null | wc -l
+}
+
+notify() {
+    [[ "$NOTIFY" -eq 1 ]] || return 0
+    command -v notify-send >/dev/null 2>&1 || return 0
+    notify-send "$1" "$2" >/dev/null 2>&1 || true
+}
+
+cleanup() {
+    :
+}
+trap cleanup EXIT INT TERM
+
+echo
+echo "============================================================"
+echo " TRAJECTORY-PI V$VERSION"
+echo "============================================================"
+printf "Run class      %s\n" "$RUN_CLASS"
+printf "ETA            %s\n" "$ETA"
+printf "Model          %s\n" "$MODEL"
+printf "Thinking       %s\n" "$THINKING"
+printf "Branch         %s\n" "$BRANCH"
+printf "HEAD           %.12s\n" "$HEAD_BEFORE"
+printf "Log            %s\n" "$LOG"
+echo "============================================================"
+echo
+
+notify \
+  "Trajectory Pi started" \
+  "$RUN_CLASS · $MODEL · ETA $ETA"
+
+# ------------------------------------------------------------
+# Pi invocation
+#
+# Important: always provide a REAL short user message.
+# @file is supplemental context only.
+# ------------------------------------------------------------
+
+PI_ARGS=(
+    --model "$MODEL"
+    --thinking "$THINKING"
+    -p
+)
+
+if [[ -n "$PROMPT_FILE" ]]; then
+    PI_ARGS+=("@$PROMPT_FILE")
+fi
+
+PI_ARGS+=("$PROMPT")
+
+# Pi runs as child process.
+# Wrapper survives Pi/provider failures.
+pi "${PI_ARGS[@]}" >"$LOG" 2>&1 &
+PI_PID=$!
+
+echo "Pi PID         $PI_PID"
+echo
+
+# ------------------------------------------------------------
+# Heartbeat
+# ------------------------------------------------------------
+
+while kill -0 "$PI_PID" 2>/dev/null; do
+    NOW="$(date +%s)"
+    ELAPSED=$((NOW - START_EPOCH))
+    ELAPSED_H="$(human_duration "$ELAPSED")"
+
+    CHANGED="$(changed_count)"
+    GPU="$(gpu_line)"
+    [[ -n "$GPU" ]] || GPU="GPU unavailable"
+
+    OLLAMA_STATE="idle"
+    if ollama ps 2>/dev/null | grep -q "$MODEL"; then
+        OLLAMA_STATE="active"
+    fi
+
+    MINS=$((ELAPSED / 60))
+
+    if (( MINS < ETA_LOW )); then
+        ETA_STATE="within expected startup"
+    elif (( MINS <= ETA_HIGH )); then
+        ETA_STATE="within expected range"
+    else
+        ETA_STATE="beyond expected range"
+    fi
+
+    LINE="$(
+      printf '[%s] elapsed=%s | %s | files=%s | ollama=%s | %s' \
+        "$(date +%H:%M:%S)" \
+        "$ELAPSED_H" \
+        "$ETA_STATE" \
+        "$CHANGED" \
+        "$OLLAMA_STATE" \
+        "$GPU"
+    )"
+
+    echo "$LINE"
+    echo "$LINE" >> "$STATUS_LOG"
+
+    sleep "$INTERVAL"
+done
+
+wait "$PI_PID"
+PI_RC=$?
+
+END_EPOCH="$(date +%s)"
+ELAPSED=$((END_EPOCH - START_EPOCH))
+ELAPSED_H="$(human_duration "$ELAPSED")"
+HEAD_AFTER="$(git rev-parse HEAD)"
+CHANGED_AFTER="$(changed_count)"
+
+{
+    echo "ended_at=$(date --iso-8601=seconds)"
+    echo "elapsed_seconds=$ELAPSED"
+    echo "pi_exit_code=$PI_RC"
+    echo "head_after=$HEAD_AFTER"
+    echo "changed_files=$CHANGED_AFTER"
+} >> "$META"
+
+echo
+echo "============================================================"
+echo " TRAJECTORY-PI FINISHED"
+echo "============================================================"
+printf "Runtime        %s\n" "$ELAPSED_H"
+printf "Pi exit code   %s\n" "$PI_RC"
+printf "Files changed  %s\n" "$CHANGED_AFTER"
+
+if [[ "$HEAD_AFTER" != "$HEAD_BEFORE" ]]; then
+    echo
+    echo "WARNING: HEAD CHANGED DURING RUN"
+    printf "Before         %s\n" "$HEAD_BEFORE"
+    printf "After          %s\n" "$HEAD_AFTER"
+fi
+
+echo
+echo "===== GIT STATUS ====="
+git status --short
+
+echo
+echo "===== DIFF STAT ====="
+git --no-pager diff --stat
+git --no-pager diff --cached --stat
+
+echo
+echo "===== PI FINAL OUTPUT ====="
+cat "$LOG"
+
+echo
+echo "===== ARTIFACTS ====="
+echo "$RUN_DIR"
+
+if [[ "$PI_RC" -eq 0 ]]; then
+    notify \
+      "Trajectory Pi finished" \
+      "$RUN_CLASS completed in $ELAPSED_H · $CHANGED_AFTER files changed"
+else
+    notify \
+      "Trajectory Pi ERROR" \
+      "Pi exited $PI_RC after $ELAPSED_H · work preserved"
+fi
+
+echo
+echo "No commit, push or merge performed."
+
+exit "$PI_RC"
