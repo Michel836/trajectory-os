@@ -232,15 +232,75 @@ gpu_line() {
 }
 
 current_status() {
-    git status --porcelain 2>/dev/null
+    git status --porcelain=v1 --untracked-files=all 2>/dev/null
 }
 
 changed_count() {
     current_status | wc -l
 }
 
+# Fingerprint every dirty path by Git state + working-tree content.
+#
+# This matters for recovery runs: a file may already be " M foo.py"
+# before Pi starts and remain " M foo.py" after Pi edits it again.
+# Porcelain status alone cannot detect that second modification.
+#
+# Path names are emitted as hex so whitespace/newlines cannot make the
+# comparison ambiguous.
 status_fingerprint() {
-    current_status
+    git status --porcelain=v1 -z --untracked-files=all 2>/dev/null |
+    python3 -c '
+import hashlib
+import os
+import sys
+
+entries = sys.stdin.buffer.read().split(b"\0")
+cwd = os.fsencode(os.getcwd())
+
+i = 0
+while i < len(entries):
+    raw = entries[i]
+    i += 1
+
+    if not raw:
+        continue
+
+    if len(raw) < 4:
+        continue
+
+    status_b = raw[:2]
+    path_b = raw[3:]
+
+    # Porcelain -z emits an additional source pathname for renames/copies.
+    if status_b[:1] in (b"R", b"C") and i < len(entries):
+        i += 1
+
+    full = os.path.join(cwd, path_b)
+
+    try:
+        if os.path.islink(full):
+            target = os.readlink(full)
+            if isinstance(target, str):
+                target = os.fsencode(target)
+            digest = "symlink:" + hashlib.sha256(target).hexdigest()
+        elif os.path.isfile(full):
+            h = hashlib.sha256()
+            with open(full, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                    h.update(chunk)
+            digest = "file:" + h.hexdigest()
+        elif os.path.isdir(full):
+            digest = "directory"
+        elif os.path.lexists(full):
+            digest = "special"
+        else:
+            digest = "missing"
+    except OSError as exc:
+        digest = "error:" + exc.__class__.__name__
+
+    status = status_b.decode("ascii", "replace")
+    print(path_b.hex() + "\t" + status + "\t" + digest)
+'
 }
 
 count_added_since_baseline() {
@@ -254,16 +314,30 @@ count_added_since_baseline() {
     printf '%s\n' "$BASELINE_STATUS" | sed '/^$/d' > "$baseline_file"
     printf '%s\n' "$current" | sed '/^$/d' > "$current_file"
 
-    awk '
+    # Count paths whose state differs from the baseline:
+    # - newly dirty path
+    # - already-dirty path whose content/state changed
+    # - baseline dirty path restored/removed from the dirty set
+    awk -F '\t' '
         FILENAME == ARGV[1] {
-            baseline[$0] = 1
+            baseline[$1] = $0
             next
         }
-        !($0 in baseline) {
-            added++
+
+        {
+            seen[$1] = 1
+            if (!($1 in baseline) || baseline[$1] != $0) {
+                changed++
+            }
         }
+
         END {
-            print added + 0
+            for (path in baseline) {
+                if (!(path in seen)) {
+                    changed++
+                }
+            }
+            print changed + 0
         }
     ' "$baseline_file" "$current_file"
 
@@ -284,10 +358,17 @@ notify() {
     notify-send "$1" "$2" >/dev/null 2>&1 || true
 }
 
-cleanup() {
-    :
+FORWARDED_SIGNAL=""
+
+handle_signal() {
+    local sig="$1"
+
+    FORWARDED_SIGNAL="$sig"
+
+    if [[ -n "${PI_PID:-}" ]] && kill -0 "$PI_PID" 2>/dev/null; then
+        kill -s "$sig" "$PI_PID" 2>/dev/null || true
+    fi
 }
-trap cleanup EXIT INT TERM
 
 echo
 echo "============================================================"
@@ -334,6 +415,10 @@ PI_ARGS+=("$PROMPT")
 # Wrapper survives Pi/provider failures.
 pi "${PI_ARGS[@]}" >"$LOG" 2>&1 &
 PI_PID=$!
+
+# Install signal forwarding only after the Pi child exists.
+trap 'handle_signal INT' INT
+trap 'handle_signal TERM' TERM
 
 echo "Pi PID         $PI_PID"
 echo
@@ -388,6 +473,18 @@ done
 
 wait "$PI_PID"
 PI_RC=$?
+
+# Do not leave signal traps active during final reporting.
+trap - INT TERM
+
+# Normally Pi itself returns 130/143 after the forwarded signal.
+# Preserve correct shell semantics even if a provider exits 0.
+if [[ -n "$FORWARDED_SIGNAL" && "$PI_RC" -eq 0 ]]; then
+    case "$FORWARDED_SIGNAL" in
+        INT)  PI_RC=130 ;;
+        TERM) PI_RC=143 ;;
+    esac
+fi
 
 END_EPOCH="$(date +%s)"
 ELAPSED=$((END_EPOCH - START_EPOCH))
