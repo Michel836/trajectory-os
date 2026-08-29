@@ -11,3 +11,6 @@ wheels/
 
 # Local (potentially private) data
 local_data/
+
+# trajectory-pi runtime artifacts
+.trajectory-pi/
