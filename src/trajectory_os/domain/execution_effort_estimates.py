@@ -41,6 +41,7 @@ The public boundary is deliberately strict:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Annotated
 from uuid import UUID
@@ -90,6 +91,47 @@ def _require_uuid(value: object, field_name: str) -> object:
             f"got {type(value).__name__}"
         )
     return value
+
+
+def select_latest_execution_effort_estimate(
+    estimates: Iterable[ExecutionEffortEstimate],
+) -> ExecutionEffortEstimate | None:
+    """Canonical V1.10 current-effective estimate selection policy.
+
+    The authoritative V1.10 ordering is exactly::
+
+        current effective estimate = max(valid revisions,
+                                         key=(estimated_at chronological
+                                              instant, estimate_id.int))
+
+    Consequences:
+
+    * empty input -> ``None``;
+    * exactly one revision -> that exact revision;
+    * the later chronological ``estimated_at`` wins (aware datetimes are
+      compared by actual instant; timezone offsets may differ);
+    * equal chronological instants are broken deterministically by the
+      greater estimate UUID integer;
+    * insertion order is irrelevant;
+    * ``source`` and any provenance kind do not change the ordering.
+
+    This function is the single authoritative expression of the V1.10
+    selection policy: consumers (V1.10-D planning, V1.22 current-effective
+    resolution) MUST delegate to it rather than re-interpret the ordering.
+
+    Callers are responsible for supplying genuine ``ExecutionEffortEstimate
+    `` instances (every revision validated); the selection itself performs
+    no revalidation, no filtering by scope, no deduplication, and no
+    ``SourceKind`` inference.
+    """
+    best: ExecutionEffortEstimate | None = None
+    best_key: tuple[datetime, int] | None = None
+    for estimate in estimates:
+        key = (estimate.estimated_at, estimate.id.int)
+        if best_key is None or key > best_key:
+            best = estimate
+            best_key = key
+    return best
 
 
 class ExecutionEffortEstimate(BaseModel):

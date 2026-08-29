@@ -24,7 +24,6 @@ unestimated count.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -40,6 +39,7 @@ from pydantic import (
 
 from trajectory_os.domain.execution_effort_estimates import (
     ExecutionEffortEstimate,
+    select_latest_execution_effort_estimate,
 )
 from trajectory_os.domain.portfolio import Portfolio
 from trajectory_os.domain.work_breakdown import WorkBreakdownNode, build_work_breakdown
@@ -222,8 +222,7 @@ def plan_work_breakdown_effort(
     flattened = _flatten_wbs_preorder(wbs.root)
     wbs_ids = {entity_id for entity_id, _, _ in flattened}
 
-    latest: dict[UUID, ExecutionEffortEstimate] = {}
-    latest_keys: dict[UUID, tuple[datetime, int]] = {}
+    by_entity: dict[UUID, list[ExecutionEffortEstimate]] = {}
     seen_estimate_ids: set[UUID] = set()
 
     for candidate in estimates:
@@ -245,11 +244,21 @@ def plan_work_breakdown_effort(
             # excluded from this CURRENT-structure plan.
             continue
 
-        key = (estimate.estimated_at, estimate.id.int)
-        current_key = latest_keys.get(estimate.entity_id)
-        if current_key is None or key > current_key:
-            latest[estimate.entity_id] = estimate
-            latest_keys[estimate.entity_id] = key
+        by_entity.setdefault(estimate.entity_id, []).append(estimate)
+
+    # The canonical V1.10 selection policy (single authoritative source):
+    # latest by (estimated_at chronological instant, estimate id int).
+    latest: dict[UUID, ExecutionEffortEstimate] = {}
+    for entity_id, revisions in by_entity.items():
+        selected = select_latest_execution_effort_estimate(revisions)
+        if selected is None:
+            # Unreachable: every group accumulated above holds at least one
+            # validated revision; defended explicitly rather than trusted.
+            raise ExecutionEffortPlanningError(
+                "internal error: non-empty estimate history yielded no "
+                "latest estimate"
+            )
+        latest[entity_id] = selected
 
     known: dict[UUID, int] = {
         entity_id: latest[entity_id].duration_seconds
