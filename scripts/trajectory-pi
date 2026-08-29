@@ -255,7 +255,7 @@ count_added_since_baseline() {
     printf '%s\n' "$current" | sed '/^$/d' > "$current_file"
 
     awk '
-        NR == FNR {
+        FILENAME == ARGV[1] {
             baseline[$0] = 1
             next
         }
