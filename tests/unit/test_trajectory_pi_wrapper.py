@@ -8,6 +8,7 @@ server and no real Pi provider, and add no dependencies.
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -71,8 +72,6 @@ class TPContext:
     work: Path
     ctx: Path
     args_log: Path
-    meta: str = ""
-
     touched: Path = field(init=False)
     output: Path = field(init=False)
     rc_file: Path = field(init=False)
@@ -141,7 +140,7 @@ def tp(tmp_path: Path) -> TPContext:
     _git(work, "checkout", "-b", "feature/tp-test")
 
     script = binary / "pi"
-    script.write_text(FAKE_PI_TEMPLATE.format(ctx=ctx))
+    script.write_text(FAKE_PI_TEMPLATE.format(ctx=shlex.quote(str(ctx))))
     script.chmod(0o755)
 
     return TPContext(work=work, ctx=ctx, args_log=ctx / "args.log")
