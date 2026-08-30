@@ -21,7 +21,7 @@ Usage:
 
 Options:
   --class CLASS        smoke|repair|recovery|feature|complex
-  --model MODEL        Pi/Ollama model (default: qwen3.8-dev64)
+  --model MODEL        Pi/Ollama model (default: qwen3.8-dev3090)
   --thinking LEVEL     default: medium
   --prompt-file FILE   use @FILE plus a short user message
   --interval SEC       heartbeat interval (default: 10)
@@ -34,7 +34,7 @@ Examples:
 
   scripts/trajectory-pi \
     --class repair \
-    --model qwen3.8-dev64 \
+    --model qwen3.8-dev3090 \
     -- "Inspect and repair the current implementation."
 
   scripts/trajectory-pi \
@@ -45,7 +45,7 @@ EOF
 }
 
 RUN_CLASS="feature"
-MODEL="qwen3.8-dev64"
+MODEL="qwen3.8-dev3090"
 THINKING="medium"
 PROMPT_FILE=""
 INTERVAL=10
