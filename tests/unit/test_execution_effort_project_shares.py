@@ -536,6 +536,28 @@ class TestPortfolioProjectEffortShareSummaryInvariants:
                 projects=(hostile,),
             )
 
+    def test_rejects_hostile_entry_with_unhashable_project_id(self) -> None:
+        # A hostile entry with an unhashable project_id is constructable
+        # only by bypassing validation. The duplicate-ID check must run
+        # ONLY AFTER fresh strict revalidation, so the unhashable id is
+        # rejected through ValidationError and can never leak a raw
+        # TypeError from set() construction.
+        hostile = PortfolioProjectEffortShare.model_construct(
+            project_id=["unhashable", "id"],
+            total_duration_seconds=None,
+            share=None,
+        )
+        with pytest.raises(
+            ValidationError,
+            match="failed fresh strict revalidation",
+        ):
+            PortfolioProjectEffortShareSummary(
+                portfolio_id=uuid.uuid4(),
+                project_count=1,
+                total_duration_seconds=None,
+                projects=(hostile,),
+            )
+
     def test_rejects_complete_totals_while_any_project_incomplete(self) -> None:
         portfolio = uuid.uuid4()
         with pytest.raises(ValidationError, match="incomplete"):

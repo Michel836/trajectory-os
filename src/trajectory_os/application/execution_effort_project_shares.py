@@ -267,15 +267,14 @@ class PortfolioProjectEffortShareSummary(BaseModel):
                 f"of projected project entries ({len(self.projects)})"
             )
 
-        project_ids = [project.project_id for project in self.projects]
-        if len(project_ids) != len(set(project_ids)):
-            raise ValueError("duplicate project IDs are not allowed")
-
         # Hostile nested rows (including their nested shares) are NEVER
         # trusted: every row is freshly strictly revalidated (this
         # re-runs the entry-level share-consistency invariants AND
         # revalidates the nested share against ExactProjectEffortShare),
-        # which also rejects hostile model_construct shares.
+        # which also rejects hostile model_construct shares. Any
+        # validation/attribute/type failure on a hostile row is converted
+        # into the summary's normal validation path (ValueError ⇒
+        # ValidationError), never leaked.
         revalidated: list[PortfolioProjectEffortShare] = []
         for project in self.projects:
             try:
@@ -284,11 +283,18 @@ class PortfolioProjectEffortShareSummary(BaseModel):
                         project.to_payload(), strict=True
                     )
                 )
-            except (AttributeError, ValidationError) as exc:
+            except (AttributeError, TypeError, ValidationError) as exc:
                 raise ValueError(
                     "a projected project entry failed fresh strict "
                     "revalidation and is rejected"
                 ) from exc
+
+        # Duplicate IDs are checked ONLY AFTER successful revalidation, so
+        # unhashable hostile project_ids are already rejected above and
+        # can never leak a raw TypeError from set() construction.
+        project_ids = [project.project_id for project in revalidated]
+        if len(project_ids) != len(set(project_ids)):
+            raise ValueError("duplicate project IDs are not allowed")
 
         any_incomplete = any(
             project.total_duration_seconds is None for project in revalidated
