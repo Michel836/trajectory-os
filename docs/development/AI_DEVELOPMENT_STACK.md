@@ -89,13 +89,15 @@ The hardware profile is evidence context, not a permanent project requirement.
 
 | Model | Current operational role | Evidence / notes |
 |---|---|---|
-| `qwen3.8:27b` | **preferred primary local autonomous developer** (Pi, medium thinking) | V1.11/V1.12 real-work evidence: strong repository comprehension, sustained implement/repair loops. V1.10 output-flow incidents were harness/budget issues, not model defects |
+| `qwen3.8-dev3090` | **preferred primary local autonomous developer** (Pi, medium thinking) | V1.11/V1.12 real-work evidence: strong repository comprehension, sustained implement/repair loops. V1.10 output-flow incidents were harness/budget issues, not model defects |
 | `qwen3-coder:30b` | **bounded precision editor** (Aider) | coding-specialized; effective for explicit small, file-scoped edits and mechanical repairs; V1.11 showed repeated fixture/model mistakes on substantive work despite correct core semantics |
 | `qwen3.6:35b` | **independent read-only adversarial reviewer** | V1.12: used as the independent reviewer; issue + diff + tests, never as a competing editor |
 | `qwen2.5-coder:7b` / equivalent small coder | mechanical low-cost tasks | optional for simple transformations, fixtures, commit text, bounded repairs |
 
 Specific model names are replaceable operational choices, not permanent TrajectoryOS architecture.
 Model novelty alone is not a reason to add a new project dependency or permanently change routing.
+
+`qwen3.8-dev3090` is a local Ollama alias of the validated Qwen3.8 27B Q4_K_M model, configured with `draft_num_predict=1` after RTX 3090 A/B benchmarking. The alias changes runtime speculative-decoding configuration only; it does not change the underlying model family or the validated developer role.
 
 ---
 
@@ -129,7 +131,7 @@ operational choices, not permanent TrajectoryOS architecture.
 Do not default to cloud capacity for repetitive edits, test reruns, simple lint repairs, or
 mechanical repository work when local capacity is adequate.
 
-### Primary local autonomous developer — Pi + `qwen3.8:27b` (medium thinking)
+### Primary local autonomous developer — Pi + `qwen3.8-dev3090` (medium thinking)
 
 **VALIDATED (V1.12)** — the preferred primary local autonomous developer for:
 
