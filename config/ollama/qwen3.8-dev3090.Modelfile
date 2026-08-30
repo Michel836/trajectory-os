@@ -1,0 +1,18 @@
+# TrajectoryOS canonical local developer model for RTX 3090.
+#
+# Base model validated in V0.3:
+#   Qwen3.8 27B Q4_K_M
+#
+# Runtime settings validated on RTX 3090 / Ollama 0.33.1:
+#   num_ctx=65536
+#   draft_num_predict=1
+#
+# The draft depth is benchmark-backed. At 64K context:
+#   draft=1 -> 57.25 tok/s
+#   draft=2 -> 45.20 tok/s
+#   draft=4 -> 29.62 tok/s
+
+FROM qwen3.8:27b
+
+PARAMETER num_ctx 65536
+PARAMETER draft_num_predict 1

@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Read-only preflight for the TrajectoryOS local AI development stack."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+MODEL_ID = "qwen3.8-dev3090"
+EXPECTED_NUM_CTX = 65536
+EXPECTED_DRAFT_NUM_PREDICT = 1
+EXPECTED_PI_CONTEXT = 65536
+EXPECTED_PI_MAX_TOKENS = 32768
+
+
+def report(ok: bool, label: str, detail: str = "") -> None:
+    status = "PASS" if ok else "FAIL"
+    suffix = f" — {detail}" if detail else ""
+    print(f"{status:<4}  {label}{suffix}")
+
+
+def ollama_binary() -> str | None:
+    configured = os.environ.get("TRAJECTORY_OLLAMA_BIN", "ollama")
+
+    if "/" in configured:
+        path = Path(configured).expanduser()
+        return str(path) if path.is_file() and os.access(path, os.X_OK) else None
+
+    return shutil.which(configured)
+
+
+def pi_models_path() -> Path:
+    configured = os.environ.get("TRAJECTORY_PI_MODELS_JSON")
+    if configured:
+        return Path(configured).expanduser()
+
+    return Path.home() / ".pi" / "agent" / "models.json"
+
+
+def load_pi_models(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    if not path.is_file():
+        return None, f"missing file: {path}"
+
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"cannot parse {path}: {exc}"
+
+    if not isinstance(data, dict):
+        return None, "root JSON value is not an object"
+
+    return data, None
+
+
+def find_pi_model(data: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        models = data["providers"]["ollama"]["models"]
+    except (KeyError, TypeError):
+        return None
+
+    if not isinstance(models, list):
+        return None
+
+    for model in models:
+        if isinstance(model, dict) and model.get("id") == MODEL_ID:
+            return model
+
+    return None
+
+
+def main() -> int:
+    failures = 0
+
+    print("TrajectoryOS Local AI Preflight")
+    print("=" * 64)
+
+    ollama = ollama_binary()
+    if ollama is None:
+        report(False, "Ollama executable", "not found")
+        failures += 1
+    else:
+        report(True, "Ollama executable", ollama)
+
+        try:
+            result = subprocess.run(
+                [ollama, "show", MODEL_ID],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            report(False, f"Ollama alias {MODEL_ID}", str(exc))
+            failures += 1
+        else:
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout).strip()
+                report(
+                    False,
+                    f"Ollama alias {MODEL_ID}",
+                    detail or f"exit code {result.returncode}",
+                )
+                failures += 1
+            else:
+                output = result.stdout
+
+                report(True, f"Ollama alias {MODEL_ID}", "available")
+
+                num_ctx_match = re.search(
+                    r"(?m)^\s*num_ctx\s+(\d+)\s*$",
+                    output,
+                )
+                num_ctx = (
+                    int(num_ctx_match.group(1))
+                    if num_ctx_match is not None
+                    else None
+                )
+                num_ctx_ok = num_ctx == EXPECTED_NUM_CTX
+                report(
+                    num_ctx_ok,
+                    "Ollama num_ctx",
+                    f"{num_ctx!r} expected {EXPECTED_NUM_CTX}",
+                )
+                failures += int(not num_ctx_ok)
+
+                draft_match = re.search(
+                    r"(?m)^\s*draft_num_predict\s+(\d+)\s*$",
+                    output,
+                )
+                draft = (
+                    int(draft_match.group(1))
+                    if draft_match is not None
+                    else None
+                )
+                draft_ok = draft == EXPECTED_DRAFT_NUM_PREDICT
+                report(
+                    draft_ok,
+                    "Ollama draft_num_predict",
+                    f"{draft!r} expected {EXPECTED_DRAFT_NUM_PREDICT}",
+                )
+                failures += int(not draft_ok)
+
+    print()
+    path = pi_models_path()
+    data, error = load_pi_models(path)
+
+    if error is not None or data is None:
+        report(False, "Pi model registry", error or "unknown error")
+        failures += 1
+    else:
+        report(True, "Pi model registry", str(path))
+
+        model = find_pi_model(data)
+        if model is None:
+            report(False, f"Pi model {MODEL_ID}", "entry not found")
+            failures += 1
+        else:
+            report(True, f"Pi model {MODEL_ID}", "entry found")
+
+            checks = [
+                (
+                    "Pi contextWindow",
+                    model.get("contextWindow"),
+                    EXPECTED_PI_CONTEXT,
+                ),
+                (
+                    "Pi maxTokens",
+                    model.get("maxTokens"),
+                    EXPECTED_PI_MAX_TOKENS,
+                ),
+                (
+                    "Pi reasoning",
+                    model.get("reasoning"),
+                    True,
+                ),
+            ]
+
+            for label, actual, expected in checks:
+                ok = actual == expected
+                report(ok, label, f"{actual!r} expected {expected!r}")
+                failures += int(not ok)
+
+            inputs = model.get("input")
+            input_ok = (
+                isinstance(inputs, list)
+                and set(inputs) == {"text", "image"}
+            )
+            report(
+                input_ok,
+                "Pi input capabilities",
+                f"{inputs!r} expected ['text', 'image']",
+            )
+            failures += int(not input_ok)
+
+            compat = model.get("compat")
+            reasoning_effort = (
+                compat.get("supportsReasoningEffort")
+                if isinstance(compat, dict)
+                else None
+            )
+            reasoning_effort_ok = reasoning_effort is True
+            report(
+                reasoning_effort_ok,
+                "Pi supportsReasoningEffort",
+                f"{reasoning_effort!r} expected True",
+            )
+            failures += int(not reasoning_effort_ok)
+
+    print()
+    print("=" * 64)
+
+    if failures:
+        print(f"NOT READY — {failures} failed check(s)")
+        return 1
+
+    print("READY — local Pi/Qwen3.8 configuration is valid")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
