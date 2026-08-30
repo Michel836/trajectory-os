@@ -1,0 +1,402 @@
+#!/usr/bin/env python3
+"""Explicit, bounded repair for the TrajectoryOS local AI stack."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from copy import deepcopy
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+MODEL_ID = "qwen3.8-dev3090"
+BASE_MODEL_ID = "qwen3.8:27b"
+
+EXPECTED_NUM_CTX = 65536
+EXPECTED_DRAFT_NUM_PREDICT = 1
+
+EXPECTED_PI_MODEL: dict[str, Any] = {
+    "id": MODEL_ID,
+    "name": "Ollama - Qwen 3.8 27B TrajectoryOS 64K RTX3090 MTP",
+    "reasoning": True,
+    "input": ["text", "image"],
+    "contextWindow": 65536,
+    "maxTokens": 32768,
+    "compat": {
+        "supportsDeveloperRole": False,
+        "supportsReasoningEffort": True,
+    },
+    "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+    },
+}
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def modelfile_path() -> Path:
+    return repo_root() / "config" / "ollama" / "qwen3.8-dev3090.Modelfile"
+
+
+def ollama_binary() -> str | None:
+    configured = os.environ.get("TRAJECTORY_OLLAMA_BIN", "ollama")
+
+    if "/" in configured:
+        path = Path(configured).expanduser()
+        return str(path) if path.is_file() and os.access(path, os.X_OK) else None
+
+    return shutil.which(configured)
+
+
+def pi_models_path() -> Path:
+    configured = os.environ.get("TRAJECTORY_PI_MODELS_JSON")
+    if configured:
+        return Path(configured).expanduser()
+
+    return Path.home() / ".pi" / "agent" / "models.json"
+
+
+def run_ollama(
+    ollama: str,
+    *args: str,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [ollama, *args],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def parse_ollama_settings(output: str) -> tuple[int | None, int | None]:
+    num_ctx_match = re.search(
+        r"(?m)^\s*num_ctx\s+(\d+)\s*$",
+        output,
+    )
+    draft_match = re.search(
+        r"(?m)^\s*draft_num_predict\s+(\d+)\s*$",
+        output,
+    )
+
+    num_ctx = (
+        int(num_ctx_match.group(1))
+        if num_ctx_match is not None
+        else None
+    )
+    draft = (
+        int(draft_match.group(1))
+        if draft_match is not None
+        else None
+    )
+
+    return num_ctx, draft
+
+
+def ollama_alias_is_valid(ollama: str) -> bool:
+    result = run_ollama(ollama, "show", MODEL_ID)
+    if result.returncode != 0:
+        return False
+
+    num_ctx, draft = parse_ollama_settings(result.stdout)
+
+    return (
+        num_ctx == EXPECTED_NUM_CTX
+        and draft == EXPECTED_DRAFT_NUM_PREDICT
+    )
+
+
+def ensure_base_model_exists(ollama: str) -> None:
+    result = run_ollama(ollama, "show", BASE_MODEL_ID)
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Required base model {BASE_MODEL_ID!r} is not installed. "
+            "No automatic download will be performed."
+        )
+
+
+def repair_ollama_alias(ollama: str) -> bool:
+    if ollama_alias_is_valid(ollama):
+        print(f"OK    Ollama alias {MODEL_ID} already valid")
+        return False
+
+    path = modelfile_path()
+    if not path.is_file():
+        raise RuntimeError(f"Canonical Modelfile missing: {path}")
+
+    ensure_base_model_exists(ollama)
+
+    print(f"FIX   Rebuilding Ollama alias {MODEL_ID}")
+
+    result = run_ollama(
+        ollama,
+        "create",
+        MODEL_ID,
+        "-f",
+        str(path),
+    )
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(
+            f"ollama create failed: {detail or result.returncode}"
+        )
+
+    if not ollama_alias_is_valid(ollama):
+        raise RuntimeError(
+            f"Ollama alias {MODEL_ID} is still invalid after repair"
+        )
+
+    print(
+        f"PASS  Ollama alias {MODEL_ID}: "
+        f"num_ctx={EXPECTED_NUM_CTX}, "
+        f"draft_num_predict={EXPECTED_DRAFT_NUM_PREDICT}"
+    )
+    return True
+
+
+def load_pi_registry(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise RuntimeError(
+            f"Pi registry does not exist: {path}. "
+            "Create/configure Pi first."
+        )
+
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Cannot parse Pi registry {path}: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise RuntimeError("Pi registry root must be a JSON object")
+
+    providers = data.get("providers")
+    if not isinstance(providers, dict):
+        raise RuntimeError("Pi registry is missing providers object")
+
+    ollama_provider = providers.get("ollama")
+    if not isinstance(ollama_provider, dict):
+        raise RuntimeError("Pi registry is missing providers.ollama object")
+
+    models = ollama_provider.get("models")
+    if not isinstance(models, list):
+        raise RuntimeError("Pi registry providers.ollama.models must be a list")
+
+    return data
+
+
+def contains_expected(actual: Any, expected: Any) -> bool:
+    if isinstance(expected, dict):
+        if not isinstance(actual, dict):
+            return False
+
+        return all(
+            key in actual and contains_expected(actual[key], value)
+            for key, value in expected.items()
+        )
+
+    return actual == expected
+
+
+def merge_expected(
+    current: dict[str, Any],
+    expected: dict[str, Any],
+) -> dict[str, Any]:
+    merged = deepcopy(current)
+
+    for key, expected_value in expected.items():
+        current_value = merged.get(key)
+
+        if isinstance(expected_value, dict) and isinstance(current_value, dict):
+            merged[key] = merge_expected(current_value, expected_value)
+        else:
+            merged[key] = deepcopy(expected_value)
+
+    return merged
+
+
+def pi_entry_is_valid(model: dict[str, Any]) -> bool:
+    return contains_expected(model, EXPECTED_PI_MODEL)
+
+
+def backup_pi_registry(path: Path) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    backup = path.with_name(f"{path.name}.bak-v04-{stamp}")
+    shutil.copy2(path, backup)
+    return backup
+
+
+def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
+    temporary_path: Path | None = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            json.dump(data, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        shutil.copymode(path, temporary_path)
+        os.replace(temporary_path, path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None and temporary_path.exists():
+            temporary_path.unlink()
+
+
+def repair_pi_registry(path: Path) -> bool:
+    data = load_pi_registry(path)
+    models = data["providers"]["ollama"]["models"]
+
+    target_indices: list[int] = []
+    source_index: int | None = None
+
+    for index, model in enumerate(models):
+        if not isinstance(model, dict):
+            continue
+
+        if model.get("id") == MODEL_ID:
+            target_indices.append(index)
+
+        if model.get("id") == "qwen3.8-dev64":
+            source_index = index
+
+    if len(target_indices) > 1:
+        raise RuntimeError(
+            f"Pi registry contains duplicate {MODEL_ID!r} entries"
+        )
+
+    target_index = target_indices[0] if target_indices else None
+
+    if target_index is not None:
+        current = models[target_index]
+
+        if isinstance(current, dict) and pi_entry_is_valid(current):
+            print(f"OK    Pi registry entry {MODEL_ID} already valid")
+            return False
+
+        if not isinstance(current, dict):
+            raise RuntimeError(
+                f"Pi registry entry {MODEL_ID} is not a JSON object"
+            )
+
+        new_models = deepcopy(models)
+        new_models[target_index] = merge_expected(
+            current,
+            EXPECTED_PI_MODEL,
+        )
+    else:
+        new_models = deepcopy(models)
+
+        insert_at = (
+            source_index + 1
+            if source_index is not None
+            else len(new_models)
+        )
+        new_models.insert(insert_at, deepcopy(EXPECTED_PI_MODEL))
+
+    backup = backup_pi_registry(path)
+    print(f"BACKUP {backup}")
+
+    repaired = deepcopy(data)
+    repaired["providers"]["ollama"]["models"] = new_models
+
+    atomic_write_json(path, repaired)
+
+    verification = load_pi_registry(path)
+    verified_models = verification["providers"]["ollama"]["models"]
+
+    verified = next(
+        (
+            model
+            for model in verified_models
+            if isinstance(model, dict)
+            and model.get("id") == MODEL_ID
+        ),
+        None,
+    )
+
+    if not isinstance(verified, dict) or not pi_entry_is_valid(verified):
+        raise RuntimeError(
+            f"Pi registry entry {MODEL_ID} failed post-write verification"
+        )
+
+    print(f"PASS  Pi registry entry {MODEL_ID} repaired")
+    return True
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Explicitly repair the TrajectoryOS local "
+            "Pi/Qwen3.8 configuration."
+        )
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="apply bounded repairs; required for any modification",
+    )
+    args = parser.parse_args()
+
+    if not args.apply:
+        print("REFUSED — no changes made.")
+        print("Run with --apply to perform bounded local-AI repairs.")
+        return 2
+
+    print("TrajectoryOS Local AI Setup / Repair")
+    print("=" * 64)
+
+    ollama = ollama_binary()
+    if ollama is None:
+        print("FAIL  Ollama executable not found")
+        return 1
+
+    path = pi_models_path()
+
+    changed = False
+
+    try:
+        # Validate the Pi registry before performing any mutation.
+        load_pi_registry(path)
+
+        changed |= repair_ollama_alias(ollama)
+        changed |= repair_pi_registry(path)
+    except RuntimeError as exc:
+        print(f"FAIL  {exc}")
+        return 1
+
+    print()
+    print("=" * 64)
+
+    if changed:
+        print("REPAIRED — local AI configuration updated")
+    else:
+        print("NO CHANGES NEEDED — local AI configuration already valid")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

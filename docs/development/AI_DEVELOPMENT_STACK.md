@@ -99,6 +99,57 @@ Model novelty alone is not a reason to add a new project dependency or permanent
 
 `qwen3.8-dev3090` is a local Ollama alias of the validated Qwen3.8 27B Q4_K_M model, configured with `draft_num_predict=1` after RTX 3090 A/B benchmarking. The alias changes runtime speculative-decoding configuration only; it does not change the underlying model family or the validated developer role.
 
+### Reproducible local setup and preflight
+
+The canonical Ollama definition for this alias is versioned at:
+
+```text
+config/ollama/qwen3.8-dev3090.Modelfile
+```
+
+It intentionally fixes:
+
+```text
+FROM qwen3.8:27b
+PARAMETER num_ctx 65536
+PARAMETER draft_num_predict 1
+```
+
+These values are benchmark-backed rather than arbitrary. On the validated RTX 3090 setup at
+64K context, `draft_num_predict=1` produced approximately 57.25 tok/s, versus 45.20 tok/s for
+`draft_num_predict=2` and 29.62 tok/s for the previous depth of 4.
+
+Before running Pi workloads, the local configuration can be checked without modifying anything:
+
+```bash
+scripts/check-local-ai
+```
+
+The preflight verifies:
+
+- Ollama is available;
+- `qwen3.8-dev3090` exists;
+- Ollama reports `num_ctx=65536`;
+- Ollama reports `draft_num_predict=1`;
+- the Pi Ollama registry contains `qwen3.8-dev3090`;
+- Pi declares a 65536-token context window and 32768 maximum output tokens;
+- reasoning, text+image input, and reasoning-effort support match the validated profile.
+
+A non-zero exit code means the local developer stack is not ready.
+
+Repair is always explicit:
+
+```bash
+scripts/setup-local-ai --apply
+```
+
+The setup command does not download the base model automatically. If `qwen3.8:27b` is absent,
+it fails and leaves installation to the human operator. When the Pi registry must be changed,
+the existing registry is backed up before writing, unrelated model entries are preserved, and
+a second invocation is idempotent when the configuration is already correct.
+
+Running `scripts/setup-local-ai` without `--apply` performs no modification and exits with a refusal.
+
 ---
 
 ## Model routing
