@@ -2,7 +2,7 @@
 set -u
 
 # ============================================================
-# trajectory-pi V0.1
+# trajectory-pi V0.2
 # Observable + safe runner for TrajectoryOS Pi workloads.
 #
 # AI proposes.
@@ -10,11 +10,11 @@ set -u
 # Human decides.
 # ============================================================
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 
 usage() {
 cat <<'EOF'
-trajectory-pi V0.1
+trajectory-pi V0.2
 
 Usage:
   scripts/trajectory-pi [options] -- "prompt"
@@ -104,6 +104,23 @@ done
 
 PROMPT="${*:-}"
 
+# Returns 0 when the value is empty or contains only whitespace.
+is_blank() {
+    local value="${1:-}"
+    [[ -z "${value//[[:space:]]/}" ]]
+}
+
+# Returns 0 when the Pi log contains the standard handoff convention
+# (a Handoff plus an explicit completion marker: a full-uppercase token
+# ending in _COMPLETE on its own line).
+completion_evidence_present() {
+    local log_file="$1"
+    [[ -f "$log_file" ]] || return 1
+    grep -qiE 'handoff' "$log_file" || return 1
+    grep -qE '^[A-Z][A-Z0-9_]*_COMPLETE[[:space:]]*$' "$log_file" || return 1
+    return 0
+}
+
 case "$RUN_CLASS" in
     smoke)
         ETA="under 2 min"
@@ -177,8 +194,27 @@ if [[ -n "$PROMPT_FILE" && ! -f "$PROMPT_FILE" ]]; then
     exit 2
 fi
 
-if [[ -z "$PROMPT" ]]; then
-    echo "ERROR: no user message supplied after --" >&2
+# ------------------------------------------------------------
+# Final user-query guarantee
+#
+# Pi requires a real final user query. A prompt file is supplemental
+# context for the @file mechanism and is NOT a final user message.
+# Whitespace-only queries count as missing. An explicit non-empty
+# user message after -- is always preferred.
+# ------------------------------------------------------------
+
+FINAL_QUERY=""
+FINAL_QUERY_SOURCE="none"
+
+if ! is_blank "$PROMPT"; then
+    FINAL_QUERY="$PROMPT"
+    FINAL_QUERY_SOURCE="explicit"
+elif [[ -n "$PROMPT_FILE" ]]; then
+    FINAL_QUERY="Execute the task described in the supplied prompt file and return the requested handoff."
+    FINAL_QUERY_SOURCE="fallback"
+else
+    echo "ERROR: no usable final user query and no prompt file supplied" >&2
+    echo "Provide a non-empty query after -- or supply --prompt-file." >&2
     exit 2
 fi
 
@@ -208,6 +244,7 @@ thinking=$THINKING
 branch=$BRANCH
 head_before=$HEAD_BEFORE
 prompt_file=$PROMPT_FILE
+final_query_source=$FINAL_QUERY_SOURCE
 EOF
 
 human_duration() {
@@ -395,8 +432,10 @@ notify \
 # ------------------------------------------------------------
 # Pi invocation
 #
-# Important: always provide a REAL short user message.
+# Important: always provide a REAL final user message.
 # @file is supplemental context only.
+# The final user query is guaranteed non-empty (explicit or the
+# deterministic fallback) and is never sent blank.
 # ------------------------------------------------------------
 
 PI_ARGS=(
@@ -409,7 +448,7 @@ if [[ -n "$PROMPT_FILE" ]]; then
     PI_ARGS+=("@$PROMPT_FILE")
 fi
 
-PI_ARGS+=("$PROMPT")
+PI_ARGS+=("$FINAL_QUERY")
 
 # Pi runs as child process.
 # Wrapper survives Pi/provider failures.
@@ -509,12 +548,40 @@ printf "Pi exit code   %s\n" "$PI_RC"
 CURRENT_STATUS_AFTER="$(status_fingerprint)"
 AGENT_CHANGED_AFTER="$(count_added_since_baseline "$CURRENT_STATUS_AFTER")"
 
+# ------------------------------------------------------------
+# Run classification (deterministic, diagnostic only)
+#
+# Provider-failure recognition uses the exact stable phrase in the
+# Pi log. Classification never performs reset/clean/retry/commit/
+# push/merge and never changes the exit code.
+# ------------------------------------------------------------
+
+PROVIDER_MISSING_QUERY=0
+if grep -qF "no user query found in messages" "$LOG" 2>/dev/null; then
+    PROVIDER_MISSING_QUERY=1
+fi
+
+if [[ "$PI_RC" -ne 0 && "$PROVIDER_MISSING_QUERY" -eq 1 && "$AGENT_CHANGED_AFTER" -gt 0 ]]; then
+    CLASSIFICATION="RECOVERABLE_PROVIDER_FAILURE"
+elif [[ "$PI_RC" -eq 0 ]]; then
+    if completion_evidence_present "$LOG"; then
+        CLASSIFICATION="AGENT_COMPLETED"
+    else
+        CLASSIFICATION="INCOMPLETE_AGENT_RUN"
+    fi
+else
+    CLASSIFICATION="AGENT_FAILED"
+fi
+
+echo "classification=$CLASSIFICATION" >> "$META"
+
 printf "Baseline files %s
 " "$BASELINE_COUNT"
 printf "Current files  %s
 " "$CHANGED_AFTER"
 printf "Agent-added    %s
 " "$AGENT_CHANGED_AFTER"
+printf "Classification %s\n" "$CLASSIFICATION"
 
 if [[ "$HEAD_AFTER" != "$HEAD_BEFORE" ]]; then
     echo
@@ -550,7 +617,18 @@ else
       "Pi exited $PI_RC after $ELAPSED_H · work preserved"
 fi
 
+if [[ "$CLASSIFICATION" == "RECOVERABLE_PROVIDER_FAILURE" ]]; then
+    echo
+    echo "RECOVERABLE PROVIDER FAILURE"
+    echo "Pi aborted on the known provider failure: no user query found in messages."
+    echo "All agent worktree changes have been PRESERVED as-is."
+    echo "No reset, clean, automatic retry, commit, push, or merge was performed."
+    echo "The preserved work must be inspected and resumed by a human before further action."
+fi
+
 echo
 echo "No commit, push or merge performed."
 
+# Preserve Pi's actual exit code. The classification above is
+# diagnostic only and never converts a failure into success.
 exit "$PI_RC"
