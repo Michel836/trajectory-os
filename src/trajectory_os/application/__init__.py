@@ -76,6 +76,13 @@ from trajectory_os.application.execution_effort_project_contributions import (
     PortfolioProjectEffortContributionSummary,
     project_portfolio_effort_contributions,
 )
+from trajectory_os.application.execution_effort_project_shares import (
+    ExactProjectEffortShare,
+    PortfolioProjectEffortShare,
+    PortfolioProjectEffortShareError,
+    PortfolioProjectEffortShareSummary,
+    project_portfolio_effort_shares,
+)
 from trajectory_os.application.work_breakdown_acceptance import (
     DurableWorkBreakdownAcceptanceError,
     PortfolioNotFoundError,
@@ -107,6 +114,9 @@ __all__ = [
     "PortfolioProjectEffortContribution",
     "PortfolioProjectEffortContributionError",
     "PortfolioProjectEffortContributionSummary",
+    "PortfolioProjectEffortShare",
+    "PortfolioProjectEffortShareError",
+    "PortfolioProjectEffortShareSummary",
     "WorkBreakdownEffectiveEffortPlan",
     "WorkBreakdownEffectiveEffortSummary",
     "WorkBreakdownEffectivePlanItem",
@@ -114,6 +124,7 @@ __all__ = [
     "WorkBreakdownEffectiveSummaryError",
     "ExecutionEffortEstimatePortfolioNotFoundError",
     "ExecutionEffortEstimateReader",
+    "ExactProjectEffortShare",
     "ExecutionEffortEstimateRepository",
     "ExecutionEffortMeasurementPortfolioNotFoundError",
     "ExecutionEffortObservationReader",
@@ -133,6 +144,7 @@ __all__ = [
     "measure_work_breakdown_effort_durably",
     "plan_work_breakdown_effort_durably",
     "project_portfolio_effort_contributions",
+    "project_portfolio_effort_shares",
     "record_execution_effort_estimate_durably",
     "record_execution_effort_durably",
     "resolve_effective_execution_effort_estimate",
