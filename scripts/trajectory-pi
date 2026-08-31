@@ -2,7 +2,7 @@
 set -u
 
 # ============================================================
-# trajectory-pi V0.2
+# trajectory-pi V0.2.1
 # Observable + safe runner for TrajectoryOS Pi workloads.
 #
 # AI proposes.
@@ -10,11 +10,11 @@ set -u
 # Human decides.
 # ============================================================
 
-VERSION="0.2.0"
+VERSION="0.2.1"
 
 usage() {
 cat <<'EOF'
-trajectory-pi V0.2
+trajectory-pi V0.2.1
 
 Usage:
   scripts/trajectory-pi [options] -- "prompt"
@@ -268,6 +268,95 @@ gpu_line() {
     }'
 }
 
+# Return recent native Ollama generation throughput when defensible.
+#
+# Ollama/llama-server emits runner timing lines such as:
+#
+#   slot print_timing: ... tg_3s = 36.37 t/s
+#
+# tg_3s is the engine's measured generation throughput over the latest
+# approximately three-second generation window. It is NOT inferred from
+# Pi log growth, GPU utilization, power, VRAM, or wall-clock duration.
+#
+# Attribution limitation:
+# runner timing lines do not contain a model/request identifier. Therefore
+# a numeric value is shown only while the requested model is present in
+# `ollama ps` and the timing sample is very recent. Concurrent unrelated
+# Ollama inference can make attribution ambiguous; V0.2.1 does not claim
+# stronger request identity than the local single-workload runner exposes.
+#
+# Optional telemetry is observational: journal/API failures return
+# gen_3s=unavailable and must never terminate the Pi run.
+ollama_generation_throughput_line() {
+    local ollama_state="${1:-idle}"
+    local now_epoch="${2:-0}"
+    local start_epoch="${3:-0}"
+    local sample=""
+
+    if [[ "$ollama_state" != "active" ]]; then
+        printf 'gen_3s=unavailable'
+        return 0
+    fi
+
+    if ! command -v journalctl >/dev/null 2>&1; then
+        printf 'gen_3s=unavailable'
+        return 0
+    fi
+
+    sample="$(
+        journalctl \
+          -u ollama \
+          --since "@$start_epoch" \
+          -o short-unix \
+          --no-pager \
+          -n 300 \
+          2>/dev/null |
+        awk -v now="$now_epoch" '
+            /slot[[:space:]]+print_timing:/ &&
+            /tg_3s[[:space:]]*=/ {
+                raw_ts = $1
+
+                if (raw_ts !~ /^[0-9]+([.][0-9]+)?$/) {
+                    next
+                }
+
+                ts = raw_ts + 0
+
+                value = $0
+                sub(/^.*tg_3s[[:space:]]*=[[:space:]]*/, "", value)
+                sub(/[[:space:]]*t\/s.*$/, "", value)
+
+                if (value ~ /^[0-9]+([.][0-9]+)?$/) {
+                    last_ts = ts
+                    rate = value
+                }
+            }
+
+            END {
+                if (rate != "") {
+                    age = int(now - last_ts)
+
+                    if (age >= 0 && age <= 5) {
+                        printf "live\t%s\t%d", rate, age
+                    } else if (age > 5) {
+                        printf "stale\t%s\t%d", rate, age
+                    }
+                }
+            }
+        ' 2>/dev/null
+    )" || sample=""
+
+    if [[ "$sample" == live$'\t'* ]]; then
+        IFS=$'\t' read -r _ rate age <<< "$sample"
+        printf 'gen_3s=%s tok/s' "$rate"
+    elif [[ "$sample" == stale$'\t'* ]]; then
+        IFS=$'\t' read -r _ rate age <<< "$sample"
+        printf 'gen_3s=unavailable | last_gen=%s tok/s age=%ss' "$rate" "$age"
+    else
+        printf 'gen_3s=unavailable'
+    fi
+}
+
 current_status() {
     git status --porcelain=v1 --untracked-files=all 2>/dev/null
 }
@@ -484,6 +573,11 @@ while kill -0 "$PI_PID" 2>/dev/null; do
         OLLAMA_STATE="active"
     fi
 
+    GEN_THROUGHPUT="$(
+        ollama_generation_throughput_line "$OLLAMA_STATE" "$NOW" "$START_EPOCH"
+    )"
+    [[ -n "$GEN_THROUGHPUT" ]] || GEN_THROUGHPUT="gen_3s=unavailable"
+
     MINS=$((ELAPSED / 60))
 
     if (( MINS < ETA_LOW )); then
@@ -495,13 +589,14 @@ while kill -0 "$PI_PID" 2>/dev/null; do
     fi
 
     LINE="$(
-      printf '[%s] elapsed=%s | %s | files=%s | ollama=%s | %s' \
+      printf '[%s] elapsed=%s | %s | files=%s | ollama=%s | %s | %s' \
         "$(date +%H:%M:%S)" \
         "$ELAPSED_H" \
         "$ETA_STATE" \
         "$CHANGED (+$AGENT_CHANGED)" \
         "$OLLAMA_STATE" \
-        "$GPU"
+        "$GPU" \
+        "$GEN_THROUGHPUT"
     )"
 
     echo "$LINE"
