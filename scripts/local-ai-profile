@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""Read-only, deterministic hardware-aware local AI profile recommendation.
+
+This command inspects the machine (NVIDIA GPU name, total VRAM, system RAM) and
+reports an *advisory only* recommendation for the TrajectoryOS local AI stack.
+
+It is strictly read-only: it downloads nothing, creates no Ollama alias, does not
+modify ``~/.pi`` or repository files, installs nothing, and changes no runtime
+configuration. It only runs a read-only ``nvidia-smi --query-gpu`` call and reads
+the kernel memory summary.
+
+For this checkpoint the only validated profile is the repository reference
+workstation (issue #43, V1.11/V1.12 evidence): an NVIDIA GPU with at least
+24 GiB VRAM and the 64 GiB installed-system-RAM workstation class.
+
+RAM criterion, stated precisely: the reference workstation is a *64 GiB
+installed-memory* machine. On Linux, ``/proc/meminfo`` ``MemTotal`` reports
+the kernel-visible total, which on the real validated host is approximately
+62.62 GiB (hardware reserved by firmware, kernel, and GPU framebuffers is not
+counted). The policy therefore requires a conservative Linux-visible floor of
+60 GiB (``MemTotal``) rather than a literal 64.00 GiB: this includes the
+observed reference host (62.62 GiB visible) while still excluding
+substantially smaller machines (e.g. 32 GiB), which have not been validated.
+
+Hardware below that class is not validated, so the command explicitly returns
+``no validated recommendation``.
+Laptop, AMD, CPU-only, and other constrained profiles are intentionally not
+invented here.
+
+Dependency injection (for tests; no GPU needed):
+
+- ``TRAJECTORY_NVIDIA_SMI``  path to an executable standing in for ``nvidia-smi``;
+  use a non-existent path to simulate absence, or a script that exits non-zero /
+  prints malformed output to simulate failure.
+- ``TRAJECTORY_MEMINFO_FILE`` path to a file with a ``MemTotal:`` line; use one
+  without a ``MemTotal:`` line, or a non-existent path, to simulate unavailable
+  or malformed RAM information.
+
+Tracked by GitHub Issue #82.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+
+MODEL_ID = "qwen3.8-dev3090"
+NO_VALIDATED_RECOMMENDATION = "no validated recommendation"
+
+# Validated reference workstation class (issue #43 / V1.11-V1.12 evidence):
+# 24 GiB VRAM NVIDIA GPU and the 64 GiB installed-system-RAM workstation
+# class. Only this class is validated.
+MIN_VRAM_GIB = 24
+
+# The reference workstation installs 64 GiB of memory, but Linux-visible
+# MemTotal on the real validated host is approximately 62.62 GiB (reserved
+# memory is excluded from MemTotal). We require a conservative Linux-visible
+# floor of 60 GiB: it includes the observed reference machine and the full
+# 64 GiB installed class, while machines substantially smaller (32 GiB and
+# similar classes) remain unvalidated and are rejected.
+REFERENCE_INSTALLED_RAM_GIB = 64
+MIN_LINUX_VISIBLE_RAM_GIB = 60
+
+_NVIDIA_SMI_QUERY = [
+    "--query-gpu=name,memory.total",
+    "--format=csv,noheader,nounits",
+]
+
+
+@dataclass(frozen=True)
+class GpuDetection:
+    name: str | None
+    vram_gib: float | None
+    error: str | None
+
+
+@dataclass(frozen=True)
+class RamDetection:
+    gib: float | None
+    error: str | None
+
+
+@dataclass(frozen=True)
+class ProfileReport:
+    gpu_name: str | None
+    vram_gib: float | None
+    ram_gib: float | None
+    recommendation: str
+    reason: str
+
+    @property
+    def is_validated(self) -> bool:
+        return self.recommendation == MODEL_ID
+
+
+def resolve_nvidia_smi(environment: dict[str, str] | None = None) -> str | None:
+    """Return a usable ``nvidia-smi`` path, or ``None`` if it is unavailable."""
+    env = os.environ if environment is None else environment
+    configured = env.get("TRAJECTORY_NVIDIA_SMI", "nvidia-smi")
+
+    if "/" in configured:
+        path = Path(configured).expanduser()
+        return str(path) if path.is_file() and os.access(path, os.X_OK) else None
+
+    return shutil.which(configured)
+
+
+def parse_nvidia_smi(stdout: str) -> tuple[str, int] | None:
+    """Parse multi-GPU ``nvidia-smi`` output deterministically.
+
+    Every valid GPU line is parsed as ``(name, total VRAM in MiB)`` and the
+    GPU with the greatest total VRAM is selected. Ties are broken
+    deterministically in favour of the first such line in the output. Blank
+    lines are ignored; non-blank lines that are malformed (missing fields,
+    non-integer VRAM, non-positive VRAM, empty name) do not disqualify other
+    valid lines.
+
+    Returns ``None`` when no valid GPU line is present (malformed output).
+    """
+    best: tuple[str, int] | None = None
+    for raw_line in stdout.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) < 2:
+            continue
+        name = parts[0]
+        try:
+            vram_mib = int(parts[1])
+        except ValueError:
+            continue
+        if not name or vram_mib <= 0:
+            continue
+        candidate = (name, vram_mib)
+        if best is None or candidate[1] > best[1]:
+            best = candidate
+    return best
+
+
+def detect_nvidia(binary: str | None) -> GpuDetection:
+    """Detect the NVIDIA GPU and total VRAM using ``nvidia-smi`` (read-only)."""
+    if binary is None:
+        return GpuDetection(None, None, "nvidia-smi unavailable")
+
+    try:
+        result = subprocess.run(
+            [binary, *_NVIDIA_SMI_QUERY],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return GpuDetection(None, None, f"nvidia-smi failed: {exc}")
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        return GpuDetection(
+            None,
+            None,
+            detail or f"nvidia-smi exit code {result.returncode}",
+        )
+
+    parsed = parse_nvidia_smi(result.stdout)
+    if parsed is None:
+        return GpuDetection(None, None, "malformed nvidia-smi output")
+
+    name, vram_mib = parsed
+    return GpuDetection(name, round(vram_mib / 1024.0, 2), None)
+
+
+def resolve_meminfo_file(environment: dict[str, str] | None = None) -> Path:
+    """Return the meminfo source file (overridable for tests)."""
+    env = os.environ if environment is None else environment
+    return Path(env.get("TRAJECTORY_MEMINFO_FILE", "/proc/meminfo"))
+
+
+def detect_ram(meminfo_path: Path) -> RamDetection:
+    """Determine total system RAM from the kernel memory summary (read-only)."""
+    try:
+        text = meminfo_path.read_text()
+    except OSError as exc:
+        return RamDetection(None, f"cannot read memory summary: {exc}")
+
+    match = re.search(r"^MemTotal:\s+(\d+)\s+kB", text, re.MULTILINE)
+    if match is None:
+        return RamDetection(None, "memory summary missing MemTotal")
+
+    try:
+        total_kb = int(match.group(1))
+    except ValueError:
+        return RamDetection(None, "malformed MemTotal value")
+
+    if total_kb <= 0:
+        return RamDetection(None, "non-positive MemTotal value")
+
+    return RamDetection(round(total_kb / 1024.0 / 1024.0, 2), None)
+
+
+def recommend(gpu: GpuDetection, ram: RamDetection) -> tuple[str, str]:
+    """Return (recommendation, reason) for the validated workstation class only."""
+    if gpu.name is None:
+        return (
+            NO_VALIDATED_RECOMMENDATION,
+            "no NVIDIA GPU detected ("
+            + (gpu.error or "not detected")
+            + "), which is not the validated workstation class",
+        )
+
+    if gpu.vram_gib is None:
+        return (
+            NO_VALIDATED_RECOMMENDATION,
+            "NVIDIA GPU detected but total VRAM could not be determined",
+        )
+
+    if gpu.vram_gib < MIN_VRAM_GIB:
+        return (
+            NO_VALIDATED_RECOMMENDATION,
+            f"VRAM {gpu.vram_gib} GiB is below the {MIN_VRAM_GIB} GiB required by "
+            "the validated profile (RTX 3090 class)",
+        )
+
+    if ram.gib is None:
+        return (
+            NO_VALIDATED_RECOMMENDATION,
+            "system RAM could not be determined "
+            f"({ram.error or 'unavailable'}); required to validate the profile",
+        )
+
+    if ram.gib < MIN_LINUX_VISIBLE_RAM_GIB:
+        return (
+            NO_VALIDATED_RECOMMENDATION,
+            f"system RAM {ram.gib} GiB is below the {MIN_LINUX_VISIBLE_RAM_GIB} GiB "
+            "Linux-visible MemTotal floor of the validated reference "
+            f"workstation class ({REFERENCE_INSTALLED_RAM_GIB} GiB installed)",
+        )
+
+    return (
+        MODEL_ID,
+        f"{gpu.name} with {gpu.vram_gib} GiB VRAM (>= {MIN_VRAM_GIB}) and "
+        f"{ram.gib} GiB system RAM (Linux-visible, >= {MIN_LINUX_VISIBLE_RAM_GIB}; "
+        f"reference class is {REFERENCE_INSTALLED_RAM_GIB} GiB installed) match the "
+        "validated reference workstation class",
+    )
+
+
+def build_report(gpu: GpuDetection, ram: RamDetection) -> ProfileReport:
+    recommendation, reason = recommend(gpu, ram)
+    return ProfileReport(
+        gpu_name=gpu.name,
+        vram_gib=gpu.vram_gib,
+        ram_gib=ram.gib,
+        recommendation=recommendation,
+        reason=reason,
+    )
+
+
+def _fmt_text(value: str | None) -> str:
+    return value if value else "unavailable"
+
+
+def _fmt_gib(value: float | None) -> str:
+    return "unavailable" if value is None else f"{value} GiB"
+
+
+def main() -> int:
+    binary = resolve_nvidia_smi()
+    gpu = detect_nvidia(binary)
+    ram = detect_ram(resolve_meminfo_file())
+    report = build_report(gpu, ram)
+
+    print("TrajectoryOS Local AI Profile Recommendation (read-only, advisory only)")
+    print("=" * 64)
+    print(f"GPU: {_fmt_text(report.gpu_name)}")
+    print(f"VRAM: {_fmt_gib(report.vram_gib)}")
+    print(f"System RAM: {_fmt_gib(report.ram_gib)}")
+    print("-" * 64)
+    print(f"Recommendation: {report.recommendation}")
+    print(f"Reason: {report.reason}")
+    print("=" * 64)
+    print("This recommendation is advisory only. It does not change any " "configuration.")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
