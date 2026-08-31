@@ -82,6 +82,11 @@ from trajectory_os.application.execution_effort_project_ranking import (
     PortfolioProjectEffortRankingError,
     rank_portfolio_project_effort,
 )
+from trajectory_os.application.execution_effort_project_selection_comparison import (
+    PortfolioProjectEffortSelectionComparison,
+    PortfolioProjectEffortSelectionComparisonError,
+    compare_portfolio_effort_selections,
+)
 from trajectory_os.application.execution_effort_project_selection_coverage import (
     PortfolioProjectEffortSelectionCoverage,
     PortfolioProjectEffortSelectionCoverageError,
@@ -138,6 +143,8 @@ __all__ = [
     "PortfolioProjectEffortRank",
     "PortfolioProjectEffortRanking",
     "PortfolioProjectEffortRankingError",
+    "PortfolioProjectEffortSelectionComparison",
+    "PortfolioProjectEffortSelectionComparisonError",
     "PortfolioProjectEffortSelectionCoverage",
     "PortfolioProjectEffortSelectionCoverageError",
     "PortfolioProjectEffortSelectionSummary",
@@ -168,6 +175,7 @@ __all__ = [
     "accept_calibrated_estimate_revision_durably",
     "accept_work_breakdown_proposal_durably",
     "build_portfolio_effective_effort_summary_durably",
+    "compare_portfolio_effort_selections",
     "compare_work_breakdown_effort_durably",
     "build_effective_work_breakdown_effort_plan_durably",
     "build_effective_work_breakdown_effort_summary_durably",
