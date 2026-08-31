@@ -294,3 +294,413 @@ def test_recoverable_failure_preserves_work(tp: TPContext) -> None:
     status = _git(tp.work, "status", "--porcelain")
     assert "agent_work.txt" in status
     assert "??" in status
+
+
+def _write_fake_executable(directory: Path, name: str, body: str) -> Path:
+    path = directory / name
+    path.write_text("#!/usr/bin/env bash\nset -u\n" + body)
+    path.chmod(0o755)
+    return path
+
+
+def _latest_status_log(tp: TPContext) -> str:
+    run_dirs = sorted((tp.work / ".trajectory-pi" / "runs").iterdir())
+    assert run_dirs, "no run directory was created"
+    status = run_dirs[-1] / "status.log"
+    assert status.is_file()
+    return status.read_text()
+
+
+def _install_telemetry_fakes(
+    tp: TPContext,
+    *,
+    ollama_active: bool,
+    journal_body: str,
+    gpu_line: str = "99, 350.00, 22800, 24576",
+) -> None:
+    binary = tp.ctx.parent / "bin"
+
+    ollama_output = (
+        "NAME ID SIZE PROCESSOR CONTEXT UNTIL\n"
+        "qwen3.8-dev3090:latest fake 17GB 100% GPU 65536 4 minutes\n"
+        if ollama_active
+        else "NAME ID SIZE PROCESSOR CONTEXT UNTIL\n"
+    )
+
+    _write_fake_executable(
+        binary,
+        "ollama",
+        f"""\
+if [[ "${{1:-}}" == "ps" ]]; then
+    cat <<'EOF'
+{ollama_output}EOF
+    exit 0
+fi
+exit 1
+""",
+    )
+
+    _write_fake_executable(
+        binary,
+        "nvidia-smi",
+        f"""\
+printf '%s\\n' {shlex.quote(gpu_line)}
+""",
+    )
+
+    _write_fake_executable(
+        binary,
+        "journalctl",
+        f"""\
+cat <<'EOF'
+{journal_body}EOF
+""",
+    )
+
+
+def test_wrapper_version_is_v021(tp: TPContext) -> None:
+    result = tp.run("--version")
+    assert result.returncode == 0
+    assert result.stdout.strip() == "trajectory-pi 0.2.1"
+
+
+def test_heartbeat_reports_recent_native_generation_rate(tp: TPContext) -> None:
+    tp.scenario(
+        rc=0,
+        output="Handoff\nTRAJECTORY_PI_TEST_COMPLETE\n",
+    )
+
+    # Use a timestamp far in the future so the fake journal line can be
+    # rewritten immediately before the wrapper starts.
+    now = int(
+        subprocess.run(
+            ["date", "+%s"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+
+    _install_telemetry_fakes(
+        tp,
+        ollama_active=True,
+        journal_body=(
+            f"{now}.000000 host ollama[1]: "
+            "slot print_timing: id 0 | task 0 | "
+            "n_gen = 346, tg = 38.05 t/s, tg_3s = 36.37 t/s\n"
+        ),
+    )
+
+    result = tp.run(*SMOKE_ARGS, "--", "Telemetry test.")
+    assert result.returncode == 0
+
+    status = _latest_status_log(tp)
+
+    assert "ollama=active" in status
+    assert "GPU 99%" in status
+    assert "350.00 W" in status
+    assert "VRAM 22800/24576 MiB" in status
+    assert "gen_3s=36.37 tok/s" in status
+
+
+def test_heartbeat_rejects_stale_generation_rate(tp: TPContext) -> None:
+    tp.scenario(
+        rc=0,
+        output="Handoff\nTRAJECTORY_PI_TEST_COMPLETE\n",
+    )
+
+    now = int(
+        subprocess.run(
+            ["date", "+%s"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+
+    _install_telemetry_fakes(
+        tp,
+        ollama_active=True,
+        journal_body=(
+            f"{now - 30}.000000 host ollama[1]: "
+            "slot print_timing: id 0 | task 0 | "
+            "n_gen = 346, tg = 38.05 t/s, tg_3s = 36.37 t/s\n"
+        ),
+    )
+
+    result = tp.run(*SMOKE_ARGS, "--", "Telemetry stale test.")
+    assert result.returncode == 0
+
+    status = _latest_status_log(tp)
+
+    assert "ollama=active" in status
+    assert "gen_3s=unavailable" in status
+    assert "last_gen=36.37 tok/s" in status
+
+    age_fragment = status.split("age=", 1)[1].split("s", 1)[0]
+    age = int(age_fragment)
+    assert 30 <= age <= 35
+
+
+def test_heartbeat_rejects_malformed_generation_rate(tp: TPContext) -> None:
+    tp.scenario(
+        rc=0,
+        output="Handoff\nTRAJECTORY_PI_TEST_COMPLETE\n",
+    )
+
+    now = int(
+        subprocess.run(
+            ["date", "+%s"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+
+    _install_telemetry_fakes(
+        tp,
+        ollama_active=True,
+        journal_body=(
+            f"{now}.000000 host ollama[1]: "
+            "slot print_timing: id 0 | task 0 | "
+            "tg_3s = definitely-not-a-number t/s\n"
+        ),
+    )
+
+    result = tp.run(*SMOKE_ARGS, "--", "Malformed telemetry test.")
+    assert result.returncode == 0
+
+    status = _latest_status_log(tp)
+    assert "gen_3s=unavailable" in status
+
+
+def test_heartbeat_does_not_report_rate_when_model_inactive(tp: TPContext) -> None:
+    tp.scenario(
+        rc=0,
+        output="Handoff\nTRAJECTORY_PI_TEST_COMPLETE\n",
+    )
+
+    now = int(
+        subprocess.run(
+            ["date", "+%s"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+
+    _install_telemetry_fakes(
+        tp,
+        ollama_active=False,
+        journal_body=(
+            f"{now}.000000 host ollama[1]: "
+            "slot print_timing: id 0 | task 0 | "
+            "tg_3s = 99.99 t/s\n"
+        ),
+    )
+
+    result = tp.run(*SMOKE_ARGS, "--", "Inactive telemetry test.")
+    assert result.returncode == 0
+
+    status = _latest_status_log(tp)
+
+    assert "ollama=idle" in status
+    assert "gen_3s=unavailable" in status
+    assert "99.99 tok/s" not in status
+
+
+def test_heartbeat_survives_journalctl_failure(tp: TPContext) -> None:
+    tp.scenario(
+        rc=0,
+        output="Handoff\nTRAJECTORY_PI_TEST_COMPLETE\n",
+    )
+
+    binary = tp.ctx.parent / "bin"
+
+    _write_fake_executable(
+        binary,
+        "ollama",
+        """\
+if [[ "${1:-}" == "ps" ]]; then
+    cat <<'EOF'
+NAME ID SIZE PROCESSOR CONTEXT UNTIL
+qwen3.8-dev3090:latest fake 17GB 100% GPU 65536 4 minutes
+EOF
+    exit 0
+fi
+exit 1
+""",
+    )
+
+    _write_fake_executable(
+        binary,
+        "nvidia-smi",
+        """\
+printf '%s\n' '99, 350.00, 22800, 24576'
+""",
+    )
+
+    _write_fake_executable(
+        binary,
+        "journalctl",
+        """\
+exit 9
+""",
+    )
+
+    result = tp.run(*SMOKE_ARGS, "--", "Journal failure telemetry test.")
+
+    assert result.returncode == 0
+    assert "AGENT_COMPLETED" in result.stdout
+
+    status = _latest_status_log(tp)
+    assert "ollama=active" in status
+    assert "gen_3s=unavailable" in status
+
+
+def test_heartbeat_is_written_to_status_log(tp: TPContext) -> None:
+    tp.scenario(
+        rc=0,
+        output="Handoff\nTRAJECTORY_PI_TEST_COMPLETE\n",
+    )
+
+    _install_telemetry_fakes(
+        tp,
+        ollama_active=False,
+        journal_body="",
+    )
+
+    result = tp.run(*SMOKE_ARGS, "--", "Status log telemetry test.")
+
+    assert result.returncode == 0
+
+    status = _latest_status_log(tp)
+    heartbeat_lines = [
+        line for line in status.splitlines()
+        if line.startswith("[")
+    ]
+
+    assert heartbeat_lines
+    assert all("elapsed=" in line for line in heartbeat_lines)
+    assert all("files=" in line for line in heartbeat_lines)
+    assert all("ollama=" in line for line in heartbeat_lines)
+    assert all("GPU " in line for line in heartbeat_lines)
+    assert all("VRAM " in line for line in heartbeat_lines)
+    assert all("gen_3s=" in line for line in heartbeat_lines)
+
+
+def test_completion_semantics_unchanged_with_telemetry(tp: TPContext) -> None:
+    tp.scenario(
+        rc=0,
+        output=(
+            "Handoff\n"
+            "RESULT: done\n"
+            "TRAJECTORY_OS_V021_COMPLETE\n"
+        ),
+    )
+
+    _install_telemetry_fakes(
+        tp,
+        ollama_active=False,
+        journal_body="",
+    )
+
+    result = tp.run(*SMOKE_ARGS, "--", "Completion regression test.")
+
+    assert result.returncode == 0
+    assert "AGENT_COMPLETED" in result.stdout
+    assert "classification=AGENT_COMPLETED" in tp.latest_meta()
+
+
+def test_incomplete_semantics_unchanged_with_telemetry(tp: TPContext) -> None:
+    tp.scenario(
+        rc=0,
+        output="No handoff or completion marker here.\n",
+    )
+
+    _install_telemetry_fakes(
+        tp,
+        ollama_active=False,
+        journal_body="",
+    )
+
+    result = tp.run(*SMOKE_ARGS, "--", "Incomplete regression test.")
+
+    assert result.returncode == 0
+    assert "INCOMPLETE_AGENT_RUN" in result.stdout
+    assert "classification=INCOMPLETE_AGENT_RUN" in tp.latest_meta()
+
+
+def test_dirty_tree_safety_still_prevents_pi_invocation(tp: TPContext) -> None:
+    dirty = tp.work / "README.md"
+    dirty.write_text("dirty before wrapper\n")
+
+    tp.scenario(
+        rc=0,
+        output="Handoff\nTRAJECTORY_PI_TEST_COMPLETE\n",
+    )
+
+    result = tp.run(*SMOKE_ARGS, "--", "Safety regression test.")
+
+    assert result.returncode == 4
+    assert "Working tree is already dirty" in result.stdout
+    assert not tp.args_log.exists()
+
+
+def test_context_capacity_is_not_mislabeled_as_used_context(tp: TPContext) -> None:
+    tp.scenario(
+        rc=0,
+        output="Handoff\nTRAJECTORY_PI_TEST_COMPLETE\n",
+    )
+
+    _install_telemetry_fakes(
+        tp,
+        ollama_active=True,
+        journal_body="",
+    )
+
+    result = tp.run(*SMOKE_ARGS, "--", "Context label regression test.")
+
+    assert result.returncode == 0
+
+    status = _latest_status_log(tp)
+
+    # V0.2.1 deliberately does not expose context usage yet.
+    assert "ctx=" not in status
+    assert "ctx_used=" not in status
+    assert "ctx_cap=" not in status
+
+
+def test_fresh_generation_rate_is_not_duplicated_as_last_gen(tp: TPContext) -> None:
+    tp.scenario(
+        rc=0,
+        output="Handoff\nTRAJECTORY_PI_TEST_COMPLETE\n",
+    )
+
+    now = int(
+        subprocess.run(
+            ["date", "+%s"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
+
+    _install_telemetry_fakes(
+        tp,
+        ollama_active=True,
+        journal_body=(
+            f"{now}.000000 host ollama[1]: "
+            "slot print_timing: id 0 | task 0 | "
+            "n_gen = 346, tg = 38.05 t/s, tg_3s = 36.37 t/s\n"
+        ),
+    )
+
+    result = tp.run(*SMOKE_ARGS, "--", "Fresh telemetry distinction test.")
+    assert result.returncode == 0
+
+    status = _latest_status_log(tp)
+
+    assert "gen_3s=36.37 tok/s" in status
+    assert "last_gen=" not in status
+    assert "age=" not in status
