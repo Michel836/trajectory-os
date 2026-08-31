@@ -17,15 +17,21 @@ from trajectory_os.adapters.persistence.sqlite_execution_effort_estimates import
     DuplicateExecutionEffortEstimateError,
     SqliteExecutionEffortEstimateRepository,
 )
+from trajectory_os.adapters.persistence.sqlite_portfolio_project_focus_decisions import (  # noqa: E501
+    DuplicatePortfolioProjectEffortFocusDecisionError,
+    SqlitePortfolioProjectEffortFocusDecisionRepository,
+)
 
 __all__ = [
     "DuplicateCalibratedEstimateRevisionError",
     "DuplicateEffortCalibrationFactorDecisionError",
     "DuplicateExecutionEffortEstimateError",
     "DuplicateExecutionEffortObservationError",
+    "DuplicatePortfolioProjectEffortFocusDecisionError",
     "SqliteCalibratedEstimateRevisionRepository",
     "SqliteExecutionEffortCalibrationFactorDecisionRepository",
     "SqliteExecutionEffortEstimateRepository",
     "SqliteExecutionEffortObservationRepository",
+    "SqlitePortfolioProjectEffortFocusDecisionRepository",
     "SqlitePortfolioRepository",
 ]

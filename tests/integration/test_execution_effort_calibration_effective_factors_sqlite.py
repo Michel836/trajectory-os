@@ -408,6 +408,7 @@ def test_no_new_persistence_table_or_materialized_state(db_path: Path) -> None:
             "execution_effort_estimates",
             "execution_effort_calibration_factor_decisions",
             "accepted_calibrated_estimate_revisions",  # V1.21 shared schema, not V1.17 state
+            "portfolio_project_effort_focus_decision_records",  # V1.35 shared schema
         }
 
 
