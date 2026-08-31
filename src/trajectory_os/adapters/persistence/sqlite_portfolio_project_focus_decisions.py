@@ -42,6 +42,7 @@ decision: it returns exactly the stored records.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,7 @@ from uuid import UUID
 
 from sqlalchemy import event, insert, select
 from sqlalchemy.engine import Engine, create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from trajectory_os.adapters.persistence.models import (
@@ -67,6 +69,26 @@ from trajectory_os.application.execution_effort_project_focus_decision_persisten
 
 class DuplicatePortfolioProjectEffortFocusDecisionError(ValueError):
     """Raised when a durable focus decision with the same decision_id exists."""
+
+
+# The exact SQLite integrity error message for a PRIMARY KEY / UNIQUE
+# violation on the decision_id column of our table.
+_DUPLICATE_DECISION_ID_MESSAGE = (
+    "UNIQUE constraint failed: portfolio_project_effort_focus_decision_records.decision_id"
+)
+
+
+def _is_duplicate_focus_decision_id_violation(exc: IntegrityError) -> bool:
+    """Return True ONLY for a SQLite UNIQUE/PK violation on
+    ``portfolio_project_effort_focus_decision_records.decision_id``.
+
+    Inspects the underlying ``sqlite3.IntegrityError`` and its actual
+    constraint message — not a blanket ``IntegrityError`` classification.
+    """
+    orig = exc.orig
+    if not isinstance(orig, sqlite3.IntegrityError):
+        return False
+    return _DUPLICATE_DECISION_ID_MESSAGE in str(orig)
 
 
 def _to_text(value: UUID) -> str:
@@ -160,10 +182,12 @@ class SqlitePortfolioProjectEffortFocusDecisionRepository:
     def add(self, record: object) -> None:
         """Persist one durable V1.35 record with INSERT-only semantics.
 
-        Within the add transaction, an existing row with the same
-        ``decision_id`` is detected and
-        :class:`DuplicatePortfolioProjectEffortFocusDecisionError` is
-        raised; the existing row is never updated or replaced.
+        The SQLite PRIMARY KEY constraint on ``decision_id`` is the
+        atomic duplicate authority: a second INSERT with the same
+        ``decision_id`` raises a DB-level IntegrityError that this
+        adapter translates into
+        :class:`DuplicatePortfolioProjectEffortFocusDecisionError`.
+        The existing row is never updated or replaced.
 
         The input is strictly validated before any field access to
         prevent bypass of domain validation via ``model_construct()``
@@ -185,18 +209,8 @@ class SqlitePortfolioProjectEffortFocusDecisionRepository:
 
         stored_decision_id = _to_text(validated.decision_id)
 
-        with Session(self._engine) as session:
-            existing = session.scalar(
-                select(Row.decision_id).where(
-                    Row.decision_id == stored_decision_id
-                )
-            )
-
-            if existing is not None:
-                raise DuplicatePortfolioProjectEffortFocusDecisionError(
-                    f"durable focus decision already exists: {stored_decision_id}"
-                )
-
+        session = Session(self._engine)
+        try:
             session.execute(
                 insert(Row).values(
                     decision_id=stored_decision_id,
@@ -205,8 +219,16 @@ class SqlitePortfolioProjectEffortFocusDecisionRepository:
                     decision_snapshot=validated.decision.model_dump_json(),
                 )
             )
-
             session.commit()
+        except IntegrityError as exc:
+            session.rollback()
+            if _is_duplicate_focus_decision_id_violation(exc):
+                raise DuplicatePortfolioProjectEffortFocusDecisionError(
+                    f"durable focus decision already exists: {stored_decision_id}"
+                ) from exc
+            raise
+        finally:
+            session.close()
 
     def list_history(
         self,

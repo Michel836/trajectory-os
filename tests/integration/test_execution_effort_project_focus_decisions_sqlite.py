@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -342,6 +343,112 @@ def test_duplicate_decision_id_rejected_and_existing_row_untouched(
         assert issubclass(
             DuplicatePortfolioProjectEffortFocusDecisionError, ValueError
         )
+
+
+def test_database_level_duplicate_translated_through_add(
+    saved_portfolio: Path,
+) -> None:
+    """A DB-level PK/UNIQUE constraint violation reached through add()
+    is translated into DuplicatePortfolioProjectEffortFocusDecisionError,
+    and the original row remains unchanged."""
+    with SqlitePortfolioProjectEffortFocusDecisionRepository(
+        saved_portfolio
+    ) as r:
+        decision = _accepted(SCENARIO_REF)
+        record = PortfolioProjectEffortFocusDecisionRecord(
+            decision_id=DECISION_ID_1,
+            decided_at=T_UTC,
+            decision=decision,
+        )
+        r.add(record)
+        first_snapshot = _raw_row(saved_portfolio, DECISION_ID_1)[
+            "decision_snapshot"
+        ]
+
+        # Second add with the SAME decision_id directly through the adapter.
+        record_dup = PortfolioProjectEffortFocusDecisionRecord(
+            decision_id=DECISION_ID_1,
+            decided_at=T_LATER,
+            decision=_accepted(SCENARIO_WIDE),
+        )
+        with pytest.raises(DuplicatePortfolioProjectEffortFocusDecisionError) as exc_info:
+            r.add(record_dup)
+
+        # The error message carries the stored decision_id.
+        assert str(DECISION_ID_1) in str(exc_info.value)
+        # Exception chaining: the original IntegrityError is preserved.
+        assert exc_info.value.__cause__ is not None
+        assert isinstance(exc_info.value.__cause__, IntegrityError)
+
+        # The original row is completely untouched.
+        assert (
+            _raw_row(saved_portfolio, DECISION_ID_1)["decision_snapshot"]
+            == first_snapshot
+        )
+        assert (
+            _raw_row(saved_portfolio, DECISION_ID_1)["decided_at"]
+            == T_UTC.isoformat()
+        )
+        history = r.list_history(PORTFOLIO)
+        assert len(history) == 1
+        assert history[0].decision_id == DECISION_ID_1
+
+
+def test_two_repository_instances_concurrent_add_deterministic(
+    saved_portfolio: Path,
+) -> None:
+    """Two separate repository instances (separate engines/connections)
+    race on the same decision_id: exactly one INSERT wins, the other
+    receives the translated duplicate error. Deterministic because
+    SQLite serializes writers via its write lock."""
+    repo_a = SqlitePortfolioProjectEffortFocusDecisionRepository(saved_portfolio)
+    repo_b = SqlitePortfolioProjectEffortFocusDecisionRepository(saved_portfolio)
+    try:
+        decision = _accepted(SCENARIO_REF)
+        record = PortfolioProjectEffortFocusDecisionRecord(
+            decision_id=DECISION_ID_2,
+            decided_at=T_UTC,
+            decision=decision,
+        )
+
+        outcome_a: list[BaseException | None] = []
+        outcome_b: list[BaseException | None] = []
+
+        def _do_add(
+            repo: SqlitePortfolioProjectEffortFocusDecisionRepository,
+            outcome: list[BaseException | None],
+        ) -> None:
+            try:
+                repo.add(record)
+                outcome.append(None)
+            except BaseException as e:  # noqa: BLE001
+                outcome.append(e)
+
+        thread = threading.Thread(target=_do_add, args=(repo_b, outcome_b))
+        thread.start()
+        try:
+            _do_add(repo_a, outcome_a)
+        finally:
+            thread.join()
+
+        # Exactly one succeeded, one failed with the translated error.
+        results = outcome_a[0], outcome_b[0]
+        successes = sum(1 for o in results if o is None)
+        failures = [o for o in results if o is not None]
+
+        assert successes == 1
+        assert len(failures) == 1
+        assert isinstance(
+            failures[0], DuplicatePortfolioProjectEffortFocusDecisionError
+        )
+        # The surviving row is intact.
+        assert len(repo_a.list_history(PORTFOLIO)) == 1
+        survivor = repo_a.list_history(PORTFOLIO)[0]
+        assert survivor.decision_id == DECISION_ID_2
+        assert survivor.decision.portfolio_id == PORTFOLIO
+    finally:
+        repo_a.close()
+        repo_b.close()
 
 
 def test_value_equivalent_decisions_with_different_ids_coexist(
