@@ -76,6 +76,12 @@ from trajectory_os.application.execution_effort_project_contributions import (
     PortfolioProjectEffortContributionSummary,
     project_portfolio_effort_contributions,
 )
+from trajectory_os.application.execution_effort_project_focus_scenario_set import (
+    PortfolioProjectEffortFocusScenario,
+    PortfolioProjectEffortFocusScenarioSet,
+    PortfolioProjectEffortFocusScenarioSetError,
+    build_portfolio_effort_focus_scenario_set,
+)
 from trajectory_os.application.execution_effort_project_ranking import (
     PortfolioProjectEffortRank,
     PortfolioProjectEffortRanking,
@@ -143,6 +149,9 @@ __all__ = [
     "PortfolioProjectEffortRank",
     "PortfolioProjectEffortRanking",
     "PortfolioProjectEffortRankingError",
+    "PortfolioProjectEffortFocusScenario",
+    "PortfolioProjectEffortFocusScenarioSet",
+    "PortfolioProjectEffortFocusScenarioSetError",
     "PortfolioProjectEffortSelectionComparison",
     "PortfolioProjectEffortSelectionComparisonError",
     "PortfolioProjectEffortSelectionCoverage",
@@ -179,6 +188,7 @@ __all__ = [
     "compare_work_breakdown_effort_durably",
     "build_effective_work_breakdown_effort_plan_durably",
     "build_effective_work_breakdown_effort_summary_durably",
+    "build_portfolio_effort_focus_scenario_set",
     "measure_work_breakdown_effort_durably",
     "plan_work_breakdown_effort_durably",
     "project_portfolio_effort_contributions",
