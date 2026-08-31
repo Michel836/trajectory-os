@@ -137,6 +137,50 @@ The preflight verifies:
 
 A non-zero exit code means the local developer stack is not ready.
 
+### Hardware-aware profile recommendation (advisory only)
+
+Separately from the preflight, the repository provides a deterministic, **read-only**
+hardware-aware recommendation helper:
+
+```bash
+scripts/local-ai-profile
+```
+
+The command reports the detected NVIDIA GPU name, total VRAM, and system RAM, and
+then gives an advisory recommendation. For this checkpoint the only validated profile
+is the reference workstation class recorded above (an NVIDIA GPU with at least
+24 GiB VRAM and the 64 GiB installed-system-RAM workstation class). The RAM
+criterion is applied against Linux-visible `MemTotal` with a conservative floor of
+60 GiB: the reference workstation is a 64 GiB installed-memory machine, while
+the real validated host reports approximately 62.62 GiB visible in
+`/proc/meminfo` (memory reserved by firmware, kernel, and GPU framebuffers is
+not counted). That floor includes the observed reference host and the full 64
+GiB installed class, without claiming that substantially smaller machines (e.g.
+32 GiB) have been validated. Hardware that does not match that class — including
+machines below the VRAM or RAM threshold, missing `nvidia-smi`, failing or
+malformed `nvidia-smi` output, or unreadable memory information — explicitly
+returns
+`no validated recommendation`. On multi-GPU hosts the GPU with the greatest
+total VRAM is selected deterministically.
+
+Important boundaries:
+
+- **Advisory only.** The recommendation never changes any configuration. It downloads
+  nothing, creates no Ollama alias, does not modify `~/.pi` or repository files, installs
+  nothing, and changes no runtime configuration.
+- **Evidence-backed, not architectural.** Hardware profiles are evidence-backed
+  recommendations derived from the validated reference workstation; they are **not**
+  mandatory TrajectoryOS architecture requirements.
+- **No speculative profiles.** Laptop, AMD, CPU-only, and other constrained profiles are
+  intentionally not offered at this checkpoint. Unknown or unvalidated hardware yields
+  `no validated recommendation` rather than an invented default.
+
+The command supports dependency injection for testing without a GPU: the
+`TRAJECTORY_NVIDIA_SMI` environment variable selects the `nvidia-smi` executable to use,
+and `TRAJECTORY_MEMINFO_FILE` selects the file that supplies the `MemTotal` value, so the
+tests in `tests/unit/test_local_ai_profile.py` exercise every branch with fakes and no
+real hardware, network, Ollama, or model downloads (tracked by Issue #82).
+
 Repair is always explicit:
 
 ```bash
