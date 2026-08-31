@@ -82,6 +82,11 @@ from trajectory_os.application.execution_effort_project_ranking import (
     PortfolioProjectEffortRankingError,
     rank_portfolio_project_effort,
 )
+from trajectory_os.application.execution_effort_project_selection_summary import (
+    PortfolioProjectEffortSelectionSummary,
+    PortfolioProjectEffortSelectionSummaryError,
+    summarize_selected_portfolio_project_effort,
+)
 from trajectory_os.application.execution_effort_project_shares import (
     ExactProjectEffortShare,
     PortfolioProjectEffortShare,
@@ -128,6 +133,8 @@ __all__ = [
     "PortfolioProjectEffortRank",
     "PortfolioProjectEffortRanking",
     "PortfolioProjectEffortRankingError",
+    "PortfolioProjectEffortSelectionSummary",
+    "PortfolioProjectEffortSelectionSummaryError",
     "PortfolioProjectEffortShare",
     "PortfolioProjectEffortShareError",
     "PortfolioProjectEffortShareSummary",
@@ -169,5 +176,6 @@ __all__ = [
     "select_top_ranked_portfolio_project_effort",
     "summarize_effective_work_breakdown_effort_plan",
     "summarize_portfolio_effective_effort",
+    "summarize_selected_portfolio_project_effort",
     "transition_entity_status_durably",
 ]
