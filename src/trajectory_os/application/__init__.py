@@ -76,6 +76,12 @@ from trajectory_os.application.execution_effort_project_contributions import (
     PortfolioProjectEffortContributionSummary,
     project_portfolio_effort_contributions,
 )
+from trajectory_os.application.execution_effort_project_ranking import (
+    PortfolioProjectEffortRank,
+    PortfolioProjectEffortRanking,
+    PortfolioProjectEffortRankingError,
+    rank_portfolio_project_effort,
+)
 from trajectory_os.application.execution_effort_project_shares import (
     ExactProjectEffortShare,
     PortfolioProjectEffortShare,
@@ -114,6 +120,9 @@ __all__ = [
     "PortfolioProjectEffortContribution",
     "PortfolioProjectEffortContributionError",
     "PortfolioProjectEffortContributionSummary",
+    "PortfolioProjectEffortRank",
+    "PortfolioProjectEffortRanking",
+    "PortfolioProjectEffortRankingError",
     "PortfolioProjectEffortShare",
     "PortfolioProjectEffortShareError",
     "PortfolioProjectEffortShareSummary",
@@ -145,6 +154,7 @@ __all__ = [
     "plan_work_breakdown_effort_durably",
     "project_portfolio_effort_contributions",
     "project_portfolio_effort_shares",
+    "rank_portfolio_project_effort",
     "record_execution_effort_estimate_durably",
     "record_execution_effort_durably",
     "resolve_effective_execution_effort_estimate",
