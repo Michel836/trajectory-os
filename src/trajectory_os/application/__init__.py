@@ -76,6 +76,11 @@ from trajectory_os.application.execution_effort_project_contributions import (
     PortfolioProjectEffortContributionSummary,
     project_portfolio_effort_contributions,
 )
+from trajectory_os.application.execution_effort_project_focus_decision import (
+    PortfolioProjectEffortFocusDecision,
+    PortfolioProjectEffortFocusDecisionError,
+    accept_portfolio_effort_focus_decision,
+)
 from trajectory_os.application.execution_effort_project_focus_scenario_set import (
     PortfolioProjectEffortFocusScenario,
     PortfolioProjectEffortFocusScenarioSet,
@@ -149,6 +154,8 @@ __all__ = [
     "PortfolioProjectEffortRank",
     "PortfolioProjectEffortRanking",
     "PortfolioProjectEffortRankingError",
+    "PortfolioProjectEffortFocusDecision",
+    "PortfolioProjectEffortFocusDecisionError",
     "PortfolioProjectEffortFocusScenario",
     "PortfolioProjectEffortFocusScenarioSet",
     "PortfolioProjectEffortFocusScenarioSetError",
@@ -182,6 +189,7 @@ __all__ = [
     "PortfolioRepository",
     "StatusTransitionPortfolioNotFoundError",
     "accept_calibrated_estimate_revision_durably",
+    "accept_portfolio_effort_focus_decision",
     "accept_work_breakdown_proposal_durably",
     "build_portfolio_effective_effort_summary_durably",
     "compare_portfolio_effort_selections",
