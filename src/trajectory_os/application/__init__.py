@@ -98,6 +98,12 @@ from trajectory_os.application.execution_effort_project_focus_scenario_set impor
     PortfolioProjectEffortFocusScenarioSetError,
     build_portfolio_effort_focus_scenario_set,
 )
+from trajectory_os.application.execution_effort_project_focus_task_work_units import (  # noqa: E501
+    FocusedProjectTaskWorkUnits,
+    PortfolioProjectFocusTaskWorkUnitProjection,
+    PortfolioProjectFocusTaskWorkUnitProjectionError,
+    project_current_task_work_units_from_focus_binding,
+)
 from trajectory_os.application.execution_effort_project_ranking import (
     PortfolioProjectEffortRank,
     PortfolioProjectEffortRanking,
@@ -175,6 +181,9 @@ __all__ = [
     "PortfolioProjectEffortFocusScenario",
     "PortfolioProjectEffortFocusScenarioSet",
     "PortfolioProjectEffortFocusScenarioSetError",
+    "FocusedProjectTaskWorkUnits",
+    "PortfolioProjectFocusTaskWorkUnitProjection",
+    "PortfolioProjectFocusTaskWorkUnitProjectionError",
     "PortfolioProjectEffortSelectionComparison",
     "PortfolioProjectEffortSelectionComparisonError",
     "PortfolioProjectEffortSelectionCoverage",
@@ -217,6 +226,7 @@ __all__ = [
     "build_portfolio_effort_focus_scenario_set",
     "measure_work_breakdown_effort_durably",
     "plan_work_breakdown_effort_durably",
+    "project_current_task_work_units_from_focus_binding",
     "project_portfolio_effort_contributions",
     "project_portfolio_effort_shares",
     "project_selected_portfolio_effort_coverage",
