@@ -76,6 +76,11 @@ from trajectory_os.application.execution_effort_project_contributions import (
     PortfolioProjectEffortContributionSummary,
     project_portfolio_effort_contributions,
 )
+from trajectory_os.application.execution_effort_project_focus_binding import (  # noqa: E501
+    PortfolioProjectEffortFocusBinding,
+    PortfolioProjectEffortFocusBindingError,
+    bind_durable_portfolio_effort_focus_decision,
+)
 from trajectory_os.application.execution_effort_project_focus_decision import (
     PortfolioProjectEffortFocusDecision,
     PortfolioProjectEffortFocusDecisionError,
@@ -162,6 +167,8 @@ __all__ = [
     "PortfolioProjectEffortRankingError",
     "PortfolioProjectEffortFocusDecision",
     "PortfolioProjectEffortFocusDecisionError",
+    "PortfolioProjectEffortFocusBinding",
+    "PortfolioProjectEffortFocusBindingError",
     "DurablePortfolioProjectEffortFocusDecisionError",
     "PortfolioProjectEffortFocusDecisionRecord",
     "PortfolioProjectEffortFocusDecisionRepository",
@@ -199,6 +206,7 @@ __all__ = [
     "StatusTransitionPortfolioNotFoundError",
     "accept_calibrated_estimate_revision_durably",
     "accept_portfolio_effort_focus_decision",
+    "bind_durable_portfolio_effort_focus_decision",
     "record_portfolio_effort_focus_decision_durably",
     "accept_work_breakdown_proposal_durably",
     "build_portfolio_effective_effort_summary_durably",
