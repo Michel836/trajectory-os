@@ -21,6 +21,10 @@ from trajectory_os.adapters.persistence.sqlite_portfolio_project_focus_decisions
     DuplicatePortfolioProjectEffortFocusDecisionError,
     SqlitePortfolioProjectEffortFocusDecisionRepository,
 )
+from trajectory_os.adapters.persistence.sqlite_portfolio_project_focus_next_ready_task_decisions import (  # noqa: E501
+    DuplicatePortfolioProjectFocusNextReadyTaskDecisionError,
+    SqlitePortfolioProjectFocusNextReadyTaskDecisionRepository,
+)
 
 __all__ = [
     "DuplicateCalibratedEstimateRevisionError",
@@ -28,10 +32,12 @@ __all__ = [
     "DuplicateExecutionEffortEstimateError",
     "DuplicateExecutionEffortObservationError",
     "DuplicatePortfolioProjectEffortFocusDecisionError",
+    "DuplicatePortfolioProjectFocusNextReadyTaskDecisionError",
     "SqliteCalibratedEstimateRevisionRepository",
     "SqliteExecutionEffortCalibrationFactorDecisionRepository",
     "SqliteExecutionEffortEstimateRepository",
     "SqliteExecutionEffortObservationRepository",
     "SqlitePortfolioProjectEffortFocusDecisionRepository",
+    "SqlitePortfolioProjectFocusNextReadyTaskDecisionRepository",
     "SqlitePortfolioRepository",
 ]
