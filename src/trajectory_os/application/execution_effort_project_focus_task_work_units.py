@@ -51,7 +51,7 @@ from pydantic import (
 from trajectory_os.application.execution_effort_project_focus_binding import (
     PortfolioProjectEffortFocusBinding,
 )
-from trajectory_os.domain.entities import EntityType
+from trajectory_os.domain.entities import EntityType, TrajectoryEntity
 from trajectory_os.domain.portfolio import Portfolio
 from trajectory_os.domain.work_breakdown import (
     WorkBreakdownError,
@@ -258,9 +258,18 @@ def project_current_task_work_units_from_focus_binding(
         # -- 7. exact validated selected-project order ---------------------
         rows = []
 
+        # Local CURRENT entity index: O(1) lookups instead of repeated
+        # linear scans. First-occurrence semantics mirror
+        # ``Portfolio.get_entity`` exactly.
+        entity_lookup: dict[UUID, TrajectoryEntity] = {}
+        for portfolio_entity in portfolio.entities:
+            entity_lookup.setdefault(portfolio_entity.id, portfolio_entity)
+
         for project_id in validated.selected_project_ids:
             # -- 8. CURRENT existence and exact PROJECT type --------------
-            project_entity = portfolio.get_entity(project_id)
+            project_entity: TrajectoryEntity | None = entity_lookup.get(
+                project_id
+            )
 
             if project_entity is None:
                 raise PortfolioProjectFocusTaskWorkUnitProjectionError(
@@ -292,7 +301,7 @@ def project_current_task_work_units_from_focus_binding(
             while stack:
                 node = stack.pop()
 
-                entity = portfolio.get_entity(node.entity_id)
+                entity = entity_lookup.get(node.entity_id)
                 if entity is not None and (
                     entity.entity_type is EntityType.TASK
                 ):
