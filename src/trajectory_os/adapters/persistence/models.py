@@ -222,6 +222,43 @@ class PortfolioProjectEffortFocusDecisionRecordRow(Base):
     decision_snapshot: Mapped[str] = mapped_column(String(), nullable=False)
 
 
+class PortfolioProjectFocusNextReadyTaskDecisionRecordRow(Base):
+    """One durable, immutable V1.42 human-accepted next READY TASK decision.
+
+    ``decision_id`` is the immutable identity of EXACTLY this durable
+    record (primary key): the same ``decision_id`` may be stored exactly
+    once; two value-equivalent V1.42 decisions with different
+    ``decision_id`` values are different rows. ``portfolio_id`` is a
+    foreign key into ``portfolios.id`` with ``ON DELETE CASCADE`` (same
+    convention as the decision tables). ``decided_at`` is the EXACT
+    caller-supplied aware ISO-8601 text (UTC offset preserved, never
+    normalized). The EXACT accepted V1.42
+    ``PortfolioProjectFocusNextReadyTaskDecision`` is stored as
+    deterministic explicit JSON produced by the Pydantic JSON
+    serialization (``model_dump_json()``) — NOT a pickle and NOT an
+    opaque binary: every scalar of the nested decision
+    remains independently queryable and visible for corruption. The
+    explicit ``portfolio_id`` column always agrees with the nested
+    decision's ``portfolio_id`` (the adapter enforces this on read).
+
+    Append-only: only the V1.43 durable record may INSERT into this
+    table; there is no UPDATE/DELETE API for it.
+    """
+
+    __tablename__ = (
+        "portfolio_project_focus_next_ready_task_decision_records"
+    )
+
+    decision_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    portfolio_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    decided_at: Mapped[str] = mapped_column(String(), nullable=False)
+    decision_snapshot: Mapped[str] = mapped_column(String(), nullable=False)
+
+
 class PortfolioRow(Base):
     """One canonical portfolio."""
 
