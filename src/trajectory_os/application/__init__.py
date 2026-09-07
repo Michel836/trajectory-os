@@ -92,6 +92,11 @@ from trajectory_os.application.execution_effort_project_focus_decision_persisten
     PortfolioProjectEffortFocusDecisionRepository,
     record_portfolio_effort_focus_decision_durably,
 )
+from trajectory_os.application.execution_effort_project_focus_next_ready_task_decision import (  # noqa: E501
+    PortfolioProjectFocusNextReadyTaskDecision,
+    PortfolioProjectFocusNextReadyTaskDecisionError,
+    accept_next_ready_task_selection,
+)
 from trajectory_os.application.execution_effort_project_focus_next_ready_task_selection import (  # noqa: E501
     PortfolioProjectFocusNextReadyTaskSelection,
     PortfolioProjectFocusNextReadyTaskSelectionError,
@@ -230,6 +235,9 @@ __all__ = [
     "ReadyProjectTaskCandidates",
     "ReadyTaskCandidate",
     "project_ready_task_candidates_from_current_constraint_evaluation",
+    "PortfolioProjectFocusNextReadyTaskDecision",
+    "PortfolioProjectFocusNextReadyTaskDecisionError",
+    "accept_next_ready_task_selection",
     "PortfolioProjectFocusNextReadyTaskSelection",
     "PortfolioProjectFocusNextReadyTaskSelectionError",
     "select_first_ready_task_candidate",
