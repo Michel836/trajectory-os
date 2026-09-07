@@ -92,6 +92,13 @@ from trajectory_os.application.execution_effort_project_focus_decision_persisten
     PortfolioProjectEffortFocusDecisionRepository,
     record_portfolio_effort_focus_decision_durably,
 )
+from trajectory_os.application.execution_effort_project_focus_ready_task_candidates import (  # noqa: E501
+    PortfolioProjectFocusReadyTaskCandidates,
+    PortfolioProjectFocusReadyTaskCandidatesError,
+    ReadyProjectTaskCandidates,
+    ReadyTaskCandidate,
+    project_ready_task_candidates_from_current_constraint_evaluation,
+)
 from trajectory_os.application.execution_effort_project_focus_scenario_set import (
     PortfolioProjectEffortFocusScenario,
     PortfolioProjectEffortFocusScenarioSet,
@@ -213,6 +220,11 @@ __all__ = [
     "PortfolioProjectFocusTaskCurrentConstraintEvaluation",
     "PortfolioProjectFocusTaskCurrentConstraintEvaluationError",
     "evaluate_current_constraints_for_focused_task_work_units",
+    "PortfolioProjectFocusReadyTaskCandidates",
+    "PortfolioProjectFocusReadyTaskCandidatesError",
+    "ReadyProjectTaskCandidates",
+    "ReadyTaskCandidate",
+    "project_ready_task_candidates_from_current_constraint_evaluation",
     "PortfolioProjectFocusTaskWorkUnitProjectionError",
     "PortfolioProjectEffortSelectionComparison",
     "PortfolioProjectEffortSelectionComparisonError",
