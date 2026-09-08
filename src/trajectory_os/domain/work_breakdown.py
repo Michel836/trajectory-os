@@ -252,6 +252,24 @@ def build_work_breakdown(
         entity.id: index for index, entity in enumerate(portfolio.entities)
     }
     membership = _children_by_parent(portfolio)
+
+    # A BELONGS_TO edge with an unknown endpoint is structurally invalid.
+    # Validate explicitly before deterministic ordering so malformed
+    # canonical state is reported as a domain boundary error rather than
+    # leaking an implementation-level KeyError.
+    for parent_id, membership_child_ids in membership.items():
+        if parent_id not in entities:
+            raise WorkBreakdownError(
+                "BELONGS_TO relation references unknown parent entity "
+                f"{parent_id}"
+            )
+        for child_id in membership_child_ids:
+            if child_id not in entities:
+                raise WorkBreakdownError(
+                    "BELONGS_TO relation references unknown child entity "
+                    f"{child_id}"
+                )
+
     children_of = {
         parent_id: sorted(child_ids, key=entity_order.__getitem__)
         for parent_id, child_ids in membership.items()

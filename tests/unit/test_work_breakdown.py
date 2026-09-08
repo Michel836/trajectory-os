@@ -589,3 +589,38 @@ def test_unreachable_invalid_containment_does_not_affect_selected_root() -> None
     assert [child.entity_id for child in result.root.children] == [
         package.id,
     ]
+
+
+@pytest.mark.parametrize("dangling_endpoint", ["child", "parent"])
+def test_dangling_belongs_to_endpoint_raises_work_breakdown_error(
+    dangling_endpoint: str,
+) -> None:
+    project = _entity(EntityType.PROJECT, "Project")
+    task = _entity(EntityType.TASK, "Task")
+    ghost = uuid4()
+
+    if dangling_endpoint == "child":
+        dangling = TrajectoryRelation(
+            source_id=ghost,
+            target_id=project.id,
+            relation_type=RelationType.BELONGS_TO,
+        )
+    else:
+        dangling = TrajectoryRelation(
+            source_id=task.id,
+            target_id=ghost,
+            relation_type=RelationType.BELONGS_TO,
+        )
+
+    portfolio = Portfolio.model_construct(
+        id=uuid4(),
+        name="hostile-dangling-belongs-to",
+        entities=[project, task],
+        relations=[
+            _belongs_to(task, project),
+            dangling,
+        ],
+    )
+
+    with pytest.raises(WorkBreakdownError, match="unknown .* entity"):
+        build_work_breakdown(portfolio, project.id)
