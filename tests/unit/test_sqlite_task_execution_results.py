@@ -366,3 +366,213 @@ def test_persistence_survives_independent_repository_reopen(
     assert second_repository.list_history(portfolio_id) == (record,)
 
     second_repository.close()
+
+
+def _update_execution_result_row(
+    repository: SqliteTaskExecutionResultRepository,
+    execution_record_id: UUID,
+    **values: object,
+) -> None:
+    from sqlalchemy import update
+
+    from trajectory_os.adapters.persistence.models import (
+        TaskExecutionResultRecordRow,
+    )
+
+    with Session(repository.engine) as session:
+        session.execute(
+            update(TaskExecutionResultRecordRow)
+            .where(
+                TaskExecutionResultRecordRow.execution_record_id
+                == str(execution_record_id)
+            )
+            .values(**values)
+        )
+        session.commit()
+
+
+def test_malformed_result_snapshot_is_rejected_on_read(
+    tmp_path: Path,
+) -> None:
+    repository = SqliteTaskExecutionResultRepository(
+        tmp_path / "execution-results.sqlite"
+    )
+
+    portfolio_id = _uuid(100)
+    _seed_portfolio(repository, portfolio_id)
+
+    record = _record(execution_record_id=_uuid(501))
+    repository.add(record)
+
+    _update_execution_result_row(
+        repository,
+        record.execution_record_id,
+        result_snapshot="{not-valid-json",
+    )
+
+    with pytest.raises(ValueError):
+        repository.list_history(portfolio_id)
+
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    ("column_name", "corrupt_value"),
+    [
+        ("request_id", str(_uuid(601))),
+        ("intent_id", str(_uuid(602))),
+        ("decision_id", str(_uuid(603))),
+        ("authorized_project_id", str(_uuid(604))),
+        ("authorized_task_id", str(_uuid(605))),
+    ],
+)
+def test_explicit_identity_column_snapshot_mismatch_is_rejected(
+    tmp_path: Path,
+    column_name: str,
+    corrupt_value: str,
+) -> None:
+    repository = SqliteTaskExecutionResultRepository(
+        tmp_path / f"{column_name}.sqlite"
+    )
+
+    portfolio_id = _uuid(100)
+    _seed_portfolio(repository, portfolio_id)
+
+    record = _record(execution_record_id=_uuid(510))
+    repository.add(record)
+
+    _update_execution_result_row(
+        repository,
+        record.execution_record_id,
+        **{column_name: corrupt_value},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=column_name,
+    ):
+        repository.list_history(portfolio_id)
+
+    repository.close()
+
+
+def test_portfolio_column_snapshot_mismatch_is_rejected(
+    tmp_path: Path,
+) -> None:
+    repository = SqliteTaskExecutionResultRepository(
+        tmp_path / "portfolio-mismatch.sqlite"
+    )
+
+    original_portfolio_id = _uuid(100)
+    corrupt_portfolio_id = _uuid(700)
+
+    _seed_portfolio(repository, original_portfolio_id)
+    _seed_portfolio(repository, corrupt_portfolio_id)
+
+    record = _record(
+        execution_record_id=_uuid(511),
+        result=_result(portfolio_id=original_portfolio_id),
+    )
+    repository.add(record)
+
+    _update_execution_result_row(
+        repository,
+        record.execution_record_id,
+        portfolio_id=str(corrupt_portfolio_id),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="portfolio_id",
+    ):
+        repository.list_history(corrupt_portfolio_id)
+
+    repository.close()
+
+
+def test_succeeded_column_snapshot_mismatch_is_rejected(
+    tmp_path: Path,
+) -> None:
+    repository = SqliteTaskExecutionResultRepository(
+        tmp_path / "succeeded-mismatch.sqlite"
+    )
+
+    portfolio_id = _uuid(100)
+    _seed_portfolio(repository, portfolio_id)
+
+    record = _record(
+        execution_record_id=_uuid(512),
+        result=_result(succeeded=True),
+    )
+    repository.add(record)
+
+    _update_execution_result_row(
+        repository,
+        record.execution_record_id,
+        succeeded=0,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="succeeded",
+    ):
+        repository.list_history(portfolio_id)
+
+    repository.close()
+
+
+@pytest.mark.parametrize("invalid_succeeded", [-1, 2, 7])
+def test_invalid_succeeded_storage_representation_is_rejected(
+    tmp_path: Path,
+    invalid_succeeded: int,
+) -> None:
+    repository = SqliteTaskExecutionResultRepository(
+        tmp_path / f"succeeded-{invalid_succeeded}.sqlite"
+    )
+
+    portfolio_id = _uuid(100)
+    _seed_portfolio(repository, portfolio_id)
+
+    record = _record(execution_record_id=_uuid(513))
+    repository.add(record)
+
+    _update_execution_result_row(
+        repository,
+        record.execution_record_id,
+        succeeded=invalid_succeeded,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="expected exactly 0 or 1",
+    ):
+        repository.list_history(portfolio_id)
+
+    repository.close()
+
+
+def test_foreign_key_integrity_error_is_not_misclassified_as_duplicate(
+    tmp_path: Path,
+) -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    repository = SqliteTaskExecutionResultRepository(
+        tmp_path / "foreign-key.sqlite"
+    )
+
+    # Deliberately do NOT seed the referenced portfolio.
+    record = _record(
+        execution_record_id=_uuid(514),
+        result=_result(portfolio_id=_uuid(800)),
+    )
+
+    with pytest.raises(IntegrityError) as exc_info:
+        repository.add(record)
+
+    assert "FOREIGN KEY constraint failed" in str(exc_info.value.orig)
+    assert not isinstance(
+        exc_info.value,
+        DuplicateTaskExecutionResultRecordError,
+    )
+
+    repository.close()
