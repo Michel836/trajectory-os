@@ -24,6 +24,17 @@ Run static type checking:
 
     uv run mypy src
 
+## Canonical development process
+
+Substantial changes must follow the canonical TrajectoryOS development process:
+
+- `docs/development/PROCESS.md`
+- `docs/development/DEFINITION_OF_DONE.md`
+- `docs/development/AGENT_WORKFLOW.md`
+
+`CONTRIBUTING.md` is a concise contributor guide; it does not replace or weaken
+those canonical process requirements.
+
 ## Engineering philosophy
 
 Before adding a framework, database, agent, service or dependency, demonstrate
