@@ -259,6 +259,59 @@ class PortfolioProjectFocusNextReadyTaskDecisionRecordRow(Base):
     decision_snapshot: Mapped[str] = mapped_column(String(), nullable=False)
 
 
+class TaskExecutionResultRecordRow(Base):
+    """One durable, immutable V1.48 TASK execution result record (V1.49).
+
+    ``execution_record_id`` is the durable identity of exactly this
+    persisted historical record. It is a primary key only for durable
+    record identity and MUST NOT be interpreted as an execution
+    idempotency key.
+
+    ``portfolio_id`` is the owning portfolio and follows the established
+    durable-history convention with ``ON DELETE CASCADE``.
+
+    The request, intent, decision, authorized project, authorized task,
+    and succeeded values are explicit immutable snapshot columns for
+    queryability and corruption visibility. Project/task identifiers
+    deliberately carry no foreign keys into replaceable entity snapshot
+    rows.
+
+    ``recorded_at`` stores the exact caller-supplied aware ISO-8601 text,
+    preserving its original UTC offset.
+
+    ``result_snapshot`` stores deterministic explicit JSON of the exact
+    V1.48 ``TaskExecutionResult``. It is never a pickle or opaque binary.
+
+    Append-only: V1.49 exposes no update, delete, replace, or upsert path.
+    """
+
+    __tablename__ = "task_execution_result_records"
+
+    execution_record_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+    portfolio_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    request_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    intent_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    decision_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    authorized_project_id: Mapped[str] = mapped_column(
+        String(36),
+        nullable=False,
+    )
+    authorized_task_id: Mapped[str] = mapped_column(
+        String(36),
+        nullable=False,
+    )
+    succeeded: Mapped[int] = mapped_column(Integer, nullable=False)
+    recorded_at: Mapped[str] = mapped_column(String(), nullable=False)
+    result_snapshot: Mapped[str] = mapped_column(String(), nullable=False)
+
+
 class PortfolioRow(Base):
     """One canonical portfolio."""
 
