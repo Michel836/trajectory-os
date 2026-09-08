@@ -135,6 +135,11 @@ from trajectory_os.application.execution_effort_project_focus_next_ready_task_ex
     TaskExecutionLifecycleDisposition,
     decide_task_execution_lifecycle,
 )
+from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_lifecycle_admission import (  # noqa: E501
+    TaskExecutionLifecycleAdmission,
+    TaskExecutionLifecycleAdmissionError,
+    admit_current_task_execution_lifecycle,
+)
 from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_persistence import (  # noqa: E501
     DurableTaskExecutionResultError,
     TaskExecutionResultRecord,
@@ -320,6 +325,9 @@ __all__ = [
     "TaskExecutionLifecycleDecisionError",
     "TaskExecutionLifecycleDisposition",
     "decide_task_execution_lifecycle",
+    "TaskExecutionLifecycleAdmission",
+    "TaskExecutionLifecycleAdmissionError",
+    "admit_current_task_execution_lifecycle",
     "PortfolioProjectFocusNextReadyTaskSelection",
     "PortfolioProjectFocusNextReadyTaskSelectionError",
     "select_first_ready_task_candidate",
