@@ -103,6 +103,13 @@ from trajectory_os.application.execution_effort_project_focus_next_ready_task_de
     PortfolioProjectFocusNextReadyTaskDecisionRepository,
     record_next_ready_task_decision_durably,
 )
+from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_admission import (  # noqa: E501
+    PortfolioProjectFocusNextReadyTaskExecutionAdmission,
+    PortfolioProjectFocusNextReadyTaskExecutionAdmissionConstraint,
+    PortfolioProjectFocusNextReadyTaskExecutionAdmissionError,
+    PortfolioProjectFocusNextReadyTaskExecutionAdmissionState,
+    evaluate_current_next_ready_task_execution_admission,
+)
 from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_applicability import (  # noqa: E501
     PortfolioProjectFocusNextReadyTaskExecutionApplicability,
     PortfolioProjectFocusNextReadyTaskExecutionApplicabilityConstraint,
@@ -265,6 +272,11 @@ __all__ = [
     "PortfolioProjectFocusNextReadyTaskDecisionRecord",
     "PortfolioProjectFocusNextReadyTaskDecisionRepository",
     "record_next_ready_task_decision_durably",
+    "PortfolioProjectFocusNextReadyTaskExecutionAdmission",
+    "PortfolioProjectFocusNextReadyTaskExecutionAdmissionConstraint",
+    "PortfolioProjectFocusNextReadyTaskExecutionAdmissionError",
+    "PortfolioProjectFocusNextReadyTaskExecutionAdmissionState",
+    "evaluate_current_next_ready_task_execution_admission",
     "PortfolioProjectFocusNextReadyTaskExecutionApplicability",
     "PortfolioProjectFocusNextReadyTaskExecutionApplicabilityConstraint",
     "PortfolioProjectFocusNextReadyTaskExecutionApplicabilityError",
