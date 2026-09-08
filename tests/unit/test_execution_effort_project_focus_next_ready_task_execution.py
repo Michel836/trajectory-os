@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import ast
 import inspect
-from datetime import datetime, timezone
-from typing import Callable
+from collections.abc import Callable
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,7 +16,7 @@ from trajectory_os.application.execution_effort_project_focus_next_ready_task_ex
     TaskExecutionResult,
     execute_current_admitted_task,
 )
-from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_admission import (
+from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_admission import (  # noqa: E501
     PortfolioProjectFocusNextReadyTaskExecutionAdmission,
     PortfolioProjectFocusNextReadyTaskExecutionAdmissionState,
 )
@@ -63,9 +63,9 @@ def _admission(
 
     return PortfolioProjectFocusNextReadyTaskExecutionAdmission(
         request_id=uuid4(),
-        requested_at=datetime(2026, 9, 8, 7, 0, tzinfo=timezone.utc),
+        requested_at=datetime(2026, 9, 8, 7, 0, tzinfo=UTC),
         intent_id=uuid4(),
-        authorized_at=datetime(2026, 9, 8, 6, 0, tzinfo=timezone.utc),
+        authorized_at=datetime(2026, 9, 8, 6, 0, tzinfo=UTC),
         decision_id=uuid4(),
         portfolio_id=uuid4(),
         authorized_project_id=uuid4(),
@@ -242,9 +242,10 @@ def test_non_genuine_admission_is_rejected_before_execution(bad: object) -> None
 
 def test_hostile_constructed_admission_is_freshly_revalidated() -> None:
     admission = _admission()
+    payload = admission.model_dump(mode="python")
+    payload["authorized_task_id"] = "not-a-uuid"
     hostile = PortfolioProjectFocusNextReadyTaskExecutionAdmission.model_construct(
-        **admission.model_dump(mode="python"),
-        authorized_task_id="not-a-uuid",
+        **payload
     )
     executor = RecordingExecutor()
 
