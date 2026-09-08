@@ -129,6 +129,12 @@ from trajectory_os.application.execution_effort_project_focus_next_ready_task_ex
     PortfolioProjectFocusNextReadyTaskExecutionIntentError,
     authorize_next_ready_task_execution,
 )
+from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_persistence import (  # noqa: E501
+    DurableTaskExecutionResultError,
+    TaskExecutionResultRecord,
+    TaskExecutionResultRepository,
+    record_task_execution_result_durably,
+)
 from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_request import (  # noqa: E501
     PortfolioProjectFocusNextReadyTaskExecutionRequest,
     PortfolioProjectFocusNextReadyTaskExecutionRequestError,
@@ -289,6 +295,10 @@ __all__ = [
     "TaskExecutionPort",
     "TaskExecutionResult",
     "execute_current_admitted_task",
+    "DurableTaskExecutionResultError",
+    "TaskExecutionResultRecord",
+    "TaskExecutionResultRepository",
+    "record_task_execution_result_durably",
     "PortfolioProjectFocusNextReadyTaskExecutionApplicability",
     "PortfolioProjectFocusNextReadyTaskExecutionApplicabilityConstraint",
     "PortfolioProjectFocusNextReadyTaskExecutionApplicabilityError",
