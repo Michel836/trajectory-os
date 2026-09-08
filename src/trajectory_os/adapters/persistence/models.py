@@ -312,6 +312,58 @@ class TaskExecutionResultRecordRow(Base):
     result_snapshot: Mapped[str] = mapped_column(String(), nullable=False)
 
 
+class TaskExecutionLifecycleApplicationRecordRow(Base):
+    """One durable, immutable V1.52 completed lifecycle application record
+    (V1.53).
+
+    ``application_record_id`` is the durable identity of exactly this
+    persisted historical record. It is a primary key only for durable
+    record identity and MUST NOT be interpreted as an application
+    idempotency key.
+
+    ``portfolio_id`` is the owning portfolio and follows the established
+    durable-history convention with ``ON DELETE CASCADE``.
+
+    ``entity_id`` is NOT a foreign key into replaceable entity snapshot
+    rows: historical application records must remain independent from
+    the replaceable per-portfolio entity snapshot, so deleting an entity
+    from (or out of) a portfolio must never delete history.
+
+    ``previous_status``, ``new_status``, and ``changed_at`` are explicit
+    immutable snapshot columns for queryability and corruption visibility.
+    Statuses are stored by their ``EntityStatus`` string value.
+    ``changed_at`` stores the exact ISO-8601 text from the result, preserving
+    its original UTC offset.
+
+    ``recorded_at`` stores the exact caller-supplied aware ISO-8601 text,
+    preserving its original UTC offset.
+
+    ``result_snapshot`` stores deterministic explicit JSON of the exact
+    V1.52 ``EntityStatusTransitionResult``. It is never a pickle or opaque
+    binary.
+
+    Append-only: V1.54 exposes no update, delete, replace, or upsert path.
+    """
+
+    __tablename__ = "task_execution_lifecycle_application_records"
+
+    application_record_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+    portfolio_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    entity_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    previous_status: Mapped[str] = mapped_column(String(), nullable=False)
+    new_status: Mapped[str] = mapped_column(String(), nullable=False)
+    changed_at: Mapped[str] = mapped_column(String(), nullable=False)
+    recorded_at: Mapped[str] = mapped_column(String(), nullable=False)
+    result_snapshot: Mapped[str] = mapped_column(String(), nullable=False)
+
+
 class PortfolioRow(Base):
     """One canonical portfolio."""
 
