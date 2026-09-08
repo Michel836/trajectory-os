@@ -13,6 +13,25 @@ human contributors.
 - Agents must not silently change architecture, security posture, data policy, or product scope.
 - Irreversible or high-impact actions require explicit human approval.
 
+## Operational coordination states
+
+The following coordination labels make the current development state explicit.
+They are process labels only; they are not TrajectoryOS product or domain states.
+
+- `GO IMPLEMENT` — the contract is stable enough for implementation to begin.
+- `GO COMMIT` — the current micro-increment has passed its focused validation
+  and exact diff review and may be committed.
+- `GO PR` — branch-level validation and review evidence are sufficient to open
+  the pull request.
+- `GO MERGE` — CI, review, acceptance criteria, and applicable Definition of
+  Done requirements are satisfied, and human merge authority is exercised.
+- `FIX` — correct a finding within the currently agreed scope.
+- `STOP` — architecture, scope, authority, or consequential ambiguity requires
+  human resolution before continuing.
+
+These labels improve coordination but do not replace the canonical lifecycle,
+quality gate, acceptance criteria, or human merge authority.
+
 ## Standard agent task contract
 
 Every substantial agent task should include:
@@ -58,6 +77,12 @@ focused tests and `bash scripts/quality.sh` until green, rather than halting and
 first failure. Optimizations are for correctness and low human-intervention burden — not for
 fastest first draft. Human intervention is reserved for genuine ambiguity, architecture decisions,
 destructive/irreversible operations, and merge authority.
+
+Autonomous self-repair remains inside the currently authorized micro-increment and task contract.
+It must not silently expand scope, introduce unrelated work, or create a competing remote
+implementation state while the local worktree is authoritative. If repair requires changing the
+agreed architecture, scope, authority boundary, or consequential behavior, the correct state is
+`STOP`, not silent expansion.
 
 ## Required handoff
 
