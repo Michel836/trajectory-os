@@ -8,11 +8,11 @@ from uuid import UUID, uuid4
 import pytest
 from pydantic import ValidationError
 
-import trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_persistence as module
+import trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_persistence as module  # noqa: E501
 from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution import (
     TaskExecutionResult,
 )
-from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_persistence import (
+from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_persistence import (  # noqa: E501
     DurableTaskExecutionResultError,
     TaskExecutionResultRecord,
     record_task_execution_result_durably,

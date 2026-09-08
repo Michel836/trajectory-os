@@ -53,10 +53,11 @@ class TaskExecutionResultRecord(BaseModel):
             raise ValueError(
                 "recorded_at must be a timezone-aware datetime with a non-None UTC offset"
             )
-        TaskExecutionResult.model_validate(
+        fresh = TaskExecutionResult.model_validate(
             self.result.model_dump(mode="python"),
             strict=True,
         )
+        object.__setattr__(self, "result", fresh)
         return self
 
 
@@ -116,7 +117,8 @@ def record_task_execution_result_durably(
         )
     except ValidationError as exc:
         raise DurableTaskExecutionResultError(
-            "result did not survive fresh COMPLETE strict re-validation as a genuine V1.48 TaskExecutionResult"
+            "result did not survive fresh COMPLETE strict re-validation "
+            "as a genuine V1.48 TaskExecutionResult"
         ) from exc
 
     record = TaskExecutionResultRecord(
