@@ -20,10 +20,12 @@ from __future__ import annotations
 import argparse
 import enum
 import json
+import os
 import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -38,6 +40,12 @@ DEFAULT_RUFF_CMD = "uv run ruff check ."
 DEFAULT_MYPY_CMD = "uv run mypy src"
 DEFAULT_QUALITY_CMD = "bash scripts/quality.sh"
 
+# Bounded subprocess budgets (seconds). Every external command the gate runs
+# must terminate; an expiry is a controlled BLOCKED result, never a hang.
+DEFAULT_GIT_TIMEOUT = 30.0              # local git / repository inspection
+DEFAULT_REMOTE_QUERY_TIMEOUT = 60.0     # network git queries (git ls-remote)
+DEFAULT_COMMAND_TIMEOUT = 1800.0        # tests / Ruff / mypy / quality commands
+
 FIX = "FIX"
 STOP = "STOP"
 GO_MERGE_HUMAN = "GO MERGE (human)"
@@ -48,6 +56,14 @@ class PhaseOutcome(enum.StrEnum):
 
     PASS = "PASS"
     FAIL = "FAIL"
+
+
+class PhaseTimeout(Exception):
+    """A gated subprocess exceeded its bounded time budget (controlled fail)."""
+
+
+class MalformedStatus(Exception):
+    """`git status --porcelain` stream contains a record the gate cannot trust."""
 
 
 @dataclass(frozen=True)
@@ -118,20 +134,43 @@ COMMAND_SPECS: dict[str, tuple[str, str]] = {
 }
 
 
-def _git(repo: Path, *args: str) -> str:
-    proc = subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=False
-    )
+def _run(
+    cmd: Sequence[str], cwd: Path, budget: float
+) -> subprocess.CompletedProcess[str]:
+    """Run one bounded subprocess.
+
+    Every subprocess the gate spawns goes through here so timeout behavior
+    is centrally defined. Exceeding the budget raises a controlled
+    `PhaseTimeout` (diagnostic, no raw traceback to the user).
+    """
+    try:
+        return subprocess.run(
+            list(cmd),
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=budget,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise PhaseTimeout(
+            f"'{' '.join(cmd)}' timed out after {budget:.1f}s "
+            "(bounded execution; phase blocked instead of hanging)"
+        ) from exc
+
+
+def _git(repo: Path, *args: str, timeout: float | None = None) -> str:
+    budget = DEFAULT_GIT_TIMEOUT if timeout is None else timeout
+    proc = _run(["git", *args], repo, budget)
     if proc.returncode != 0:
         message = (proc.stderr or proc.stdout).strip()
         raise RuntimeError(message or f"git {' '.join(args)} failed")
     return proc.stdout.strip()
 
 
-def _git_rc(repo: Path, *args: str) -> int:
-    proc = subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, check=False
-    )
+def _git_rc(repo: Path, *args: str, timeout: float | None = None) -> int:
+    budget = DEFAULT_GIT_TIMEOUT if timeout is None else timeout
+    proc = _run(["git", *args], repo, budget)
     return proc.returncode
 
 
@@ -170,33 +209,69 @@ _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 def _split_dirty_records(raw: str) -> list[tuple[str, str]]:
     """Parse `git status --porcelain=v1 -z` output into (status, path) pairs.
 
-    Bounded parser: NUL-delimited records of the form `XY<space>path`. For
-    rename/copy, git puts the destination as the record path and emits the
-    source as a bare NUL-delimited chunk without a status prefix; such
-    continuation chunks are skipped (the destination is the relevant path).
-    Paths with spaces, slashes, or other odd characters survive verbatim.
+    Bounded, fail-closed parser. NUL-delimited records of the form
+    `XY<space>path`; paths may contain spaces, slashes, or other odd
+    characters (and may be git-quoted) and survive verbatim. For
+    rename/copy, the destination is the record path and the source MUST
+    follow as the immediately next non-empty NUL chunk (a bare path with
+    no status prefix). That continuation is consumed; the destination
+    remains the relevant tracked path.
+
+    Fail-closed: a chunk that is neither a valid `XY path` record nor the
+    mandatory rename/copy source continuation raises `MalformedStatus` so
+    the gate blocks with diagnostics instead of silently dropping dirty
+    state and falsely reporting clean/EXPECTED. In particular, a new
+    `XY path` record can never silently substitute for the required
+    rename/copy source, nor can an empty chunk or a truncated stream.
     """
-    records: list[tuple[str, str]] = []
-    for chunk in raw.split("\0"):
-        if (
+    def _is_record(chunk: str) -> bool:
+        return (
             len(chunk) >= 4
             and chunk[0] in _STATUS_FIRST
             and chunk[1] in _STATUS_SECOND
             and chunk[2] == " "
-            and chunk[3:]
-        ):
+            and bool(chunk[3:])
+        )
+
+    chunks = raw.split("\0")
+    records: list[tuple[str, str]] = []
+    source_pending = False
+    for index, chunk in enumerate(chunks):
+        if index == len(chunks) - 1 and chunk == "":
+            continue  # trailing NUL terminator: structure, not a record
+        if source_pending:
+            if chunk == "":
+                raise MalformedStatus(
+                    f"record #{index}: rename/copy source continuation is "
+                    f"missing/empty in the porcelain stream (chunk={chunk!r}); "
+                    f"fail-closed"
+                )
+            if _is_record(chunk):
+                raise MalformedStatus(
+                    f"record #{index}: new `XY <space> path` record where the "
+                    f"required rename/copy source continuation must be in the "
+                    f"porcelain stream (chunk={chunk!r}); fail-closed"
+                )
+            source_pending = False  # rename/copy source consumed; destination kept
+            continue
+        if _is_record(chunk):
             records.append((chunk[:2], chunk[3:]))
+            source_pending = "R" in chunk[:2] or "C" in chunk[:2]
+        else:
+            raise MalformedStatus(
+                f"record #{index} is not a valid `XY <space> path` porcelain "
+                f"record (chunk={chunk!r})"
+            )
+    if source_pending:
+        raise MalformedStatus(
+            f"record #{len(chunks) - 1}: porcelain stream ends before the "
+            f"required rename/copy source continuation; fail-closed"
+        )
     return records
 
 
 def dirty_records(repo: Path) -> list[tuple[str, str]]:
-    proc = subprocess.run(
-        ["git", "status", "--porcelain=v1", "-z"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    proc = _run(["git", "status", "--porcelain=v1", "-z"], repo, DEFAULT_GIT_TIMEOUT)
     if proc.returncode != 0:
         message = (proc.stderr or proc.stdout).strip()
         raise RuntimeError(message or "git status --porcelain=v1 -z failed")
@@ -364,9 +439,7 @@ def nonempty_diff_phase(options: GateOptions) -> Phase:
 def diff_check_phase(options: GateOptions) -> Phase:
     def run() -> PhaseResult:
         for args in (["diff", "--check"], ["diff", "--cached", "--check"]):
-            proc = subprocess.run(
-                ["git", *args], cwd=options.repo, capture_output=True, text=True, check=False
-            )
+            proc = _run(["git", *args], options.repo, DEFAULT_GIT_TIMEOUT)
             if proc.returncode != 0:
                 return PhaseResult(
                     name="diff_check",
@@ -382,9 +455,7 @@ def diff_check_phase(options: GateOptions) -> Phase:
 
 def command_phase(name: str, command: str, repo: Path) -> Phase:
     def run() -> PhaseResult:
-        proc = subprocess.run(
-            shlex.split(command), cwd=repo, capture_output=True, text=True, check=False
-        )
+        proc = _run(shlex.split(command), repo, DEFAULT_COMMAND_TIMEOUT)
         ok = proc.returncode == 0
         stream = proc.stdout if ok else (proc.stderr or proc.stdout)
         summary = _last_line(stream)
@@ -453,7 +524,12 @@ def upstream_phase(options: GateOptions) -> Phase:
         # Read-only: no fetch, no push, no update-ref, no remote mutation.
         try:
             listing = _git(
-                repo, "ls-remote", "--heads", "origin", f"refs/heads/{branch}"
+                repo,
+                "ls-remote",
+                "--heads",
+                "origin",
+                f"refs/heads/{branch}",
+                timeout=DEFAULT_REMOTE_QUERY_TIMEOUT,
             )
         except RuntimeError as exc:
             return PhaseResult(
@@ -685,17 +761,53 @@ def diff_summary_phase(options: GateOptions) -> Phase:
     return Phase("diff_summary", _diff_summary_runner(options))
 
 
+def _safe_read(label: str, func: Callable[[], str]) -> str:
+    """Best-effort read for report metadata; a controlled failure must not
+    mask the phase results (the report above is the source of truth)."""
+    try:
+        return func()
+    except (PhaseTimeout, MalformedStatus):
+        return f"(unavailable: {label} could not be read in bounded time)"
+
+
 def run_gate(
     command: str,
     options: GateOptions,
     phases: Sequence[Phase] | None = None,
 ) -> GateReport:
-    """Run gate phases fail-fast (no later phase runs after a failure)."""
+    """Run gate phases fail-fast (no later phase runs after a failure).
+
+    Controlled failures (subprocess timeout, untrustable `git status`
+    structure) are converted into a FAIL result for the phase that produced
+    them: the run is BLOCKED with diagnostics and later phases never run.
+    """
     ready_state, success_decision = COMMAND_SPECS[command]
     planned = list(phases) if phases is not None else default_phases(command, options)
     results: list[PhaseResult] = []
     for phase in planned:
-        result = phase.run()
+        try:
+            result = phase.run()
+        except PhaseTimeout as exc:
+            result = PhaseResult(
+                name=phase.name,
+                outcome=PhaseOutcome.FAIL,
+                summary=f"TIMEOUT: {exc}",
+                detail=(
+                    "the phase exceeded its bounded time budget; it was blocked "
+                    "instead of hanging, and no later phase ran (fail-fast)"
+                ),
+                suggested_decision=FIX,
+            )
+        except MalformedStatus as exc:
+            result = PhaseResult(
+                name=phase.name,
+                outcome=PhaseOutcome.FAIL,
+                summary=(
+                    f"malformed `git status --porcelain` stream: {exc}; "
+                    "dirty state cannot be trusted and is not reported"
+                ),
+                suggested_decision=STOP,
+            )
         results.append(result)
         if result.outcome is PhaseOutcome.FAIL:
             break
@@ -704,9 +816,9 @@ def run_gate(
         ready_state=ready_state,
         success_decision=success_decision,
         repo=options.repo,
-        branch=repo_branch(options.repo),
-        head=repo_head(options.repo),
-        base=repo_base(options.repo),
+        branch=_safe_read("branch", lambda: repo_branch(options.repo)),
+        head=_safe_read("head", lambda: repo_head(options.repo)),
+        base=_safe_read("base", lambda: repo_base(options.repo)),
         results=tuple(results),
     )
 
@@ -747,17 +859,40 @@ def render_report(report: GateReport) -> str:
 
 
 def write_artifact(repo: Path, body: str) -> Path:
-    """Write the local handoff artifact (evidence only, not semantic authority)."""
-    path = repo / ".artifacts" / "handoff" / "latest.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """Write the local handoff artifact (evidence only, not semantic authority).
+
+    Atomic within the handoff directory: build the full payload in a
+    unique temporary file created by `tempfile.mkstemp` in the same
+    directory, write + flush + fsync + close it, then `os.replace()` onto
+    `latest.md`. Readers never observe a partially written artifact.
+
+    Only this run's own unique temp file is ever touched: on failure it is
+    the sole file cleaned up, the previous complete artifact (if any) is
+    preserved, and temporary files belonging to other concurrent gate runs
+    are never glob-deleted or otherwise disturbed.
+    """
+    directory = repo / ".artifacts" / "handoff"
+    directory.mkdir(parents=True, exist_ok=True)
+    final = directory / "latest.md"
     stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     header = (
         "<!-- TrajectoryOS gate handoff artifact: evidence only; "
         "NOT semantic authority over Git/repository state -->\n"
         f"<!-- generated_at: {stamp} -->\n\n"
     )
-    path.write_text(header + body + "\n", encoding="utf-8")
-    return path
+    payload = header + body + "\n"
+    fd, tmp_name = tempfile.mkstemp(prefix="latest.md.tmp-", dir=directory)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, final)
+    except BaseException:
+        tmp.unlink(missing_ok=True)  # only this run's own temp file
+        raise
+    return final
 
 
 def _common_args(parser: argparse.ArgumentParser) -> None:

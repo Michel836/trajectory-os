@@ -634,6 +634,265 @@ def test_write_artifact_creates_evidence_only_file(tmp_path: Path) -> None:
     assert "STATE: READY_FOR_COMMIT" in text
 
 
+# ---------------------------------------------------------------------------
+# FIX 1: bounded subprocess execution (timeouts are controlled BLOCKED)
+# ---------------------------------------------------------------------------
+
+
+def test_bounded_run_raises_controlled_timeout(tmp_path: Path) -> None:
+    """A subprocess exceeding its budget raises a controlled, diagnostic error."""
+    with pytest.raises(tg.PhaseTimeout, match="timed out"):
+        tg._run(["sleep", "5"], tmp_path, 0.3)
+
+
+def test_command_timeout_blocks_and_later_phases_do_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """timeout -> FAIL/BLOCKED, fail-fast preserved, no READY state, no traceback."""
+    repo = _make_repo(tmp_path)
+    _new_branch(repo, "feat/x")
+    monkeypatch.setattr(tg, "DEFAULT_COMMAND_TIMEOUT", 0.5)
+    calls: list[str] = []
+    options = _options(repo)
+    report = tg.run_gate(
+        "implement",
+        options,
+        phases=[
+            tg.command_phase("focused_tests", "sleep 5", repo),
+            tg.command_phase("ruff", "true", repo),
+            _dummy("mypy", calls=calls),
+        ],
+    )
+    assert report.blocked
+    assert calls == [], "fail-fast: no later phase may run after a timeout"
+    failed = report.failed
+    assert failed is not None
+    assert failed.name == "focused_tests"
+    assert failed.outcome is tg.PhaseOutcome.FAIL
+    assert [r.name for r in report.results] == ["focused_tests"]
+    body = tg.render_report(report)
+    assert "STATE: BLOCKED" in body
+    assert "READY_FOR_COMMIT" not in body
+    assert "timed out" in body
+    assert body.rstrip().endswith(tg.FIX)
+
+
+def test_successful_command_still_behaves_normally(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    result = tg.command_phase("focused_tests", "true", repo).run()
+    assert result.outcome is tg.PhaseOutcome.PASS
+    assert result.summary == "OK"
+
+
+def test_push_check_git_timeout_never_ready_for_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timed-out git query in push-check can never produce READY_FOR_PUSH."""
+    repo = _make_repo(tmp_path)
+    _make_remote(repo, tmp_path, "remote")
+    _new_branch(repo, "feat/x")
+
+    def _slow(*_args: object, **_kwargs: object) -> object:
+        raise tg.PhaseTimeout(
+            "'git ls-remote --heads origin refs/heads/feat/x' timed out after 60.0s "
+            "(bounded execution; phase blocked instead of hanging)"
+        )
+
+    monkeypatch.setattr(tg, "_run", _slow)
+    options = _options(repo)
+    report = tg.run_gate("push-check", options, phases=[tg.upstream_phase(options)])
+    assert report.blocked
+    assert report.failed is not None and report.failed.name == "remote_head"
+    body = tg.render_report(report)
+    assert "READY_FOR_PUSH" not in body
+    assert "remote_head: FAIL" in body
+    assert "timed out" in body
+
+
+def test_push_check_ls_remote_timeout_propagates_not_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hostile: an ls-remote timeout must not be swallowed as generic failure."""
+    repo = _make_repo(tmp_path)
+    _make_remote(repo, tmp_path, "remote")
+    _new_branch(repo, "feat/x")
+
+    def _timeout(*_args: object, **_kwargs: object) -> str:
+        raise tg.PhaseTimeout("'git ls-remote ...' timed out after 60.0s")
+
+    monkeypatch.setattr(tg, "_git", _timeout)
+    options = _options(repo)
+    report = tg.run_gate("push-check", options, phases=[tg.upstream_phase(options)])
+    assert report.blocked
+    body = tg.render_report(report)
+    assert "READY_FOR_PUSH" not in body
+    assert "timed out" in body
+
+
+# ---------------------------------------------------------------------------
+# FIX 2: fail-closed porcelain parser (never silently drop malformed records)
+# ---------------------------------------------------------------------------
+
+
+def test_split_dirty_records_accepts_valid_stream_shapes() -> None:
+    assert tg._split_dirty_records("") == []
+    assert tg._split_dirty_records(" M file.txt\0") == [(" M", "file.txt")]
+    assert tg._split_dirty_records("?? dir with space/\0 M other.md\0") == [
+        ("??", "dir with space/"),
+        (" M", "other.md"),
+    ]
+    # rename: destination record + bare source continuation (consumed, not dropped)
+    assert tg._split_dirty_records("R  renamed target.txt\0old source.txt\0") == [
+        ("R ", "renamed target.txt"),
+    ]
+    # copy: destination record + bare source continuation
+    assert tg._split_dirty_records(" C copied.txt\0original.txt\0") == [
+        (" C", "copied.txt"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "garbage\0",                                  # not a status record at all
+        "M not a record\0",                           # wrong structure after XY
+        "M f\0",                                        # no `XY <space> path` shape
+        "\0 M a\0",                                  # empty record mid-stream
+        " M a\0?bare-after-mod\0",                    # bare chunk after non-rename
+        "??\0",                                           # bare chunk at stream start
+        "R  new.txt\0 M other.txt\0",     # XY record where source required
+        " C copied.txt\0 C another.txt\0",  # XY record where source required
+        "R  new.txt\0\0",               # empty chunk where source required
+        "R  new.txt\0",                 # truncated: source continuation missing
+        " C copied.txt\0 M other.txt\0",   # hostile: source silently lost
+    ],
+)
+def test_split_dirty_records_rejects_malformed_structure(raw: str) -> None:
+    """Malformed structural records must fail closed, never be dropped."""
+    with pytest.raises(tg.MalformedStatus, match="porcelain"):
+        tg._split_dirty_records(raw)
+
+
+def test_split_dirty_records_rejects_missing_rename_continuation() -> None:
+    """A rename/copy without its source continuation must fail closed."""
+    raw = "R  new.txt\0 M other.txt\0"
+    with pytest.raises(tg.MalformedStatus) as excinfo:
+        tg._split_dirty_records(raw)
+    assert "rename/copy source" in str(excinfo.value)
+    with pytest.raises(tg.MalformedStatus, match="porcelain"):
+        tg._split_dirty_records("R  new.txt\0")
+
+
+def test_split_dirty_records_accepts_consecutive_renames() -> None:
+    """Rename/copy destination + source pairs (back to back) remain valid."""
+    raw = "R  new.txt\0old.txt\0 C copy.txt\0orig.txt\0 M normal.md\0"
+    assert tg._split_dirty_records(raw) == [
+        ("R ", "new.txt"),
+        (" C", "copy.txt"),
+        (" M", "normal.md"),
+    ]
+
+
+def test_malformed_status_blocks_gate_with_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Malformed dirty state must BLOCK the gate, never report clean/EXPECTED."""
+    repo = _make_repo(tmp_path)
+    _new_branch(repo, "feat/x")
+    calls: list[str] = []
+
+    def _untrustworthy(_raw: str) -> list[tuple[str, str]]:
+        raise tg.MalformedStatus(
+            'record #2 is not a valid `XY <space> path` porcelain record (chunk="?? x")'
+        )
+
+    monkeypatch.setattr(tg, "_split_dirty_records", _untrustworthy)
+    options = _options(repo, allow=("app",))
+    report = tg.run_gate(
+        "implement",
+        options,
+        phases=[
+            tg.scope_phase(options),
+            _dummy("focused_tests", calls=calls),
+        ],
+    )
+    assert report.blocked
+    assert calls == [], "fail-fast: no later phase may run after malformed state"
+    body = tg.render_report(report)
+    assert "STATE: BLOCKED" in body
+    assert "scope: FAIL" in body
+    assert "malformed" in body
+    assert "EXPECTED (worktree clean)" not in body
+    assert body.rstrip().endswith(tg.STOP)
+
+
+# ---------------------------------------------------------------------------
+# FIX 3: atomic handoff artifact write (no partial/latest.md corruption)
+# ---------------------------------------------------------------------------
+
+
+def test_write_artifact_leaves_no_temporary_file(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    report = tg.run_gate("implement", _options(repo), phases=[])
+    body = tg.render_report(report)
+    path = tg.write_artifact(repo, body)
+    directory = path.parent
+    text = path.read_text(encoding="utf-8")
+    # final artifact is complete and correct
+    assert "NOT semantic authority over Git/repository state" in text
+    assert "STATE: READY_FOR_COMMIT" in text
+    assert body in text
+    # and no temporary handoff file remains after success
+    leftovers = [entry.name for entry in directory.iterdir() if entry.name != "latest.md"]
+    assert leftovers == []
+
+
+def test_write_artifact_does_not_touch_foreign_temporary_files(
+    tmp_path: Path,
+) -> None:
+    """Another concurrent gate run's temp file must survive this run."""
+    repo = _make_repo(tmp_path)
+    directory = repo / ".artifacts" / "handoff"
+    directory.mkdir(parents=True)
+    foreign = directory / "latest.md.tmp-foreign-run"
+    foreign.write_text("another run's payload", encoding="utf-8")
+
+    tg.write_artifact(repo, "body")
+    artifact = (directory / "latest.md").read_text(encoding="utf-8")
+    assert "body" in artifact
+    assert foreign.exists(), "foreign run's temp file must not be deleted"
+    assert foreign.read_text(encoding="utf-8") == "another run's payload"
+    # and no temp file belonging to THIS run remains after success
+    leftovers = [entry.name for entry in directory.iterdir() if entry.name != "latest.md"]
+    assert leftovers == [foreign.name]
+
+
+def test_write_artifact_failure_preserves_previous_and_cleans_only_own_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the atomic swap or write fails: previous artifact intact, only this
+    run's own temp file cleaned, foreign temps untouched."""
+    repo = _make_repo(tmp_path)
+    first = tg.write_artifact(repo, "first-body")
+    original = first.read_text(encoding="utf-8")
+
+    foreign = first.parent / "latest.md.tmp-foreign-run"
+    foreign.write_text("another run's payload", encoding="utf-8")
+
+    def _broken(*_args: object, **_kwargs: object) -> None:
+        raise OSError("simulated atomic-replace failure")
+
+    monkeypatch.setattr(tg.os, "replace", _broken)
+    with pytest.raises(OSError, match="simulated"):
+        tg.write_artifact(repo, "second-body")
+
+    directory = first.parent
+    assert first.read_text(encoding="utf-8") == original, "previous artifact intact"
+    assert foreign.exists(), "foreign run's temp file must survive a failed replacement"
+    leftovers = [entry.name for entry in directory.iterdir()
+                 if entry.name not in ("latest.md", foreign.name)]
+    assert leftovers == [], "own temp file must be cleaned up on failure"
+
 def test_cli_unknown_command_is_usage_error() -> None:
     with pytest.raises(SystemExit) as excinfo:
         tg.main(["definitely-not-a-command"])
