@@ -18,9 +18,11 @@ from trajectory_os.application.execution_effort_project_focus_next_ready_task_ex
 )
 from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_admission import (  # noqa: E501
     PortfolioProjectFocusNextReadyTaskExecutionAdmission,
+    PortfolioProjectFocusNextReadyTaskExecutionAdmissionConstraint,
     PortfolioProjectFocusNextReadyTaskExecutionAdmissionState,
 )
-from trajectory_os.domain.entities import EntityStatus
+from trajectory_os.domain.entities import EntityStatus, EntityType
+from trajectory_os.domain.relations import RelationType
 
 State = PortfolioProjectFocusNextReadyTaskExecutionAdmissionState
 
@@ -228,6 +230,67 @@ def test_every_constructible_non_admitted_state_is_rejected_before_execution(
         execute_current_admitted_task(_admission(state), executor)
 
     assert executor.calls == []
+
+
+def test_constrained_admission_is_rejected_before_execution() -> None:
+    constraint = PortfolioProjectFocusNextReadyTaskExecutionAdmissionConstraint(
+        relation_id=uuid4(),
+        relation_type=RelationType.DEPENDS_ON,
+        counterpart_entity_id=uuid4(),
+        counterpart_entity_type=EntityType.TASK,
+        counterpart_status=EntityStatus.ACTIVE,
+        satisfied=False,
+    )
+    admission = PortfolioProjectFocusNextReadyTaskExecutionAdmission(
+        request_id=uuid4(),
+        requested_at=datetime(2026, 9, 8, 7, 0, tzinfo=UTC),
+        intent_id=uuid4(),
+        authorized_at=datetime(2026, 9, 8, 6, 0, tzinfo=UTC),
+        decision_id=uuid4(),
+        portfolio_id=uuid4(),
+        authorized_project_id=uuid4(),
+        authorized_task_id=uuid4(),
+        task_status=EntityStatus.ACTIVE,
+        admission_state=State.CONSTRAINED,
+        constraints=(constraint,),
+        unsatisfied_constraint_count=1,
+    )
+    executor = RecordingExecutor()
+
+    with pytest.raises(TaskExecutionBoundaryError, match="ADMITTED"):
+        execute_current_admitted_task(admission, executor)
+
+    assert executor.calls == []
+
+
+def test_semantic_reads_after_revalidation_use_only_fresh_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admission = _admission()
+    executor = RecordingExecutor()
+    admission_type = PortfolioProjectFocusNextReadyTaskExecutionAdmission
+    original_model_dump = admission_type.model_dump
+
+    def dump_then_corrupt(
+        self: PortfolioProjectFocusNextReadyTaskExecutionAdmission,
+        *args: object,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        payload = original_model_dump(self, *args, **kwargs)
+        object.__setattr__(
+            self,
+            "admission_state",
+            State.PROJECT_MISSING,
+        )
+        return payload
+
+    monkeypatch.setattr(admission_type, "model_dump", dump_then_corrupt)
+
+    result = execute_current_admitted_task(admission, executor)
+
+    assert result.succeeded is True
+    assert len(executor.calls) == 1
+    assert admission.admission_state is State.PROJECT_MISSING
 
 
 @pytest.mark.parametrize("bad", [None, {}, "admitted", object()])
