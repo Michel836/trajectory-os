@@ -35,6 +35,21 @@ Use focused branches such as:
 
 Avoid unrelated changes in the same branch.
 
+## Authoritative implementation worktree
+
+During normal development, one local worktree and its focused branch are the
+authoritative implementation surface.
+
+GitHub is the collaboration, review, CI, evidence, and merge surface. It should
+not normally be used as a competing implementation worktree while the same
+change is being developed locally.
+
+This keeps one clearly identifiable source of in-progress code at a time and
+avoids mixing independently edited local and remote states.
+
+Direct remote editing may still be appropriate for an explicitly authorized
+workflow, but it must not silently replace the normal local development path.
+
 ## Work in progress limits
 
 Prefer one significant feature at a time, plus at most one small maintenance task.
@@ -46,6 +61,22 @@ Prefer small, reviewable pull requests.
 
 A change should normally represent one concept, one issue, and one demonstrable outcome.
 If a coding agent begins changing multiple unrelated subsystems, stop and split the work.
+
+For non-trivial milestones, prefer coherent micro-increments when that makes
+the change easier to validate and review.
+
+Before a micro-increment is committed:
+
+1. run the focused tests and checks appropriate to that increment;
+2. inspect the exact diff for unintended changes and scope expansion;
+3. repair findings within the agreed scope before committing.
+
+A focused micro-gate does not replace the repository-wide quality gate.
+`bash scripts/quality.sh` remains mandatory before pull-request and merge
+readiness.
+
+Do not mix unrelated maintenance or process work into an active feature branch.
+Use a separate Issue and branch when the work has a different purpose.
 
 ## Architecture changes
 
