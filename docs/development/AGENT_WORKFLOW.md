@@ -13,6 +13,32 @@ human contributors.
 - Agents must not silently change architecture, security posture, data policy, or product scope.
 - Irreversible or high-impact actions require explicit human approval.
 
+## Canonical execution path (CLI-first)
+
+Canonical TrajectoryOS operating rule for agent execution:
+
+- **Default execution path:** `scripts/trajectory-pi` (CLI) — execute, self-repair, test, report.
+- **Interactive Pi UI:** exception-only, for diagnostics, inspection, or debugging.
+  It must not be described or presented as the default execution path.
+
+Normal workflow:
+
+```text
+ChatGPT → task / fix contract
+CLI: scripts/trajectory-pi → execute / self-repair / test / report
+Michel → GO / FIX / STOP
+```
+
+Roles are preserved unconditionally:
+
+- **Michel** = consequential decisions (including every GO-gated transition).
+- **Agents** = bounded execution + self-repair + verification + evidence.
+
+This rule is consistent with the Pi-harness CLI-first, non-interactive execution
+safeguards below and with the handoff protocol in `docs/development/AGENT_HANDOFF.md`.
+This workflow file is the canonical statement; other documents reference it rather
+than duplicating it.
+
 ## Operational coordination states
 
 The following coordination labels make the current development state explicit.
@@ -21,6 +47,8 @@ They are process labels only; they are not TrajectoryOS product or domain states
 - `GO IMPLEMENT` — the contract is stable enough for implementation to begin.
 - `GO COMMIT` — the current micro-increment has passed its focused validation
   and exact diff review and may be committed.
+- `GO PUSH` — `push-check` gate is READY: remote head state and local
+  verification evidence support a plain (non-force) `git push`.
 - `GO PR` — branch-level validation and review evidence are sufficient to open
   the pull request.
 - `GO MERGE` — CI, review, acceptance criteria, and applicable Definition of
@@ -69,7 +97,10 @@ bash scripts/quality.sh
 10. Verify the task actually produced the intended change: a green gate on the old baseline is
     **not** success evidence. Require a non-empty scoped diff and/or a commit ahead of the known
     baseline.
-11. Produce the structured handoff below.
+11. Produce the structured handoff below, including the compact decision-gate
+    output (`STATE / BRANCH / HEAD / BASE / EVIDENCE / BLOCKERS / DECISION REQUIRED`)
+    produced by `python scripts/trajectory_gate.py` for the relevant command.
+    Full protocol: `docs/development/AGENT_HANDOFF.md`.
 12. Do not merge or bypass failed checks. Merge authority is human only.
 
 **Human-intervention minimization.** Substantial agents are expected to self-repair through
@@ -96,6 +127,8 @@ Every substantial agent task ends with:
 - **UNCERTAINTIES** — assumptions or unresolved questions.
 - **RISKS** — technical, security, data, or maintenance concerns.
 - **RECOMMENDED NEXT ACTION** — the smallest sensible next step.
+- **DECISION GATE EVIDENCE** — the compact gate output (also stored locally in
+  `.artifacts/handoff/latest.md`; evidence only, never authoritative over Git state).
 
 ## Agent boundaries
 

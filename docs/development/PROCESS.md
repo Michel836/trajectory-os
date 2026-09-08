@@ -128,3 +128,26 @@ When a recurring failure or inefficiency is discovered, prefer this loop:
 
 Update this process, `AGENTS.md`, tests, CI, or tooling so that important lessons become
 part of the system rather than relying on memory.
+
+## Human decision gates (Process V2)
+
+Michel decides; agents execute, self-repair, verify, and produce evidence.
+Explicit human `GO` decisions remain required for:
+
+```text
+GO IMPLEMENT, GO COMMIT, GO PUSH, GO PR, GO MERGE
+```
+
+Agents may issue bounded `FIX` self-repairs or `STOP` on ambiguity, and must
+never auto-commit, auto-push, auto-open PRs, or auto-merge.
+
+Between those decisions, mechanical checks run through one read-only,
+fail-fast, decision-gated runner:
+
+```bash
+python scripts/trajectory_gate.py <implement|commit-check|push-check|pr-check|merge-check>
+```
+
+The canonical handoff protocol, guard list, compact output format, and local
+artifact rules (`.artifacts/handoff/latest.md`, evidence only, never
+authoritative over Git state) are defined in `docs/development/AGENT_HANDOFF.md`.
