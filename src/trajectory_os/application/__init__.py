@@ -129,6 +129,12 @@ from trajectory_os.application.execution_effort_project_focus_next_ready_task_ex
     PortfolioProjectFocusNextReadyTaskExecutionIntentError,
     authorize_next_ready_task_execution,
 )
+from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_lifecycle import (  # noqa: E501
+    TaskExecutionLifecycleDecision,
+    TaskExecutionLifecycleDecisionError,
+    TaskExecutionLifecycleDisposition,
+    decide_task_execution_lifecycle,
+)
 from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_persistence import (  # noqa: E501
     DurableTaskExecutionResultError,
     TaskExecutionResultRecord,
@@ -310,6 +316,10 @@ __all__ = [
     "PortfolioProjectFocusNextReadyTaskExecutionIntent",
     "PortfolioProjectFocusNextReadyTaskExecutionIntentError",
     "authorize_next_ready_task_execution",
+    "TaskExecutionLifecycleDecision",
+    "TaskExecutionLifecycleDecisionError",
+    "TaskExecutionLifecycleDisposition",
+    "decide_task_execution_lifecycle",
     "PortfolioProjectFocusNextReadyTaskSelection",
     "PortfolioProjectFocusNextReadyTaskSelectionError",
     "select_first_ready_task_candidate",
