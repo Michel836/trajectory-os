@@ -150,7 +150,16 @@ fi
 printf 'HANDOFF\n'
 printf 'TASK: fake agent task\n'
 printf 'RESULT: complete\n'
-printf 'FEATURE_IMPLEMENTED_COMPLETE\n'
+# Issue #152 regression knobs (all optional; defaults keep the
+# historical behavior):
+#   FAKE_PI_MARKER - the exact completion marker line to print
+#                    (empty string = no marker at all)
+#   FAKE_PI_TAIL   - extra output emitted AFTER the marker (makes the
+#                    marker non-terminal)
+printf '%s\n' "${FAKE_PI_MARKER-FEATURE_IMPLEMENTED_COMPLETE}"
+if [[ -n "${FAKE_PI_TAIL:-}" ]]; then
+  printf '%s\n' "$FAKE_PI_TAIL"
+fi
 exit 0
 '''
 
@@ -389,7 +398,7 @@ def run(
     *args: str,
     timeout: int = 180,
 ) -> subprocess.CompletedProcess:
-    full_env = os.environ.copy()
+    full_env = wrapper_env()
     if env:
         full_env.update(env)
     return subprocess.run(
@@ -1842,7 +1851,7 @@ def test_sigint_forwarding_exit_code_and_cleanup(repo: Path) -> None:
 
     SIGINT_COPIES_BEFORE = bootstrap_copies()
 
-    full_env = os.environ.copy()
+    full_env = wrapper_env()
     process = subprocess.Popen(
         ["bash", str(WRAPPER),
          "--class", "smoke", "--interval", "1", "--no-notify",
@@ -1966,6 +1975,25 @@ def test_prompt_file_only_uses_fallback_query(repo: Path) -> None:
 _BOOTSTRAP_TEMPLATE = "trajectory-pi.*"
 
 
+def wrapper_env(**extra: str) -> dict[str, str]:
+    """Caller environment for launching a fresh wrapper.
+
+    Wrapper-internal bootstrap state (TRAJECTORY_PI_BOOTSTRAP /
+    TRAJECTORY_PI_BOOTSTRAP_COPY) belongs to Trajectory-Pi, not the
+    caller; tests that observe the bootstrap hop must not inherit a
+    guard value from an ambient environment, or the wrapper would take
+    the recursion-guard fast path and the bootstrap would silently not
+    be exercised (issue #152). Explicit extras always win.
+    """
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("TRAJECTORY_PI_BOOTSTRAP", "TRAJECTORY_PI_BOOTSTRAP_COPY")
+    }
+    env.update(extra)
+    return env
+
+
 def bootstrap_copies() -> set[str]:
     tmp = Path(os.environ.get("TMPDIR", "/tmp"))
     return {p.name for p in tmp.glob(_BOOTSTRAP_TEMPLATE)}
@@ -2001,11 +2029,10 @@ def test_live_entry_script_destruction_does_not_corrupt_wrapper(
 
     copies_before = bootstrap_copies()
 
-    env = {
-        **os.environ,
-        "FAKE_PI_SLEEP": "4",
-        "FAKE_PI_APPEND_FILE": "tracked.py",
-    }
+    env = wrapper_env(
+        FAKE_PI_SLEEP="4",
+        FAKE_PI_APPEND_FILE="tracked.py",
+    )
     proc = subprocess.Popen(
         ["bash", str(entry),
          "--class", "smoke", "--interval", "1", "--no-notify",
@@ -2060,11 +2087,10 @@ def test_bootstrap_is_exactly_one_hop_and_copy_cleaned(repo: Path) -> None:
     cleaned up afterwards.
     """
     copies_before = bootstrap_copies()
-    env = {
-        **os.environ,
-        "FAKE_PI_SLEEP": "4",
-        "FAKE_PI_APPEND_FILE": "tracked.py",
-    }
+    env = wrapper_env(
+        FAKE_PI_SLEEP="4",
+        FAKE_PI_APPEND_FILE="tracked.py",
+    )
     proc = subprocess.Popen(
         ["bash", str(WRAPPER),
          "--class", "smoke", "--interval", "1", "--no-notify",
@@ -2100,21 +2126,20 @@ def test_recursion_guard_env_runs_without_rebootstrap(repo: Path) -> None:
     p = subprocess.run(
         ["bash", str(WRAPPER), "--version"],
         cwd=repo,
-        env={**os.environ, "TRAJECTORY_PI_BOOTSTRAP": "1"},
+        env=wrapper_env(TRAJECTORY_PI_BOOTSTRAP="1"),
         capture_output=True,
         text=True,
     )
     assert p.returncode == 0
-    assert p.stdout.strip() == "trajectory-pi 0.3.0"
+    assert p.stdout.strip() == "trajectory-pi 0.3.1"
     assert bootstrap_copies() - copies_before == set()
 
 
 def test_sigterm_forwarded_exit_code_and_bootstrap_copy_cleaned(repo: Path) -> None:
     copies_before = bootstrap_copies()
-    env = {
-        **os.environ,
-        "FAKE_PI_SLEEP": "8",
-    }
+    env = wrapper_env(
+        FAKE_PI_SLEEP="8",
+    )
     proc = subprocess.Popen(
         ["bash", str(WRAPPER),
          "--class", "smoke", "--interval", "1", "--no-notify",
@@ -2137,3 +2162,169 @@ def test_sigterm_forwarded_exit_code_and_bootstrap_copy_cleaned(repo: Path) -> N
 
     assert proc.returncode == 143, f"rc={proc.returncode}\n{out}\n{err}"
     assert bootstrap_copies() - copies_before == set()
+
+
+# ---------------------------------------------------------------------------
+# Issue #152 regressions: bootstrap-env isolation + exact terminal
+# completion marker (V0.3.1 readiness repair)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_commands_do_not_inherit_bootstrap_env(repo: Path) -> None:
+    """V1.57 failure mode: wrapper-internal bootstrap state leaked into
+    configured --validate commands. TRAJECTORY_PI_BOOTSTRAP /
+    TRAJECTORY_PI_BOOTSTRAP_COPY exist only to protect the live immutable
+    bootstrap process and must not appear in the validation child
+    environment."""
+    guard = (
+        '[ -z "${TRAJECTORY_PI_BOOTSTRAP:-}" ]'
+        ' && [ -z "${TRAJECTORY_PI_BOOTSTRAP_COPY:-}" ]'
+        ' && echo CLEAN_ENV || { echo LEAKED_ENV; exit 9; }'
+    )
+    proc = run(
+        repo,
+        {"FAKE_PI_APPEND_FILE": "tracked.py"},
+        "--class", "smoke", "--interval", "1", "--no-notify",
+        "--no-review",
+        "--validate", guard,
+        "--", "validate env isolation",
+    )
+    assert proc.returncode == 0, proc.stdout
+    rd = run_dir(repo, proc)
+    body = (rd / "validation-0.txt").read_text()
+    # The echoed command line itself contains the guard text; judge the
+    # child's actual output lines only.
+    output = body.split("\n", 1)[1]
+    assert "CLEAN_ENV" in output and "LEAKED_ENV" not in output
+    assert line(proc, "VALIDATION") == "PASS"
+    assert line(proc, "REPOSITORY STATE") != "NEEDS_REVIEW"
+
+
+def test_validate_preserves_caller_bootstrap_state(repo: Path) -> None:
+    """Issue #152 caller-vs-internal contract: when the ORIGINAL CALLER
+    explicitly supplies bootstrap-related state in its own environment,
+    validation must receive the caller's ORIGINAL values verbatim -- never
+    the wrapper's own bootstrap-hop values (the private copy path the
+    wrapper generated for itself), and never a silent rewrite."""
+    caller_bs = "caller-bootstrap-marker"
+    caller_copy = "/caller/supplied/private/copy.sh"
+    guard = (
+        '[ "${TRAJECTORY_PI_BOOTSTRAP:-_unset_}" = "' + caller_bs + '" ]'
+        ' && [ "${TRAJECTORY_PI_BOOTSTRAP_COPY:-_unset_}" = "'
+        + caller_copy + '" ]'
+        ' && echo CALLER_PRESERVED || { echo WRONG_ENV; exit 9; }'
+    )
+    proc = run(
+        repo,
+        {
+            "FAKE_PI_APPEND_FILE": "tracked.py",
+            "TRAJECTORY_PI_BOOTSTRAP": caller_bs,
+            "TRAJECTORY_PI_BOOTSTRAP_COPY": caller_copy,
+        },
+        "--class", "smoke", "--interval", "1", "--no-notify",
+        "--no-review",
+        "--validate", guard,
+        "--", "preserve caller env",
+    )
+    assert proc.returncode == 0, proc.stdout
+    rd = run_dir(repo, proc)
+    body = (rd / "validation-0.txt").read_text()
+    output = body.split("\n", 1)[1]
+    assert "CALLER_PRESERVED" in output and "WRONG_ENV" not in output
+    assert line(proc, "VALIDATION") == "PASS"
+    assert line(proc, "REPOSITORY STATE") != "NEEDS_REVIEW"
+
+
+def test_validate_preserves_caller_guard_without_injecting_copy(
+    repo: Path,
+) -> None:
+    """Issue #152 edge: a caller that supplied only the recursion guard
+    (TRAJECTORY_PI_BOOTSTRAP=1) gets that value back VERBATIM in
+    validation; because the caller never set a copy value, the wrapper must
+    not inject a wrapper-generated copy path for a value the caller did
+    not supply. The guard must survive as the caller's intent."""
+    guard = (
+        '[ "${TRAJECTORY_PI_BOOTSTRAP:-_unset_}" = "1" ]'
+        " && [ -z \"${TRAJECTORY_PI_BOOTSTRAP_COPY:-}\" ]"
+        " && echo GUARD_PRESERVED || { echo WRONG_ENV; exit 9; }"
+    )
+    proc = run(
+        repo,
+        {
+            "FAKE_PI_APPEND_FILE": "tracked.py",
+            "TRAJECTORY_PI_BOOTSTRAP": "1",
+        },
+        "--class", "smoke", "--interval", "1", "--no-notify",
+        "--no-review",
+        "--validate", guard,
+        "--", "preserve guard",
+    )
+    assert proc.returncode == 0, proc.stdout
+    rd = run_dir(repo, proc)
+    body = (rd / "validation-0.txt").read_text()
+    output = body.split("\n", 1)[1]
+    assert "GUARD_PRESERVED" in output and "WRONG_ENV" not in output
+    assert line(proc, "VALIDATION") == "PASS"
+    assert line(proc, "REPOSITORY STATE") != "NEEDS_REVIEW"
+
+
+def test_version_marker_exact_terminal_is_completed(repo: Path) -> None:
+    """V1.57 failure mode: the authoritative captured handoff ended with
+    the exact terminal marker ``V1.57_COMPLETE`` yet the wrapper
+    classified the run as INCOMPLETE_AGENT_RUN (the old marker grammar
+    rejected the version dot)."""
+    proc = run(
+        repo,
+        {"FAKE_PI_MARKER": "V1.57_COMPLETE"},
+        "--class", "smoke", "--interval", "1", "--no-notify",
+        "--no-review", "--", "exact terminal marker",
+    )
+    assert proc.returncode == 0, proc.stdout
+    assert line(proc, "AGENT CLASSIFICATION") == "AGENT_COMPLETED"
+    assert line(proc, "REPOSITORY STATE") != "NEEDS_REVIEW"
+
+
+def test_marker_appearing_earlier_not_terminal_fails_closed(repo: Path) -> None:
+    """A marker is only terminal evidence when it is the LAST non-blank
+    line of the captured output. Marker followed by any more output =>
+    fail closed."""
+    proc = run(
+        repo,
+        {"FAKE_PI_MARKER": "V1.57_COMPLETE",
+         "FAKE_PI_TAIL": "post-marker noise that follows the marker"},
+        "--class", "smoke", "--interval", "1", "--no-notify",
+        "--no-review", "--", "non-terminal marker",
+    )
+    assert proc.returncode == 0, proc.stdout
+    assert line(proc, "AGENT CLASSIFICATION") == "INCOMPLETE_AGENT_RUN"
+    assert line(proc, "REPOSITORY STATE") == "NEEDS_REVIEW"
+    assert line(proc, "DECISION REQUIRED") != "GO COMMIT"
+
+
+def test_near_miss_marker_fails_closed(repo: Path) -> None:
+    """Near-miss markers (extra trailing punctuation) must never be
+    accepted as the exact terminal marker."""
+    proc = run(
+        repo,
+        {"FAKE_PI_MARKER": "V1.57_COMPLETE."},
+        "--class", "smoke", "--interval", "1", "--no-notify",
+        "--no-review", "--", "near miss marker",
+    )
+    assert proc.returncode == 0, proc.stdout
+    assert line(proc, "AGENT CLASSIFICATION") == "INCOMPLETE_AGENT_RUN"
+    assert line(proc, "REPOSITORY STATE") == "NEEDS_REVIEW"
+    assert line(proc, "DECISION REQUIRED") != "GO COMMIT"
+
+
+def test_missing_marker_fails_closed(repo: Path) -> None:
+    """No completion marker at all => fail closed (INCOMPLETE run)."""
+    proc = run(
+        repo,
+        {"FAKE_PI_MARKER": ""},
+        "--class", "smoke", "--interval", "1", "--no-notify",
+        "--no-review", "--", "missing marker",
+    )
+    assert proc.returncode == 0, proc.stdout
+    assert line(proc, "AGENT CLASSIFICATION") == "INCOMPLETE_AGENT_RUN"
+    assert line(proc, "REPOSITORY STATE") == "NEEDS_REVIEW"
+    assert line(proc, "DECISION REQUIRED") != "GO COMMIT"

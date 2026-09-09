@@ -2,7 +2,7 @@
 set -u
 
 # ============================================================
-# trajectory-pi V0.3 — issue #148
+# trajectory-pi V0.3.1 — issue #148 / #152
 # Observable + safe runner for TrajectoryOS Pi workloads.
 #
 # AI proposes.
@@ -36,7 +36,7 @@ set -u
 #   under the live process.
 # ============================================================
 
-VERSION="0.3.0"
+VERSION="0.3.1"
 
 # ------------------------------------------------------------
 # Immutable bootstrap (issue #148, self-hosting invariant)
@@ -59,6 +59,42 @@ VERSION="0.3.0"
 # copy because unlinking depends on directory permissions, not on the
 # file's own permissions.
 # ------------------------------------------------------------
+
+# ------------------------------------------------------------
+# Caller-vs-internal bootstrap state (issue #152 contract)
+#
+# TRAJECTORY_PI_BOOTSTRAP / TRAJECTORY_PI_BOOTSTRAP_COPY are wrapper-INTERNAL
+# bootstrap state (recursion guard + private immutable copy path). They are
+# indistinguishable, by name, from values the ORIGINAL CALLER may have
+# supplied in its own environment. The two must be handled differently in
+# the validation hook:
+#   - wrapper-INTERNAL state must NOT leak into validation (strip it);
+#   - a value the caller EXPLICITLY supplied must be preserved (the wrapper
+#     must not silently rewrite caller intent with its bootstrap-hop values).
+#
+# This block runs ONCE in the entry process, BEFORE bootstrap may overwrite
+# anything, and records the caller's original presence + value of each var.
+# It is exported so the bootstrap copy inherits the SAME decision and MUST NOT
+# recompute it (the copy already carries wrapper-internal state; recomputing
+# there would misclassify that internal state as caller intent). Downstream
+# callers must never see these bookkeeping names: run_validations strips them.
+if [[ -z "${TPBS_CALLER_SET:-}" ]]; then
+    if [[ -n "${TRAJECTORY_PI_BOOTSTRAP+x}" ]]; then
+        TPBS_CALLER_SET=1
+        TPBS_CALLER_VAL="${TRAJECTORY_PI_BOOTSTRAP}"
+    else
+        TPBS_CALLER_SET=0
+        TPBS_CALLER_VAL=""
+    fi
+    if [[ -n "${TRAJECTORY_PI_BOOTSTRAP_COPY+x}" ]]; then
+        TPBC_CALLER_SET=1
+        TPBC_CALLER_VAL="${TRAJECTORY_PI_BOOTSTRAP_COPY}"
+    else
+        TPBC_CALLER_SET=0
+        TPBC_CALLER_VAL=""
+    fi
+    export TPBS_CALLER_SET TPBS_CALLER_VAL TPBC_CALLER_SET TPBC_CALLER_VAL
+fi
 
 if [[ "${TRAJECTORY_PI_BOOTSTRAP:-}" != "1" ]]; then
     _tp_self="$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null)" || _tp_self=""
@@ -113,7 +149,7 @@ trap _tp_bootstrap_copy_cleanup EXIT
 
 usage() {
 cat <<'EOF'
-trajectory-pi V0.3.0
+trajectory-pi V0.3.1
 
 Usage:
   scripts/trajectory-pi [options] -- "prompt"
@@ -274,9 +310,21 @@ is_blank() {
     [[ -z "${value//[[:space:]]/}" ]]
 }
 
-# Returns 0 when the Pi log contains the standard handoff convention
-# (a Handoff plus an explicit completion marker: a full-uppercase token
-# ending in _COMPLETE on its own line).
+# Returns 0 when the authoritative captured Pi output shows the standard
+# handoff convention AND an EXACT TERMINAL completion marker: the last
+# non-blank line of the captured output is exactly a full-uppercase
+# token ending in _COMPLETE (letters, digits, underscores, and dots
+# inside the token — dots admit version markers such as V1.57_COMPLETE).
+#
+# Exact terminal marker contract (issue #152, always fail closed):
+# - the marker must be the LAST non-blank line of the captured output;
+#   a marker that appeared earlier — with any later output — does NOT
+#   count;
+# - near-miss markers (extra punctuation, wrapping prose, wrong case,
+#   missing _COMPLETE suffix) do NOT count;
+# - a missing marker does NOT count;
+# - completion is judged ONLY on the authoritative captured output,
+#   never on optimistic prose elsewhere in the log.
 #
 # This is AGENT-CONVERSATION EVIDENCE ONLY. It never by itself proves
 # repository readiness; deterministic snapshot/review evidence does.
@@ -284,8 +332,14 @@ completion_evidence_present() {
     local log_file="$1"
     [[ -f "$log_file" ]] || return 1
     grep -qiE 'handoff' "$log_file" || return 1
-    grep -qE '^[A-Z][A-Z0-9_]*_COMPLETE[[:space:]]*$' "$log_file" || return 1
-    return 0
+    # Exact match on the exact last non-blank line (trailing whitespace
+    # tolerated on that line only; trailing blank lines do not count
+    # against the marker).
+    LC_ALL=C awk '
+        { sub(/[[:space:]]+$/, "") }
+        { if (NF > 0) last = $0 }
+        END { exit (last ~ /^[A-Z][A-Z0-9_.]*_COMPLETE$/) ? 0 : 1 }
+    ' "$log_file" 2>/dev/null
 }
 
 case "$RUN_CLASS" in
@@ -1016,9 +1070,37 @@ run_validations() {
 
     local i rc
     VALIDATION="PASS"
+
+    # Build the validation environment per issue #152: wrapper-INTERNAL
+    # bootstrap state is stripped (must not leak), while bootstrap state the
+    # caller EXPLICITLY supplied is preserved exactly as the caller defined
+    # it (the captured entry-process values, never the wrapper's own
+    # bootstrap-hop values). Internal bookkeeping names never reach the
+    # child. The rest of the caller's environment is left untouched.
+    #
+    # NOTE on ordering: GNU `env` parses leading `-u NAME` options FIRST and
+    # only treats a later non-option as the command; a `-u` that appears
+    # after a NAME=VALUE assignment is misread as the command. So unsets are
+    # emitted before assignments.
+    local -a _vp_unset=()
+    local -a _vp_set=()
+    if [[ "${TPBS_CALLER_SET:-0}" == "1" ]]; then
+        _vp_set+=("TRAJECTORY_PI_BOOTSTRAP=${TPBS_CALLER_VAL}")
+    else
+        _vp_unset+=(-u TRAJECTORY_PI_BOOTSTRAP)
+    fi
+    if [[ "${TPBC_CALLER_SET:-0}" == "1" ]]; then
+        _vp_set+=("TRAJECTORY_PI_BOOTSTRAP_COPY=${TPBC_CALLER_VAL}")
+    else
+        _vp_unset+=(-u TRAJECTORY_PI_BOOTSTRAP_COPY)
+    fi
+    _vp_unset+=(-u TPBS_CALLER_SET -u TPBS_CALLER_VAL
+                -u TPBC_CALLER_SET -u TPBC_CALLER_VAL)
+
     for i in "${!VALIDATE_CMDS[@]}"; do
         echo "\$ ${VALIDATE_CMDS[$i]}" > "$RUN_DIR/validation-$i.txt"
-        if bash -c "${VALIDATE_CMDS[$i]}" >> "$RUN_DIR/validation-$i.txt" 2>&1; then
+        if env "${_vp_unset[@]}" "${_vp_set[@]}" \
+             bash -c "${VALIDATE_CMDS[$i]}" >> "$RUN_DIR/validation-$i.txt" 2>&1; then
             echo "RESULT: PASS" >> "$RUN_DIR/validation-$i.txt"
         else
             rc=$?
