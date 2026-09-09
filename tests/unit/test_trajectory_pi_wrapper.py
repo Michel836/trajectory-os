@@ -36,6 +36,10 @@ FAKE_PI_TEMPLATE = """\
 #!/usr/bin/env bash
 set -u
 ctx={ctx}
+# The wrapper must invoke this fake pi ONLY as the agent. Every
+# invocation records one line so tests can prove no second Pi process
+# is ever spawned (the reviewer is a direct Ollama call, not Pi).
+printf 'AGENT\\n' >> "$ctx/agent_invocations.log"
 printf '%s\\n' "$@" > "$ctx/args.log"
 touch_file="$ctx/touch_file"
 if [[ -s "$touch_file" ]]; then
@@ -358,10 +362,10 @@ cat <<'EOF'
     )
 
 
-def test_wrapper_version_is_v021(tp: TPContext) -> None:
+def test_wrapper_version_is_v030(tp: TPContext) -> None:
     result = tp.run("--version")
     assert result.returncode == 0
-    assert result.stdout.strip() == "trajectory-pi 0.2.1"
+    assert result.stdout.strip() == "trajectory-pi 0.3.0"
 
 
 def test_heartbeat_reports_recent_native_generation_rate(tp: TPContext) -> None:
@@ -704,3 +708,398 @@ def test_fresh_generation_rate_is_not_duplicated_as_last_gen(tp: TPContext) -> N
     assert "gen_3s=36.37 tok/s" in status
     assert "last_gen=" not in status
     assert "age=" not in status
+
+# ------------------------------------------------------------------
+# Strict reviewer verdict parser consistency (Issue #148)
+# ------------------------------------------------------------------
+#
+# The parser under test is extracted verbatim from the shipped wrapper
+# script so the test always exercises the exact code that runs in
+# production. PASS is permitted ONLY for an unambiguous,
+# contradiction-free response: exactly one VERDICT: PASS, exactly one
+# FINAL RECOMMENDATION: GO COMMIT, and BLOCKERS and MAJORS sections
+# that each appear exactly once and are semantically empty
+# (canonical "- None").
+
+_REVIEW_PARSER_MARKER = "parse_review_verdict() {"
+
+_CANONICAL_PASS = (
+    "VERDICT: PASS\n"
+    "\n"
+    "BLOCKERS:\n"
+    "- None\n"
+    "\n"
+    "MAJORS:\n"
+    "- None\n"
+    "\n"
+    "MINORS:\n"
+    "- None\n"
+    "\n"
+    "FINAL RECOMMENDATION: GO COMMIT\n"
+)
+
+
+def _run_parse_review_verdict(tmp_path: Path, response: str) -> dict[str, str]:
+    """Run the shipped parse_review_verdict() on `response` text and
+    return its key=value output as a dict."""
+    script = WRAPPER.read_text()
+    start = script.index(_REVIEW_PARSER_MARKER)
+    end = script.index("\n}", start)
+    fn_text = script[start : end + 2]
+
+    review_file = tmp_path / "review.txt"
+    review_file.write_text(response, encoding="utf-8")
+    driver = tmp_path / "driver.sh"
+    driver.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        + fn_text
+        + "\n"
+        + "parse_review_verdict " + shlex.quote(str(review_file)) + "\n",
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        ["bash", str(driver)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PATH": os.environ["PATH"]},
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    out = {
+        key: value
+        for key, sep, value in (
+            line.partition("=") for line in proc.stdout.splitlines()
+        )
+        if sep
+    }
+    assert "RESULT" in out, proc.stdout
+    return out
+
+
+def _assert_never_pass(tmp_path: Path, response: str) -> None:
+    out = _run_parse_review_verdict(tmp_path, response)
+    assert out["RESULT"] != "PASS", (
+        f"contradictory/malformed reviewer response was parsed as PASS: {out}"
+    )
+
+
+def test_parser_pass_canonical_none_blocks_majors_passes(tmp_path: Path) -> None:
+    # 1. PASS + BLOCKERS "- None" + MAJORS "- None" + GO COMMIT -> PASS
+    out = _run_parse_review_verdict(tmp_path, _CANONICAL_PASS)
+    assert out == {
+        "RESULT": "PASS",
+        "VERDICT": "PASS",
+        "RECOMMENDATION": "GO COMMIT",
+    }
+
+
+def test_parser_canonical_lowercase_still_passes(tmp_path: Path) -> None:
+    # The canonical empty marker is spelling-insensitive ("none" / "None");
+    # this is what the fake reviewer corpus and real providers emit.
+    text = _CANONICAL_PASS.replace("- None", "- none")
+    assert _run_parse_review_verdict(tmp_path, text)["RESULT"] == "PASS"
+
+
+def test_parser_pass_with_real_blocker_never_passes(tmp_path: Path) -> None:
+    # 2. PASS + real BLOCKER + GO COMMIT -> never PASS
+    text = _CANONICAL_PASS.replace(
+        "BLOCKERS:\n- None",
+        "BLOCKERS:\n- concrete release-blocking defect",
+    )
+    _assert_never_pass(tmp_path, text)
+
+
+def test_parser_pass_with_real_major_never_passes(tmp_path: Path) -> None:
+    # 3. PASS + real MAJOR + GO COMMIT -> never PASS
+    text = _CANONICAL_PASS.replace(
+        "MAJORS:\n- None",
+        "MAJORS:\n- concrete release-blocking defect",
+    )
+    _assert_never_pass(tmp_path, text)
+
+
+def test_parser_pass_with_blocker_and_major_never_passes(tmp_path: Path) -> None:
+    # 4. PASS + both blocker and major -> never PASS
+    text = (
+        "VERDICT: PASS\n"
+        "\n"
+        "BLOCKERS:\n"
+        "- blocker finding\n"
+        "\n"
+        "MAJORS:\n"
+        "- major finding\n"
+        "\n"
+        "MINORS:\n"
+        "- None\n"
+        "\n"
+        "FINAL RECOMMENDATION: GO COMMIT\n"
+    )
+    _assert_never_pass(tmp_path, text)
+
+
+def test_parser_missing_blockers_section_never_passes(tmp_path: Path) -> None:
+    # 5. missing BLOCKERS section -> never PASS
+    text = (
+        "VERDICT: PASS\n"
+        "\n"
+        "MAJORS:\n"
+        "- None\n"
+        "\n"
+        "MINORS:\n"
+        "- None\n"
+        "\n"
+        "FINAL RECOMMENDATION: GO COMMIT\n"
+    )
+    _assert_never_pass(tmp_path, text)
+
+
+def test_parser_missing_majors_section_never_passes(tmp_path: Path) -> None:
+    # 6. missing MAJORS section -> never PASS
+    text = (
+        "VERDICT: PASS\n"
+        "\n"
+        "BLOCKERS:\n"
+        "- None\n"
+        "\n"
+        "MINORS:\n"
+        "- None\n"
+        "\n"
+        "FINAL RECOMMENDATION: GO COMMIT\n"
+    )
+    _assert_never_pass(tmp_path, text)
+
+
+def test_parser_duplicated_required_section_never_passes(tmp_path: Path) -> None:
+    # 7. duplicated required section -> never PASS
+    text = (
+        "VERDICT: PASS\n"
+        "\n"
+        "BLOCKERS:\n"
+        "- None\n"
+        "\n"
+        "BLOCKERS:\n"
+        "- None\n"
+        "\n"
+        "MAJORS:\n"
+        "- None\n"
+        "\n"
+        "MINORS:\n"
+        "- None\n"
+        "\n"
+        "FINAL RECOMMENDATION: GO COMMIT\n"
+    )
+    _assert_never_pass(tmp_path, text)
+
+
+def test_parser_fail_with_findings_and_fix_is_valid_fail(tmp_path: Path) -> None:
+    # 8. FAIL + actual finding + FIX -> valid FAIL (never PASS either)
+    text = (
+        "VERDICT: FAIL\n"
+        "\n"
+        "BLOCKERS:\n"
+        "- tracked.py changes behavior without tests\n"
+        "\n"
+        "MAJORS:\n"
+        "- None\n"
+        "\n"
+        "MINORS:\n"
+        "- None\n"
+        "\n"
+        "FINAL RECOMMENDATION: FIX\n"
+    )
+    out = _run_parse_review_verdict(tmp_path, text)
+    assert out["RESULT"] == "FAIL"
+    assert out["VERDICT"] == "FAIL"
+    assert out["RECOMMENDATION"] == "FIX"
+
+
+def test_parser_none_marker_mixed_with_finding_never_passes(tmp_path: Path) -> None:
+    # 9. "- None" mixed with another finding -> never PASS
+    text = _CANONICAL_PASS.replace(
+        "BLOCKERS:\n- None",
+        "BLOCKERS:\n- None\n- secret committed in patch",
+    )
+    _assert_never_pass(tmp_path, text)
+
+
+# --- Strict parser structure completion (issue #148) -------------------
+#
+# "- None" is an empty marker ONLY when the complete section body (blank
+# lines trimmed) is exactly that one line. Prose before or after the
+# marker, bullets, comments or any other text coexisting with it means
+# the section has findings and the response can NEVER PASS. Canonical
+# headings must each appear exactly once, in canonical order.
+
+
+def test_parser_prose_before_none_in_majors_never_passes(
+    tmp_path: Path,
+) -> None:
+    # 1. prose before "- None" in MAJORS -> never PASS (the prose finding
+    #    must not be ignored while the empty marker is counted).
+    text = _CANONICAL_PASS.replace(
+        "MAJORS:\n- None",
+        "MAJORS:\n"
+        "There is a concrete release-blocking defect.\n"
+        "- None",
+    )
+    out = _run_parse_review_verdict(tmp_path, text)
+    assert out["RESULT"] != "PASS", (
+        f"prose before '- None' in MAJORS was parsed as PASS: {out}"
+    )
+
+
+def test_parser_prose_after_none_in_majors_never_passes(
+    tmp_path: Path,
+) -> None:
+    # 2. prose after "- None" in MAJORS -> never PASS
+    text = _CANONICAL_PASS.replace(
+        "MAJORS:\n- None",
+        "MAJORS:\n"
+        "- None\n"
+        "extra prose finding",
+    )
+    out = _run_parse_review_verdict(tmp_path, text)
+    assert out["RESULT"] != "PASS", (
+        f"prose after '- None' in MAJORS was parsed as PASS: {out}"
+    )
+
+
+def test_parser_prose_before_none_in_blockers_never_passes(
+    tmp_path: Path,
+) -> None:
+    # 3. prose before "- None" in BLOCKERS -> never PASS
+    text = _CANONICAL_PASS.replace(
+        "BLOCKERS:\n- None",
+        "BLOCKERS:\n"
+        "Real release-blocking defect.\n"
+        "- None",
+    )
+    out = _run_parse_review_verdict(tmp_path, text)
+    assert out["RESULT"] != "PASS", (
+        f"prose before '- None' in BLOCKERS was parsed as PASS: {out}"
+    )
+
+
+def test_parser_canonical_headings_wrong_order_never_passes(
+    tmp_path: Path,
+) -> None:
+    # 4. canonical headings in wrong order (MAJORS before BLOCKERS) ->
+    #    never PASS: the required structural sequence is exactly
+    #    VERDICT, BLOCKERS, MAJORS, MINORS, FINAL RECOMMENDATION.
+    text = (
+        "VERDICT: PASS\n"
+        "\n"
+        "MAJORS:\n"
+        "- None\n"
+        "\n"
+        "BLOCKERS:\n"
+        "- None\n"
+        "\n"
+        "MINORS:\n"
+        "- None\n"
+        "\n"
+        "FINAL RECOMMENDATION: GO COMMIT\n"
+    )
+    out = _run_parse_review_verdict(tmp_path, text)
+    assert out["RESULT"] != "PASS", (
+        f"wrong canonical heading order was parsed as PASS: {out}"
+    )
+
+
+def test_parser_canonical_valid_pass_still_passes(
+    tmp_path: Path,
+) -> None:
+    # 5. regression guard: the canonical valid PASS (exact structural
+    #    sequence, BLOCKERS/MAJORS each exactly one line '- None') must
+    #    still PASS after the strict structure completion.
+    out = _run_parse_review_verdict(tmp_path, _CANONICAL_PASS)
+    assert out == {
+        "RESULT": "PASS",
+        "VERDICT": "PASS",
+        "RECOMMENDATION": "GO COMMIT",
+    }
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        # every contradictory shape from tests 2-7 and 9, plus extras
+        lambda t: t.replace("BLOCKERS:\n- None",
+                            "BLOCKERS:\n- concrete release-blocking defect"),
+        lambda t: t.replace("MAJORS:\n- None",
+                            "MAJORS:\n- concrete release-blocking defect"),
+        lambda t: t.replace("BLOCKERS:\n- None",
+                            "BLOCKERS:\n- blocker finding")
+                   .replace("MAJORS:\n- None", "MAJORS:\n- major finding"),
+        lambda t: t.replace(
+            "MAJORS:\n- None\n"
+            "\n"
+            "MINORS:",
+            "MINORS:",
+        ),
+        lambda t: t.replace(
+            "BLOCKERS:\n"
+            "- None\n"
+            "\n",
+            "",
+        ),
+        lambda t: t.replace(
+            "BLOCKERS:\n- None\n",
+            "BLOCKERS:\n- None\n\nBLOCKERS:\n- None\n",
+        ),
+        lambda t: t.replace(
+            "BLOCKERS:\n- None",
+            "BLOCKERS:\n- None\n- another finding",
+        ),
+        lambda t: t.replace("FINAL RECOMMENDATION: GO COMMIT",
+                            "FINAL RECOMMENDATION: FIX"),
+        lambda t: t + "\nFINAL RECOMMENDATION: GO COMMIT\n",
+        lambda t: t.replace("VERDICT: PASS", "VERDICT: PASS\nVERDICT: PASS"),
+        # issue #148 strict structure: prose coexisting with the empty
+        # marker, and wrong canonical heading order
+        lambda t: t.replace(
+            "MAJORS:\n- None",
+            "MAJORS:\n"
+            "There is a concrete release-blocking defect.\n"
+            "- None",
+        ),
+        lambda t: t.replace(
+            "MAJORS:\n- None",
+            "MAJORS:\n- None\nextra prose finding",
+        ),
+        lambda t: t.replace(
+            "BLOCKERS:\n- None",
+            "BLOCKERS:\nReal release-blocking defect.\n- None",
+        ),
+        lambda t: t.replace(
+            "BLOCKERS:\n- None\n\nMAJORS:\n- None\n",
+            "MAJORS:\n- None\n\nBLOCKERS:\n- None\n",
+        ),
+    ],
+    ids=[
+        "pass-with-blocker",
+        "pass-with-major",
+        "pass-with-both",
+        "missing-majors",
+        "missing-blockers",
+        "duplicated-blockers",
+        "none-mixed-with-finding",
+        "pass-with-fix-recommendation",
+        "duplicated-recommendation",
+        "duplicated-verdict",
+        "prose-before-none-majors",
+        "prose-after-none-majors",
+        "prose-before-none-blockers",
+        "wrong-heading-order",
+    ],
+)
+def test_parser_contradictory_responses_never_allow_commit(
+    tmp_path: Path, mutate  # noqa: ANN001
+) -> None:
+    # 10. READY_FOR_COMMIT is impossible for every contradictory
+    #     reviewer response: the parser can only ever emit PASS for the
+    #     canonical contradiction-free shape, and the README/report
+    #     contract maps READY_FOR_COMMIT exclusively onto a PASS
+    #     verdict, so `RESULT != PASS` proves commit is impossible.
+    _assert_never_pass(tmp_path, mutate(_CANONICAL_PASS))
