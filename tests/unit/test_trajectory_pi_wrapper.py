@@ -100,10 +100,18 @@ class TPContext:
             stale.unlink(missing_ok=True)
 
     def run(self, *args: str) -> subprocess.CompletedProcess[str]:
+        # Do not inherit wrapper-internal bootstrap guard state from the
+        # ambient environment (issue #152): it would put the wrapper on
+        # the recursion-guard fast path and skip the bootstrap hop.
         env = {
-            **os.environ,
-            "PATH": f"{self.ctx.parent / 'bin'}{os.pathsep}{os.environ['PATH']}",
+            k: v
+            for k, v in os.environ.items()
+            if k not in (
+                "TRAJECTORY_PI_BOOTSTRAP",
+                "TRAJECTORY_PI_BOOTSTRAP_COPY",
+            )
         }
+        env["PATH"] = f"{self.ctx.parent / 'bin'}{os.pathsep}{os.environ['PATH']}"
         return subprocess.run(
             ["bash", str(WRAPPER), *args],
             cwd=self.work,
@@ -362,10 +370,10 @@ cat <<'EOF'
     )
 
 
-def test_wrapper_version_is_v030(tp: TPContext) -> None:
+def test_wrapper_version_is_v031(tp: TPContext) -> None:
     result = tp.run("--version")
     assert result.returncode == 0
-    assert result.stdout.strip() == "trajectory-pi 0.3.0"
+    assert result.stdout.strip() == "trajectory-pi 0.3.1"
 
 
 def test_heartbeat_reports_recent_native_generation_rate(tp: TPContext) -> None:
