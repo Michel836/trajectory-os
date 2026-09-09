@@ -2,19 +2,118 @@
 set -u
 
 # ============================================================
-# trajectory-pi V0.2.1
+# trajectory-pi V0.3 — issue #148
 # Observable + safe runner for TrajectoryOS Pi workloads.
 #
 # AI proposes.
 # Deterministic code validates.
 # Human decides.
+#
+# V0.3 contract:
+# - after Pi exits, a complete HEAD->worktree snapshot is built
+#   against a TEMPORARY git index (GIT_INDEX_FILE); the real git
+#   index is never read-modified or written by snapshot logic;
+# - the exact snapshot yields the patch, patch SHA-256, complete
+#   inventory/stat/numstat, and the complete diff check;
+# - index integrity: SEMANTIC staging identity (NUL-safe hash of
+#   `git ls-files --stage -z`, authoritative) gates readiness; RAW
+#   .git/index bytes are diagnostic only (a stat-cache refresh rewrites
+#   those bytes WITHOUT any staging change); all wrapper observations
+#   run with GIT_OPTIONAL_LOCKS=0 and never refresh/write the real index;
+# - optional read-only independent review of the exact patch, via a
+#   DIRECT local Ollama call (a single POST /api/chat; never a second
+#   Pi process), with the verdict bound to the exact patch SHA-256, strict
+#   parsing and staleness verification;
+# - review is OFF by default for smoke and ON by default for
+#   feature/complex/repair/recovery; --review / --no-review always win;
+# - agent classification and repository readiness are separate;
+#   READY_FOR_COMMIT only derives from deterministic wrapper
+#   evidence, never from Pi prose;
+# - SELF-HOSTING INVARIANT: a running wrapper process does not depend
+#   on mutable repository-script bytes once writable agent execution
+#   can begin; after one bootstrap hop it executes from a private read-only
+#   copy that the agent (or any external act) can no longer corrupt
+#   under the live process.
 # ============================================================
 
-VERSION="0.2.1"
+VERSION="0.3.0"
+
+# ------------------------------------------------------------
+# Immutable bootstrap (issue #148, self-hosting invariant)
+#
+# A running wrapper MUST NOT depend on the bytes of the executable
+# script once writable agent execution can begin.
+# Since Bash reads the script source progressively, a live agent
+# that rewrites/truncates scripts/trajectory-pi while the wrapper
+# is running makes the live process lose its script state (run
+# directories "disappear", "No such file or directory", mid-read parse
+# corruption).
+#
+# Strategy (single hop, no daemon, no git state changes):
+# The entry script (this file) immediately: copies itself to a private
+# temporary file, makes that copy immutable (read-only) to the wrapping
+# user, and runs `exec bash copy "$@"` with the same argv, cwd, and
+# environment. TRAJECTORY_PI_BOOTSTRAP=1 is a recursion guard: the
+# copy is never re-bootstrapped. The copy is removed on exit or on
+# any handled failure/signal path. `rm -f` works even for a read-only
+# copy because unlinking depends on directory permissions, not on the
+# file's own permissions.
+# ------------------------------------------------------------
+
+if [[ "${TRAJECTORY_PI_BOOTSTRAP:-}" != "1" ]]; then
+    _tp_self="$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null)" || _tp_self=""
+    if [[ -z "${_tp_self:-}" || ! -r "${_tp_self:-}" ]]; then
+        echo "ERROR: cannot resolve wrapper source for immutable bootstrap" >&2
+        exit 1
+    fi
+
+    _tp_copy="$(mktemp "${TMPDIR:-/tmp}/trajectory-pi.XXXXXXXXXX" 2>/dev/null)" || _tp_copy=""
+    if [[ -z "${_tp_copy:-}" ]]; then
+        echo "ERROR: cannot allocate private bootstrap copy" >&2
+        exit 1
+    fi
+
+    if ! cp -- "$_tp_self" "$_tp_copy" 2>/dev/null; then
+        rm -f -- "$_tp_copy"
+        echo "ERROR: cannot create private bootstrap copy" >&2
+        exit 1
+    fi
+
+    # Immutable to the wrapping user from now on: the live process's
+    # script bytes can no longer be rewritten out from under it.
+    chmod a-w -- "$_tp_copy" 2>/dev/null || true
+
+    TRAJECTORY_PI_BOOTSTRAP=1 \
+    TRAJECTORY_PI_BOOTSTRAP_COPY="$_tp_copy" \
+    exec bash "$_tp_copy" "$@"
+
+    # exec reaches here only if bash is absent/unusable; best-effort
+    # fallback so a usable (but mutable) wrapper still runs.
+    chmod u+w -- "$_tp_copy" 2>/dev/null || true
+    rm -f -- "$_tp_copy"
+    echo "ERROR: bootstrap exec failed; continuing from original script" >&2
+fi
+
+# Bootstrap copy cleanup: installed as early as possible so that every
+# exit path in this body (including safety stops and local validation
+# failures) removes the private copy. The later
+# `trap cleanup EXIT` replaces this, but cleanup() does the same
+# removal, so all exit paths remain covered.
+if [[ -n "${TRAJECTORY_PI_BOOTSTRAP_COPY:-}" ]]; then
+    TP_BOOTSTRAP_COPY_PATH="$TRAJECTORY_PI_BOOTSTRAP_COPY"
+else
+    TP_BOOTSTRAP_COPY_PATH=""
+fi
+_tp_bootstrap_copy_cleanup() {
+    if [[ -n "${TP_BOOTSTRAP_COPY_PATH:-}" ]]; then
+        rm -f -- "$TP_BOOTSTRAP_COPY_PATH" 2>/dev/null || true
+    fi
+}
+trap _tp_bootstrap_copy_cleanup EXIT
 
 usage() {
 cat <<'EOF'
-trajectory-pi V0.2.1
+trajectory-pi V0.3.0
 
 Usage:
   scripts/trajectory-pi [options] -- "prompt"
@@ -27,8 +126,26 @@ Options:
   --interval SEC       heartbeat interval (default: 10)
   --dirty-ok           permit pre-existing working-tree changes
   --no-notify          disable KDE notification
-  --help
+
+  Review (independent, strictly read-only, direct local Ollama call:
+  no second Pi process, no tools, no agent loop, no filesystem access;
+  consumes the exact snapshot patch). Class-based default unless you
+  pass --review / --no-review explicitly:
+    smoke          -> review DISABLED by default
+    feature/repair/recovery/complex -> review ENABLED by default
+  --review             explicitly enable independent review
+  --no-review          disable independent review
+  --review-model MODEL default: qwen3.6:27b
+  --review-prompt-file FILE  extra reviewer focus/context
+  --review-timeout SEC reviewer timeout (default: 300)
+
+  Optional bounded validation hook (run verbatim with bash -c,
+  after the snapshot; a non-zero exit blocks READY_FOR_COMMIT):
+  --validate CMD       caller-configurable validation command
+                       (repeatable)
+
   --version
+  --help
 
 Examples:
 
@@ -38,9 +155,18 @@ Examples:
     -- "Inspect and repair the current implementation."
 
   scripts/trajectory-pi \
-    --class complex \
-    --prompt-file /tmp/v122.md \
-    -- "Implement the attached V1.22 specification."
+    --class feature \
+    --review-model qwen3.6:27b \
+    --validate "uv run pytest tests/unit" \
+    --prompt-file /tmp/task.md \
+    -- "Implement the attached specification."
+
+Guarantees:
+  no commit, amend, push, PR, merge, reset, restore, checkout,
+  clean, or stash is ever performed; the real git index is never
+  mutated by snapshot or review logic; the running wrapper executes
+  from a private immutable copy (self-hosting protection), so a
+  live agent cannot corrupt the wrapper mid-run.
 EOF
 }
 
@@ -51,6 +177,20 @@ PROMPT_FILE=""
 INTERVAL=10
 DIRTY_OK=0
 NOTIFY=1
+
+# REVIEW defaults to "" (undetermined) until resolved after the run class
+# is validated. Class-based default (see below): smoke -> disabled;
+# feature/complex/repair/recovery -> enabled. --review / --no-review
+# always override the default.
+REVIEW=""
+REVIEWER_MODEL="qwen3.6:27b"
+REVIEWER_PROMPT_FILE=""
+REVIEWER_TIMEOUT=300
+# Base URL of the direct local Ollama reviewer endpoint. Configurable via
+# the environment ONLY so isolated tests can point at a local fake Ollama
+# server; production behavior is the fixed loopback endpoint.
+REVIEWER_URL="${TP_REVIEWER_URL:-http://127.0.0.1:11434}"
+VALIDATE_CMDS=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -81,6 +221,30 @@ while [[ $# -gt 0 ]]; do
         --no-notify)
             NOTIFY=0
             shift
+            ;;
+        --review)
+            REVIEW=1
+            shift
+            ;;
+        --no-review)
+            REVIEW=0
+            shift
+            ;;
+        --review-model)
+            REVIEWER_MODEL="${2:?missing review model}"
+            shift 2
+            ;;
+        --review-prompt-file)
+            REVIEWER_PROMPT_FILE="${2:?missing review prompt file}"
+            shift 2
+            ;;
+        --review-timeout)
+            REVIEWER_TIMEOUT="${2:?missing review timeout}"
+            shift 2
+            ;;
+        --validate)
+            VALIDATE_CMDS+=("${2:?missing validation command}")
+            shift 2
             ;;
         --version)
             echo "trajectory-pi $VERSION"
@@ -113,6 +277,9 @@ is_blank() {
 # Returns 0 when the Pi log contains the standard handoff convention
 # (a Handoff plus an explicit completion marker: a full-uppercase token
 # ending in _COMPLETE on its own line).
+#
+# This is AGENT-CONVERSATION EVIDENCE ONLY. It never by itself proves
+# repository readiness; deterministic snapshot/review evidence does.
 completion_evidence_present() {
     local log_file="$1"
     [[ -f "$log_file" ]] || return 1
@@ -153,6 +320,24 @@ case "$RUN_CLASS" in
         ;;
 esac
 
+# Resolve the independent-review default by run class (documented
+# deterministic default). An explicit --review / --no-review flag (which
+# sets REVIEW to 1/0) always wins; only an undetermined ("=") REVIEW is
+# filled in here.
+if [[ -z "$REVIEW" ]]; then
+    case "$RUN_CLASS" in
+        smoke)
+            # A smoke run must not depend on the model reviewer at all.
+            REVIEW=0
+            ;;
+        feature|complex|repair|recovery)
+            # These classes benefit from an independent review of the
+            # exact snapshot patch; enabled by default.
+            REVIEW=1
+            ;;
+    esac
+fi
+
 REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || {
     echo "ERROR: not inside a Git repository." >&2
     exit 2
@@ -176,14 +361,27 @@ if [[ "$BRANCH" == "main" || "$BRANCH" == "master" ]]; then
     exit 3
 fi
 
-DIRTY_BEFORE="$(git status --porcelain)"
+# ------------------------------------------------------------
+# Observation-only git (issue #148 final fix)
+#
+# GIT_OPTIONAL_LOCKS=0 guarantees that this wrapper's read-only
+# observations (git status / git ls-files) neither refresh nor
+# otherwise WRITE the real index, and therefore never hold the
+# index lock. Use ONLY for commands that never need to mutate the
+# index; commands that must mutate the index must not use it.
+# ------------------------------------------------------------
+git_observe() {
+    GIT_OPTIONAL_LOCKS=0 git "$@"
+}
+
+DIRTY_BEFORE="$(git_observe status --porcelain)"
 
 if [[ -n "$DIRTY_BEFORE" && "$DIRTY_OK" -ne 1 ]]; then
     echo
     echo "SAFETY STOP"
     echo "Working tree is already dirty."
     echo
-    git status --short
+    git_observe status --short
     echo
     echo "Use --dirty-ok only for an intentional recovery/resume run."
     exit 4
@@ -191,6 +389,11 @@ fi
 
 if [[ -n "$PROMPT_FILE" && ! -f "$PROMPT_FILE" ]]; then
     echo "ERROR: prompt file not found: $PROMPT_FILE" >&2
+    exit 2
+fi
+
+if [[ -n "$REVIEWER_PROMPT_FILE" && ! -f "$REVIEWER_PROMPT_FILE" ]]; then
+    echo "ERROR: review prompt file not found: $REVIEWER_PROMPT_FILE" >&2
     exit 2
 fi
 
@@ -230,9 +433,25 @@ LOG="$RUN_DIR/pi.log"
 META="$RUN_DIR/meta.txt"
 STATUS_LOG="$RUN_DIR/status.log"
 
+# Temporary snapshot index (temporary resources, always cleaned).
+SNAPSHOT_INDEX_FILE="$RUN_DIR/.snapshot-index"
+VERIFY_INDEX_FILE="$RUN_DIR/.snapshot-index-verify"
+FINAL_INDEX_FILE="$RUN_DIR/.snapshot-index-final"
+CLEANED_UP=0
+
+cleanup() {
+    [[ "${CLEANED_UP:-0}" -eq 1 ]] && return 0
+    CLEANED_UP=1
+    rm -f "${SNAPSHOT_INDEX_FILE:-}" "${VERIFY_INDEX_FILE:-}" \
+        "${FINAL_INDEX_FILE:-}" 2>/dev/null || true
+    # Private immutable bootstrap copy (present only if launched via
+    # the entry script; harmless otherwise).
+    _tp_bootstrap_copy_cleanup
+}
+trap cleanup EXIT
+
 START_EPOCH="$(date +%s)"
 START_TEXT="$(date --iso-8601=seconds)"
-
 
 cat > "$META" <<EOF
 trajectory_pi_version=$VERSION
@@ -245,6 +464,8 @@ branch=$BRANCH
 head_before=$HEAD_BEFORE
 prompt_file=$PROMPT_FILE
 final_query_source=$FINAL_QUERY_SOURCE
+review_enabled=$REVIEW
+reviewer_model=$REVIEWER_MODEL
 EOF
 
 human_duration() {
@@ -277,13 +498,6 @@ gpu_line() {
 # tg_3s is the engine's measured generation throughput over the latest
 # approximately three-second generation window. It is NOT inferred from
 # Pi log growth, GPU utilization, power, VRAM, or wall-clock duration.
-#
-# Attribution limitation:
-# runner timing lines do not contain a model/request identifier. Therefore
-# a numeric value is shown only while the requested model is present in
-# `ollama ps` and the timing sample is very recent. Concurrent unrelated
-# Ollama inference can make attribution ambiguous; V0.2.1 does not claim
-# stronger request identity than the local single-workload runner exposes.
 #
 # Optional telemetry is observational: journal/API failures return
 # gen_3s=unavailable and must never terminate the Pi run.
@@ -358,7 +572,7 @@ ollama_generation_throughput_line() {
 }
 
 current_status() {
-    git status --porcelain=v1 --untracked-files=all 2>/dev/null
+    git_observe status --porcelain=v1 --untracked-files=all 2>/dev/null
 }
 
 changed_count() {
@@ -374,7 +588,7 @@ changed_count() {
 # Path names are emitted as hex so whitespace/newlines cannot make the
 # comparison ambiguous.
 status_fingerprint() {
-    git status --porcelain=v1 -z --untracked-files=all 2>/dev/null |
+    git_observe status --porcelain=v1 -z --untracked-files=all 2>/dev/null |
     python3 -c '
 import hashlib
 import os
@@ -470,6 +684,85 @@ count_added_since_baseline() {
     rm -f "$baseline_file" "$current_file"
 }
 
+# ------------------------------------------------------------
+# Index identity (three-point evidence model, V0.3 final fix, issue #148)
+#
+# TWO DISTINCT PROOFS with strictly separated roles:
+#
+#   SEMANTIC staging identity (AUTHORITATIVE — gates readiness):
+#     sha256 of the exact NUL-safe byte stream of
+#     `git ls-files --stage -z` (one record per real index entry:
+#     mode, object id, stage, path). NUL-terminated records keep the
+#     stream unambiguous even when path names contain whitespace or
+#     newlines. `git ls-files` never refreshes the stat cache, and the
+#     call is guarded by git_observe (GIT_OPTIONAL_LOCKS=0), so the
+#     fingerprint itself can never mutate the real index. The value is
+#     invariant under physical stat-cache/index-file refreshes and
+#     changes only when what is actually staged changes (agent,
+#     reviewer, or external process).
+#
+#   RAW index bytes (DIAGNOSTIC ONLY — never gates readiness):
+#     sha256 of the raw .git/index file. The stat cache physically
+#     lives inside this file, so observation commands such as
+#     `git status` can rewrite it WITHOUT any staging change.
+#
+# Capture points:
+#   *_BEFORE            - before the agent
+#   *_AFTER_AGENT       - after the agent phase, before snapshot
+#   *_FINAL             - after snapshot/validation/review, captured
+#                         immediately before readiness derivation;
+#                         the FINAL semantic checkpoint is what proves
+#                         the snapshot/review layer left staging alone
+#
+# The snapshot/review helpers only ever use separate temporary index
+# files (GIT_INDEX_FILE); reviewer and validation are read-only with
+# respect to the real index; wrapper observations run under
+# GIT_OPTIONAL_LOCKS=0. Semantic changes are attributed either to the
+# agent or an external actor (after-agent checkpoint) or to the
+# snapshot/review phase itself (final checkpoint), never silently
+# tolerated. Raw-byte changes are reported as diagnostics only and are
+# never attributed as staging corruption.
+# ------------------------------------------------------------
+
+REAL_INDEX_FILE="$REPO/.git/index"
+
+# DIAGNOSTIC ONLY: physical bytes of the real index (stat cache
+# included). File read only; never runs a git index command.
+raw_index_identity() {
+    if [[ -f "$REAL_INDEX_FILE" ]]; then
+        sha256sum "$REAL_INDEX_FILE" 2>/dev/null | awk '{print $1}'
+    else
+        printf 'ABSENT'
+    fi
+}
+
+# AUTHORITATIVE: NUL-safe sha256 of `git ls-files --stage -z` (actual
+# staged entries). python3 consumes the binary stream (bash command
+# substitution would drop NUL bytes). The first invocation verifies git
+# really succeeds so a failure can never be mistaken for an empty index.
+semantic_index_identity() {
+    if git_observe ls-files --stage -z >/dev/null 2>&1; then
+        git_observe ls-files --stage -z 2>/dev/null |
+            python3 -c 'import hashlib
+import sys
+sys.stdout.write(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+    else
+        printf 'INVALID'
+    fi
+}
+
+RAW_INDEX_BEFORE="$(raw_index_identity)"
+SEMANTIC_INDEX_BEFORE="$(semantic_index_identity)"
+RAW_INDEX_AFTER_AGENT=""
+SEMANTIC_INDEX_AFTER_AGENT=""
+RAW_INDEX_AFTER_AGENT_STATE="UNPROVEN"
+SEMANTIC_INDEX_AFTER_AGENT_STATE="UNPROVEN"
+RAW_INDEX_FINAL=""
+SEMANTIC_INDEX_FINAL=""
+RAW_INDEX_FINAL_STATE="UNPROVEN"
+SEMANTIC_INDEX_FINAL_STATE="UNPROVEN"
+SNAPSHOT_REVIEW_INDEX_SAFETY="UNPROVEN"
+
 # Capture Git baseline after status helper functions are defined.
 BASELINE_STATUS="$(status_fingerprint)"
 if [[ -n "$BASELINE_STATUS" ]]; then
@@ -492,8 +785,701 @@ handle_signal() {
     FORWARDED_SIGNAL="$sig"
 
     if [[ -n "${PI_PID:-}" ]] && kill -0 "$PI_PID" 2>/dev/null; then
-        kill -s "$sig" "$PI_PID" 2>/dev/null || true
+        # send to the process group first (catches Pi's own children),
+        # then to the process itself as a fallback
+        kill -s "$sig" -- -"$PI_PID" 2>/dev/null \
+          || kill -s "$sig" "$PI_PID" 2>/dev/null \
+          || true
     fi
+}
+
+# ------------------------------------------------------------
+# Temporary-index snapshot helpers
+#
+# Every git invocation below is bound to an explicit temporary index
+# file via GIT_INDEX_FILE. read-tree + add -A against a separate index
+# file cannot touch the real index.
+#
+# $1 = temporary index file
+# $2 = destination dir for snapshot artifacts ("" = no artifacts, sha only)
+# Emits the SHA-256 of the exact patch bytes on stdout on success.
+# ----------------------------------------------------------------
+
+build_snapshot() {
+    local tmp_index="$1"
+    local out_dir="$2"
+    local patch_file=""
+    local sha
+
+    rm -f "$tmp_index"
+    : > "$tmp_index" || return 1
+
+    # 1) load HEAD into the temporary index
+    if ! GIT_INDEX_FILE="$tmp_index" git read-tree HEAD >/dev/null 2>&1; then
+        return 1
+    fi
+
+    # 2) stage the ENTIRE current worktree (tracked + untracked)
+    #    into the temporary index ONLY
+    if ! GIT_INDEX_FILE="$tmp_index" git add -A >/dev/null 2>&1; then
+        return 1
+    fi
+
+    # 3) exact patch bytes
+    if [[ -n "$out_dir" ]]; then
+        patch_file="$out_dir/worktree.patch"
+        if ! GIT_INDEX_FILE="$tmp_index" git diff --cached HEAD \
+            --binary --full-index > "$patch_file" 2>"$out_dir/.snapshot-err"
+        then
+            return 1
+        fi
+
+        if ! sha256sum "$patch_file" | awk '{print $1}' > "$patch_file.sha256"
+        then
+            return 1
+        fi
+
+        # 4-a) complete machine-derived inventory (-z: rename/copy
+        #      aware, NUL-separated, no newline-based path parsing)
+        if ! GIT_INDEX_FILE="$tmp_index" git diff --cached HEAD -z --name-status |
+            python3 -c '
+import sys
+
+path_out = sys.argv[1]
+raw = sys.stdin.buffer.read()
+entries = raw.split(b"\0")
+codes = {"A": 0, "M": 0, "D": 0, "R": 0, "C": 0}
+other = 0
+lines = []
+
+def dec(b):
+    return b.decode("utf-8", "replace")
+
+i = 0
+n = len(entries)
+while i < n:
+    head = entries[i]
+    i += 1
+    if not head:
+        continue
+    code = head[:1].decode("ascii", "replace")
+    detail = head[1:].decode("ascii", "replace")
+    if code in ("R", "C") and i < n:
+        old = dec(entries[i])
+        new = dec(entries[i + 1])
+        i += 2
+        if code in codes:
+            codes[code] += 1
+        else:
+            other += 1
+        lines.append("%s%s\t%r\t%r" % (code, detail, old, new))
+    elif i < n:
+        path = dec(entries[i])
+        i += 1
+        if code in codes:
+            codes[code] += 1
+        else:
+            other += 1
+        lines.append("%s\t%r" % (head.decode("ascii", "replace"), path))
+    else:
+        other += 1
+
+with open(path_out, "w", encoding="utf-8") as fh:
+    fh.write("\n".join(lines) + ("\n" if lines else ""))
+
+total = sum(codes.values()) + other
+print(total, codes["A"], codes["M"], codes["D"], codes["R"], codes["C"], other)
+' "$out_dir/worktree-files.txt"
+        then
+            return 1
+        fi
+
+        # 4-b) stat / numstat from the same temporary-index snapshot
+        GIT_INDEX_FILE="$tmp_index" git diff --cached HEAD --stat \
+            > "$out_dir/worktree-stat.txt" 2>/dev/null || : > "$out_dir/worktree-stat.txt"
+
+        GIT_INDEX_FILE="$tmp_index" git diff --cached HEAD --numstat \
+            > "$out_dir/worktree-numstat.txt" 2>/dev/null || : > "$out_dir/worktree-numstat.txt"
+    else
+        if ! sha="$(GIT_INDEX_FILE="$tmp_index" git diff --cached HEAD --binary --full-index 2>/dev/null | sha256sum | awk '{print $1}')"; then
+            return 1
+        fi
+        printf '%s\n' "$sha"
+    fi
+
+    return 0
+}
+
+SNAPSHOT_STATUS="NOT_RUN"
+SNAPSHOT_PATCH_SHA=""
+SNAPSHOT_TOTAL=0
+SNAPSHOT_ADDED=0
+SNAPSHOT_MODIFIED=0
+SNAPSHOT_DELETED=0
+SNAPSHOT_RENAMED=0
+SNAPSHOT_COPIED=0
+SNAPSHOT_OTHER=0
+DIFF_CHECK="NOT_RUN"
+
+run_worktree_snapshot() {
+    local counts_line
+
+    SNAPSHOT_STATUS="FAILED"
+
+    counts_line="$(build_snapshot "$SNAPSHOT_INDEX_FILE" "$RUN_DIR")" || {
+        SNAPSHOT_STATUS="FAILED"
+        return 1
+    }
+
+    # build_snapshot with out_dir prints the counts line on stdout.
+    local total added modified deleted renamed copied other
+    read -r total added modified deleted renamed copied other <<< "$counts_line"
+
+    SNAPSHOT_TOTAL="${total:-0}"
+    SNAPSHOT_ADDED="${added:-0}"
+    SNAPSHOT_MODIFIED="${modified:-0}"
+    SNAPSHOT_DELETED="${deleted:-0}"
+    SNAPSHOT_RENAMED="${renamed:-0}"
+    SNAPSHOT_COPIED="${copied:-0}"
+    SNAPSHOT_OTHER="${other:-0}"
+
+    # sha (canonical: the snapshot artifact sha)
+    SNAPSHOT_PATCH_SHA="$(awk '{print $1}' "$RUN_DIR/worktree.patch.sha256" 2>/dev/null)"
+    if [[ -z "$SNAPSHOT_PATCH_SHA" ]]; then
+        SNAPSHOT_STATUS="FAILED"
+        return 1
+    fi
+
+    # worktree-status.txt = current TRUE working-tree state (real index),
+    # for reconciliation with the temp-index snapshot above.
+    {
+        echo "# current working-tree status (real index)"
+        git_observe status --short --untracked-files=all 2>/dev/null
+    } > "$RUN_DIR/worktree-status.txt"
+
+    # complete diff check — MUST include untracked/new files because they
+    # are part of the temp-index snapshot (staged in temp index, not HEAD).
+    local check_out="$RUN_DIR/.diff-check-out"
+    if GIT_INDEX_FILE="$SNAPSHOT_INDEX_FILE" git diff --cached HEAD --check \
+        > "$check_out" 2>&1; then
+        DIFF_CHECK="PASS"
+    else
+        DIFF_CHECK="FAIL"
+    fi
+
+    {
+        if [[ "$DIFF_CHECK" == "PASS" ]]; then
+            echo "DIFF CHECK: PASS"
+        else
+            echo "DIFF CHECK: FAIL"
+        fi
+        echo
+        if [[ -s "$check_out" ]]; then
+            echo "$check_out"
+        else
+            echo "(no whitespace/patch issues detected by git diff --cached HEAD --check)"
+        fi
+    } > "$RUN_DIR/diff-check.txt"
+    rm -f "$check_out" "$RUN_DIR/.snapshot-err"
+
+    # metadata (deterministic wrapper evidence)
+    {
+        echo "snapshot_status=COMPLETE"
+        echo "snapshot_index_file=$SNAPSHOT_INDEX_FILE"
+        echo "head=$HEAD_BEFORE"
+        echo "total_files=$SNAPSHOT_TOTAL"
+        echo "added=$SNAPSHOT_ADDED"
+        echo "modified=$SNAPSHOT_MODIFIED"
+        echo "deleted=$SNAPSHOT_DELETED"
+        echo "renamed=$SNAPSHOT_RENAMED"
+        echo "copied=$SNAPSHOT_COPIED"
+        echo "other=$SNAPSHOT_OTHER"
+        echo "patch_sha256=$SNAPSHOT_PATCH_SHA"
+        echo "diff_check=$DIFF_CHECK"
+        echo "generated_at=$(date --iso-8601=seconds)"
+        echo "note=all snapshot artifacts derive from one temporary-index snapshot (GIT_INDEX_FILE); the real git index was not used or modified for snapshotting"
+    } > "$RUN_DIR/worktree-metadata.txt"
+
+    SNAPSHOT_STATUS="COMPLETE"
+    return 0
+}
+
+# ------------------------------------------------------------
+# Optional bounded validation hooks
+# ------------------------------------------------------------
+
+VALIDATION="NOT_CONFIGURED"
+
+run_validations() {
+    (( ${#VALIDATE_CMDS[@]} == 0 )) && return 0
+    [[ "$SNAPSHOT_STATUS" == "COMPLETE" ]] || { VALIDATION="SKIPPED"; return 0; }
+
+    local i rc
+    VALIDATION="PASS"
+    for i in "${!VALIDATE_CMDS[@]}"; do
+        echo "\$ ${VALIDATE_CMDS[$i]}" > "$RUN_DIR/validation-$i.txt"
+        if bash -c "${VALIDATE_CMDS[$i]}" >> "$RUN_DIR/validation-$i.txt" 2>&1; then
+            echo "RESULT: PASS" >> "$RUN_DIR/validation-$i.txt"
+        else
+            rc=$?
+            echo "RESULT: FAIL (exit $rc)" >> "$RUN_DIR/validation-$i.txt"
+            VALIDATION="FAIL"
+        fi
+    done
+    return 0
+}
+
+# ------------------------------------------------------------
+# Independent read-only review of the EXACT snapshot patch
+#
+# The reviewer is a DIRECT local Ollama call (POST /api/chat on the
+# loopback endpoint). It is genuinely separate from Pi: NO second Pi
+# process is spawned, NO tool access, NO agent loop, NO filesystem
+# mutation capability, and NO subprocess delegated to the model. It
+# consumes the exact snapshot patch content and its exact SHA-256.
+# Malformed / ambiguous / timeout / error NEVER maps to PASS.
+# ------------------------------------------------------------
+
+REVIEW_STATUS="NOT_RUN"
+REVIEW_RC=""
+REVIEW_VERDICT=""
+REVIEW_RECOMMENDATION=""
+REVIEW_STALE="n/a"
+REVIEW_VERBOSITY=""
+
+# Final pre-readiness identity verification (closes the post-review
+# TOCTOU window): NOT_RUN | PASS | MISMATCH | FAILED
+FINAL_VERIFY_STATUS="NOT_RUN"
+FINAL_PATCH_SHA=""
+
+build_reviewer_prompt() {
+    local prompt_file="$RUN_DIR/review-prompt.txt"
+    {
+        cat <<EOF
+You are an independent, strictly read-only software reviewer.
+
+You have NO tools. You cannot read files, run commands, or modify
+anything. Judge ONLY the attached worktree patch (snapshot of the HEAD
+-> worktree change). Do not assume any repository state beyond the
+patch. Be strict and specific; cite file and line from the patch for
+every blocker, major, and minor.
+
+Reviewed patch SHA256: $SNAPSHOT_PATCH_SHA
+
+Respond using EXACTLY this structure and nothing else:
+
+VERDICT: PASS
+or
+VERDICT: FAIL
+
+BLOCKERS:
+- None
+
+MAJORS:
+- None
+
+MINORS:
+- None
+
+FINAL RECOMMENDATION: GO COMMIT
+
+Required response protocol (strict):
+- VERDICT appears exactly once and is exactly PASS or FAIL.
+- FINAL RECOMMENDATION appears exactly once and is exactly one of:
+  GO COMMIT, FIX, STOP.
+- Each of the sections BLOCKERS, MAJORS and MINORS appears exactly once.
+- Every such section contains one or more '- ' lines. When a section has
+  no finding, its ONLY line must be exactly: - None
+- When a section has findings, list each on its own '- ' line and do NOT
+  include a '- None' line.
+- Never mix '- None' with actual findings in the same section.
+- VERDICT is PASS only if BLOCKERS and MAJORS are both empty AND
+  FINAL RECOMMENDATION is GO COMMIT. If ANY blocker or major exists,
+  VERDICT MUST be FAIL and FINAL RECOMMENDATION must be FIX or STOP.
+- Cite file and line from the patch for every finding.
+- DO NOT COMMIT, PUSH, MERGE, or modify anything.
+EOF
+        if [[ -n "$REVIEWER_PROMPT_FILE" ]]; then
+            echo
+            echo "Additional review focus (from caller):"
+            cat "$REVIEWER_PROMPT_FILE"
+        fi
+    } > "$prompt_file"
+    return 0
+}
+
+parse_review_verdict() {
+    # Strict, semantically consistent parser. Writes key=value lines to
+    # stdout. RESULT is PASS only for an unambiguous, contradiction-free
+    # response: exactly one VERDICT: PASS, exactly one
+    # FINAL RECOMMENDATION: GO COMMIT, and BLOCKERS and MAJORS sections
+    # that each exist exactly once and are semantically empty (the single
+    # canonical line "- None"). MINORS do not gate PASS (its contents are
+    # advisory; its presence/well-formedness is still required). Any
+    # contradiction (PASS with any real blocker or major), duplication,
+    # missing required section, or malformed structure is NEVER PASS.
+    python3 - "$1" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
+except OSError:
+    print("RESULT=REJECTED")
+    sys.exit(0)
+
+HEADING_RE = re.compile(
+    r"(?m)^\s*(VERDICT|BLOCKERS|MAJORS|MINORS|FINAL RECOMMENDATION)"
+    r"\s*:(?P<rest>.*)$"
+)
+# All headings, in document order: (start, end, name, inline_value)
+occurrences = [
+    (m.start(), m.end(), m.group(1), m.group("rest").strip())
+    for m in HEADING_RE.finditer(text)
+]
+occurrences.sort(key=lambda o: o[0])
+
+
+def idx_of(name):
+    return [i for i, o in enumerate(occurrences) if o[2] == name]
+
+
+def inline(i):
+    return occurrences[i][3]
+
+
+def section_lines(i):
+    """Non-blank lines of a section body, in document order.
+
+    'Semantic emptiness' is decided on this COMPLETE body, not on the
+    collected '- ' items: prose, bullets, comments or any other text
+    coexisting with the empty marker disqualifies the section."""
+    start = occurrences[i][1]
+    end = (occurrences[i + 1][0]
+           if i + 1 < len(occurrences) else len(text))
+    return [raw.strip() for raw in text[start:end].splitlines() if raw.strip()]
+
+
+def is_semantically_empty(i):
+    """True iff the section body, after trimming blank lines, consists
+    of exactly one line: '- None' (spelling-insensitive 'none',
+    trailing period tolerated, bullet may be '-' or '*') and NOTHING
+    else. Prose before or after the marker -> never empty."""
+    body = section_lines(i)
+    if len(body) != 1:
+        return False
+    m = re.match(r"^[-*]\s*(?P<item>\S.*)$", body[0])
+    if not m:
+        return False
+    return m.group("item").strip().lower().rstrip(".") == "none"
+
+
+def canonical_order_ok():
+    """True iff the five canonical required headings each appear exactly
+    once AND in the exact canonical structural sequence:
+    VERDICT, BLOCKERS, MAJORS, MINORS, FINAL RECOMMENDATION."""
+    canonical = ["VERDICT", "BLOCKERS", "MAJORS", "MINORS",
+                 "FINAL RECOMMENDATION"]
+    positions = {}
+    for pos, (_, _, name, _) in enumerate(occurrences):
+        if name in canonical and name not in positions:
+            positions[name] = pos
+    if len(positions) != len(canonical):
+        return False
+    return [positions[name] for name in canonical] == sorted(positions.values())
+
+
+verdict_idx = idx_of("VERDICT")
+rec_idx = idx_of("FINAL RECOMMENDATION")
+blockers_idx = idx_of("BLOCKERS")
+majors_idx = idx_of("MAJORS")
+minors_idx = idx_of("MINORS")
+
+single_verdict = (len(verdict_idx) == 1
+                  and inline(verdict_idx[0]) in ("PASS", "FAIL"))
+single_rec = (len(rec_idx) == 1
+              and inline(rec_idx[0]) in ("GO COMMIT", "FIX", "STOP"))
+
+pass_ok = (
+    canonical_order_ok()
+    # 0. the five canonical headings each appear exactly once, in the
+    #    exact canonical order: VERDICT, BLOCKERS, MAJORS, MINORS,
+    #    FINAL RECOMMENDATION
+    and single_verdict
+    and inline(verdict_idx[0]) == "PASS"
+    # 1. exactly one VERDICT, and it is PASS
+    and single_rec
+    and inline(rec_idx[0]) == "GO COMMIT"
+    # 2. exactly one FINAL RECOMMENDATION, and it is GO COMMIT
+    and len(blockers_idx) == 1
+    and is_semantically_empty(blockers_idx[0])
+    # 3. BLOCKERS exactly once and semantically empty: its COMPLETE
+    #    body (blank lines trimmed) is exactly one line '- None'
+    and len(majors_idx) == 1
+    and is_semantically_empty(majors_idx[0])
+    # 4. MAJORS exactly once and semantically empty: its COMPLETE
+    #    body (blank lines trimmed) is exactly one line '- None'
+    and len(minors_idx) == 1
+    # 5. required MINORS section present exactly once
+    #    (its findings are advisory and do NOT gate PASS)
+)
+
+fail_ok = (
+    len(verdict_idx) == 1
+    and inline(verdict_idx[0]) == "FAIL"
+    and len(rec_idx) == 1
+    # A FAIL verdict with a well-formed recommendation (FIX, STOP, or even
+    # a contradictory GO COMMIT) is a valid FAIL: it can never PASS, so it
+    # is safe to report as FAIL (conservative, never enables commit).
+    and inline(rec_idx[0]) in ("GO COMMIT", "FIX", "STOP")
+)
+
+if pass_ok:
+    result = "PASS"
+elif fail_ok:
+    result = "FAIL"
+else:
+    # Contradictory, duplicated, missing, or malformed required sections
+    # never PASS and are not a valid FAIL.
+    result = "REJECTED"
+
+print("RESULT=%s" % result)
+if verdict_idx:
+    print("VERDICT=%s" % inline(verdict_idx[0]))
+else:
+    print("VERDICT=n/a")
+if rec_idx:
+    print("RECOMMENDATION=%s" % inline(rec_idx[0]))
+else:
+    print("RECOMMENDATION=n/a")
+PY
+}
+
+run_review() {
+    (( REVIEW == 1 )) || { REVIEW_STATUS="DISABLED"; return 0; }
+    [[ "$SNAPSHOT_STATUS" == "COMPLETE" ]] || { REVIEW_STATUS="SKIPPED"; return 0; }
+
+    build_reviewer_prompt
+
+    local review_out="$RUN_DIR/review.txt"
+    local reviewer_py="$RUN_DIR/ollama-reviewer.py"
+
+    # Direct local Ollama reviewer. Written to a file so the process is
+    # a plain external command (no Pi, no tools, no agent loop, no
+    # filesystem mutation, no subprocess delegated to the model) and can
+    # be bounded by a hard `timeout`.
+    cat > "$reviewer_py" <<'PY'
+import json
+import sys
+import urllib.error
+import urllib.request
+
+
+def _err(msg, code):
+    sys.stderr.write("reviewer error: %s\n" % msg)
+    sys.exit(code)
+
+
+def main():
+    args = sys.argv[1:]
+    if len(args) != 6:
+        _err("bad argument count", 2)
+    prompt_file, patch_file, patch_sha, model, base_url, timeout_s = args
+
+    try:
+        timeout_value = float(timeout_s)
+    except (TypeError, ValueError):
+        timeout_value = 300.0
+
+    try:
+        with open(prompt_file, "r", encoding="utf-8", errors="replace") as fh:
+            prompt = fh.read()
+    except OSError as exc:
+        _err("cannot read review prompt: %s" % exc, 1)
+
+    try:
+        with open(patch_file, "rb") as fh:
+            patch = fh.read().decode("utf-8", "replace")
+    except OSError as exc:
+        _err("cannot read reviewed patch: %s" % exc, 1)
+
+    # The exact reviewed patch and its exact SHA are included in the
+    # request so the verdict is bound to one immutable identity.
+    content = (
+        prompt
+        + "\n\n=== EXACT REVIEWED WORKTREE PATCH ===\n"
+        + "Reviewed patch SHA256: "
+        + patch_sha
+        + "\n"
+        + patch
+        + "\n\nRespond using only the exact required structure."
+    )
+
+    body = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": content,
+            },
+        ],
+        "stream": False,
+        "think": False,
+        "options": {
+            "temperature": 0,
+        },
+    }
+
+    url = base_url.rstrip("/") + "/api/chat"
+    data = json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_value) as response:
+            status = getattr(response, "status", 200)
+            raw = response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        _err("HTTP %s from reviewer endpoint" % exc.code, 1)
+    except Exception as exc:  # noqa: BLE001 - any transport failure is an ERROR
+        _err("transport failure: %s" % exc, 1)
+
+    if status != 200:
+        _err("non-200 status %s from reviewer endpoint" % status, 1)
+
+    try:
+        payload = json.loads(raw)
+    except Exception as exc:  # noqa: BLE001
+        _err("invalid JSON response: %s" % exc, 2)
+
+    # Visible review text comes ONLY from message.content.
+    # Reasoning/thinking content is never used as the verdict.
+    message = payload.get("message") if isinstance(payload, dict) else None
+    if not isinstance(message, dict):
+        _err("response payload missing 'message' field", 2)
+
+    visible = message.get("content")
+    if not isinstance(visible, str) or not visible.strip():
+        _err("visible review content missing, non-string or blank", 1)
+
+    sys.stdout.write(visible)
+
+
+if __name__ == "__main__":
+    main()
+PY
+
+    # Bound by a hard timeout; a hung reviewer is a TIMEOUT, never PASS.
+    timeout --signal=TERM --kill-after=5 "$REVIEWER_TIMEOUT" \
+        python3 "$reviewer_py" \
+            "$RUN_DIR/review-prompt.txt" \
+            "$RUN_DIR/worktree.patch" \
+            "$SNAPSHOT_PATCH_SHA" \
+            "$REVIEWER_MODEL" \
+            "$REVIEWER_URL" \
+            "$REVIEWER_TIMEOUT" \
+            </dev/null > "$review_out" 2>"$RUN_DIR/review-runner.stderr"
+    local rc=$?
+    REVIEW_RC="$rc"
+
+    if [[ "$rc" -eq 124 ]]; then
+        REVIEW_STATUS="TIMEOUT"
+    elif [[ "$rc" -ne 0 ]]; then
+        REVIEW_STATUS="ERROR"
+    else
+        local parsed
+        parsed="$(parse_review_verdict "$review_out")" || parsed="RESULT=REJECTED"
+        local result="${parsed#RESULT=}"; result="${result%%$'\n'*}"
+        REVIEW_VERDICT="$(sed -n 's/^VERDICT=//p' <<< "$parsed" | head -n1)"
+        REVIEW_RECOMMENDATION="$(sed -n 's/^RECOMMENDATION=//p' <<< "$parsed" | head -n1)"
+        REVIEW_STATUS="$result"
+    fi
+
+    # Staleness: re-derive the snapshot identity from the CURRENT
+    # worktree and compare against the reviewed patch identity.
+    local verify_sha
+    if verify_sha="$(build_snapshot "$VERIFY_INDEX_FILE" "")"; then
+        if [[ -n "$verify_sha" && "$verify_sha" == "$SNAPSHOT_PATCH_SHA" ]]; then
+            REVIEW_STALE="FRESH"
+        else
+            REVIEW_STALE="STALE"
+        fi
+    else
+        REVIEW_STALE="VERIFY_FAILED"
+    fi
+
+    # Review is valid for readiness only when PASS + FRESH.
+    if [[ "$REVIEW_STATUS" == "PASS" && "$REVIEW_STALE" != "FRESH" ]]; then
+        REVIEW_STATUS="STALE"
+    fi
+
+    {
+        echo "review_enabled=1"
+        echo "reviewer_mode=direct-ollama"
+        echo "reviewer_endpoint=$REVIEWER_URL"
+        echo "reviewer_model=$REVIEWER_MODEL"
+        echo "review_rc=$REVIEW_RC"
+        echo "review_status=$REVIEW_STATUS"
+        echo "review_verdict=${REVIEW_VERDICT:-n/a}"
+        echo "review_recommendation=${REVIEW_RECOMMENDATION:-n/a}"
+        echo "review_stale=$REVIEW_STALE"
+        echo "reviewed_patch_sha256=$SNAPSHOT_PATCH_SHA"
+        echo "current_patch_sha256=${verify_sha:-unavailable}"
+        echo "reviewed_at=$(date --iso-8601=seconds)"
+    } > "$RUN_DIR/review-meta.txt"
+    return 0
+}
+
+# ------------------------------------------------------------
+# Final pre-readiness snapshot identity verification (V0.3 final fix)
+#
+# run_review re-derives the worktree identity after the reviewer and
+# marks FRESH, but there is still a window before readiness in which
+# the worktree could change again. This re-derives the CURRENT
+# worktree identity as late as reasonably possible and binds
+# READY_FOR_COMMIT to the complete chain:
+#
+#   canonical initial patch SHA == reviewed patch SHA
+#   == post-review verification SHA (review-meta current_patch_sha256)
+#   == final pre-readiness SHA
+#
+# All prior points equal SNAPSHOT_PATCH_SHA when the review survived
+# its own freshness check (otherwise REVIEW_STATUS=STALE), so equality
+# of the final SHA with SNAPSHOT_PATCH_SHA proves the full chain.
+# Any mismatch or failure forbids READY_FOR_COMMIT (NEEDS_REVIEW).
+# ------------------------------------------------------------
+
+run_final_verification() {
+    (( REVIEW == 1 )) || return 0
+    [[ "$SNAPSHOT_STATUS" == "COMPLETE" ]] || return 0
+
+    local sha
+    if sha="$(build_snapshot "$FINAL_INDEX_FILE" "")"; then
+        FINAL_PATCH_SHA="$sha"
+        if [[ -n "$sha" && "$sha" == "$SNAPSHOT_PATCH_SHA" ]]; then
+            FINAL_VERIFY_STATUS="PASS"
+        else
+            FINAL_VERIFY_STATUS="MISMATCH"
+        fi
+    else
+        FINAL_PATCH_SHA=""
+        FINAL_VERIFY_STATUS="FAILED"
+    fi
+
+    {
+        echo "final_verify_status=$FINAL_VERIFY_STATUS"
+        echo "canonical_patch_sha256=$SNAPSHOT_PATCH_SHA"
+        echo "final_patch_sha256=${FINAL_PATCH_SHA:-unavailable}"
+        echo "verified_at=$(date --iso-8601=seconds)"
+        echo "note=final pre-readiness identity: temp-index snapshot taken AFTER the reviewer and its freshness check, immediately before readiness"
+    } > "$RUN_DIR/final-verify-meta.txt"
+    return 0
 }
 
 echo
@@ -504,6 +1490,9 @@ printf "Run class      %s\n" "$RUN_CLASS"
 printf "ETA            %s\n" "$ETA"
 printf "Model          %s\n" "$MODEL"
 printf "Thinking       %s\n" "$THINKING"
+printf "Review         %s (%s)\n" \
+    "$([[ "$REVIEW" -eq 1 ]] && echo enabled || echo disabled)" \
+    "$REVIEWER_MODEL"
 printf "Branch         %s\n" "$BRANCH"
 printf "HEAD           %.12s
 " "$HEAD_BEFORE"
@@ -541,8 +1530,14 @@ PI_ARGS+=("$FINAL_QUERY")
 
 # Pi runs as child process.
 # Wrapper survives Pi/provider failures.
+# Job control lets asynchronous jobs keep their SIGINT handler (otherwise
+# non-interactive bash sets SIGINT to SIG_IGN in background children,
+# making signal forwarding impossible) and gives Pi its own process group
+# so the whole agent process tree can be signalled cleanly.
+set -m
 pi "${PI_ARGS[@]}" >"$LOG" 2>&1 &
 PI_PID=$!
+set +m
 
 # Install signal forwarding only after the Pi child exists.
 trap 'handle_signal INT' INT
@@ -608,7 +1603,7 @@ done
 wait "$PI_PID"
 PI_RC=$?
 
-# Do not leave signal traps active during final reporting.
+# Do not leave signal traps active during snapshot/review/reporting.
 trap - INT TERM
 
 # Normally Pi itself returns 130/143 after the forwarded signal.
@@ -626,35 +1621,55 @@ ELAPSED_H="$(human_duration "$ELAPSED")"
 HEAD_AFTER="$(git rev-parse HEAD)"
 CHANGED_AFTER="$(changed_count)"
 
+# Real-index evidence, agent phase: a SEMANTIC staging identity
+# difference from the pre-run identity is attributed to the agent or an
+# external actor. A RAW index-byte difference (stat-cache refresh) is
+# diagnostic only and never blocks readiness by itself. This checkpoint
+# alone does NOT prove snapshot/review left the index untouched — that
+# is the FINAL semantic checkpoint, captured later.
+RAW_INDEX_AFTER_AGENT="$(raw_index_identity)"
+SEMANTIC_INDEX_AFTER_AGENT="$(semantic_index_identity)"
+if [[ "$SEMANTIC_INDEX_BEFORE" == "$SEMANTIC_INDEX_AFTER_AGENT" ]]; then
+    SEMANTIC_INDEX_AFTER_AGENT_STATE="UNCHANGED"
+else
+    SEMANTIC_INDEX_AFTER_AGENT_STATE="CHANGED_BY_AGENT_OR_EXTERNAL"
+fi
+if [[ "$RAW_INDEX_BEFORE" == "$RAW_INDEX_AFTER_AGENT" ]]; then
+    RAW_INDEX_AFTER_AGENT_STATE="UNCHANGED"
+else
+    RAW_INDEX_AFTER_AGENT_STATE="CHANGED"
+fi
+
 {
     echo "ended_at=$(date --iso-8601=seconds)"
     echo "elapsed_seconds=$ELAPSED"
     echo "pi_exit_code=$PI_RC"
     echo "head_after=$HEAD_AFTER"
     echo "changed_files=$CHANGED_AFTER"
+    echo "semantic_index_before=$SEMANTIC_INDEX_BEFORE"
+    echo "semantic_index_after_agent=$SEMANTIC_INDEX_AFTER_AGENT"
+    echo "semantic_index_after_agent_state=$SEMANTIC_INDEX_AFTER_AGENT_STATE"
+    echo "raw_index_before=$RAW_INDEX_BEFORE"
+    echo "raw_index_after_agent=$RAW_INDEX_AFTER_AGENT"
+    echo "raw_index_after_agent_state=$RAW_INDEX_AFTER_AGENT_STATE"
 } >> "$META"
 
-echo
-echo "============================================================"
-echo " TRAJECTORY-PI FINISHED"
-echo "============================================================"
-printf "Runtime        %s\n" "$ELAPSED_H"
-printf "Pi exit code   %s\n" "$PI_RC"
-CURRENT_STATUS_AFTER="$(status_fingerprint)"
-AGENT_CHANGED_AFTER="$(count_added_since_baseline "$CURRENT_STATUS_AFTER")"
-
 # ------------------------------------------------------------
-# Run classification (deterministic, diagnostic only)
+# Agent execution classification (separate from repository readiness)
 #
 # Provider-failure recognition uses the exact stable phrase in the
 # Pi log. Classification never performs reset/clean/retry/commit/
 # push/merge and never changes the exit code.
+# completion_evidence_present() is AGENT-CONVERSATION evidence only.
 # ------------------------------------------------------------
 
 PROVIDER_MISSING_QUERY=0
 if grep -qF "no user query found in messages" "$LOG" 2>/dev/null; then
     PROVIDER_MISSING_QUERY=1
 fi
+
+CURRENT_STATUS_AFTER="$(status_fingerprint)"
+AGENT_CHANGED_AFTER="$(count_added_since_baseline "$CURRENT_STATUS_AFTER")"
 
 if [[ "$PI_RC" -ne 0 && "$PROVIDER_MISSING_QUERY" -eq 1 && "$AGENT_CHANGED_AFTER" -gt 0 ]]; then
     CLASSIFICATION="RECOVERABLE_PROVIDER_FAILURE"
@@ -668,48 +1683,208 @@ else
     CLASSIFICATION="AGENT_FAILED"
 fi
 
-echo "classification=$CLASSIFICATION" >> "$META"
+echo "agent_classification=$CLASSIFICATION" >> "$META"
 
-printf "Baseline files %s
-" "$BASELINE_COUNT"
-printf "Current files  %s
-" "$CHANGED_AFTER"
-printf "Agent-added    %s
-" "$AGENT_CHANGED_AFTER"
-printf "Classification %s\n" "$CLASSIFICATION"
+# ------------------------------------------------------------
+# Deterministic repository evidence (V0.3)
+#
+# Order matters: snapshot -> diff check -> validation -> review ->
+# staleness -> readiness. All from the SAME temp-index snapshot.
+# ------------------------------------------------------------
 
+echo
+echo "===== SNAPSHOT ====="
+run_worktree_snapshot
+SNOT="${SNAPSHOT_STATUS}"
+
+run_validations
+
+run_review
+
+# Final pre-readiness worktree-identity verification: as late as
+# reasonably possible before readiness is derived. Closes the window
+# left open by the review's own freshness check.
+run_final_verification
+
+# Final raw + semantic identity: captured AFTER snapshot,
+# configured validation and independent review (incl. its staleness
+# verification), immediately before readiness derivation. The SEMANTIC
+# final checkpoint proves the snapshot/review layer left staged content
+# unchanged; raw index bytes remain diagnostic only.
+RAW_INDEX_FINAL="$(raw_index_identity)"
+SEMANTIC_INDEX_FINAL="$(semantic_index_identity)"
+if [[ "$SEMANTIC_INDEX_AFTER_AGENT" == "$SEMANTIC_INDEX_FINAL" ]]; then
+    SEMANTIC_INDEX_FINAL_STATE="UNCHANGED"
+else
+    SEMANTIC_INDEX_FINAL_STATE="CHANGED_BY_SNAPSHOT_REVIEW_PHASE"
+fi
+if [[ "$RAW_INDEX_AFTER_AGENT" == "$RAW_INDEX_FINAL" ]]; then
+    RAW_INDEX_FINAL_STATE="UNCHANGED"
+else
+    RAW_INDEX_FINAL_STATE="CHANGED"
+fi
+
+if [[ "$SNAPSHOT_REVIEW_INDEX_SAFETY" == "PASS" ]]; then
+    :
+elif [[ "$SEMANTIC_INDEX_FINAL_STATE" == "UNCHANGED" ]]; then
+    SNAPSHOT_REVIEW_INDEX_SAFETY="PASS"
+else
+    SNAPSHOT_REVIEW_INDEX_SAFETY="FAIL"
+fi
+
+# ------------------------------------------------------------
+# Repository readiness (derived ONLY from deterministic wrapper
+# evidence; Pi prose is never sufficient for READY_FOR_COMMIT).
+# ------------------------------------------------------------
+
+READINESS=""
+READINESS_REASON=""
+
+head_moved=0
 if [[ "$HEAD_AFTER" != "$HEAD_BEFORE" ]]; then
-    echo
-    echo "WARNING: HEAD CHANGED DURING RUN"
-    printf "Before         %s\n" "$HEAD_BEFORE"
-    printf "After          %s\n" "$HEAD_AFTER"
+    head_moved=1
+fi
+
+if (( head_moved )); then
+    READINESS="BLOCKED"
+    READINESS_REASON="HEAD MOVED DURING RUN"
+elif [[ "$SNOT" != "COMPLETE" ]]; then
+    READINESS="BLOCKED"
+    READINESS_REASON="WORKTREE SNAPSHOT INCOMPLETE"
+elif [[ "$DIFF_CHECK" == "FAIL" ]]; then
+    READINESS="BLOCKED"
+    READINESS_REASON="COMPLETE DIFF CHECK FAILED"
+elif [[ "$PI_RC" -ne 0 ]]; then
+    READINESS="NEEDS_REVIEW"
+    READINESS_REASON="Pi EXITED NON-ZERO (exit $PI_RC)"
+elif [[ "$CLASSIFICATION" != "AGENT_COMPLETED" ]]; then
+    READINESS="NEEDS_REVIEW"
+    READINESS_REASON="RUN NOT CONFIRMED COMPLETE ($CLASSIFICATION)"
+elif [[ "$SEMANTIC_INDEX_AFTER_AGENT_STATE" != "UNCHANGED" ]]; then
+    READINESS="NEEDS_REVIEW"
+    READINESS_REASON="SEMANTIC STAGING CHANGED DURING AGENT PHASE (by agent/external, not snapshot logic). Raw index byte refreshes are diagnostic only and never gate readiness."
+elif [[ "$SEMANTIC_INDEX_FINAL_STATE" != "UNCHANGED" ]]; then
+    READINESS="NEEDS_REVIEW"
+    READINESS_REASON="SEMANTIC STAGING CHANGED DURING SNAPSHOT/REVIEW PHASE (snapshot/review must never mutate staged content). READY_FOR_COMMIT forbidden."
+elif [[ "$VALIDATION" == "FAIL" ]]; then
+    READINESS="NEEDS_REVIEW"
+    READINESS_REASON="CONFIGURED VALIDATION FAILED"
+elif (( REVIEW == 1 )); then
+    if [[ "$REVIEW_STATUS" == "PASS" && "$FINAL_VERIFY_STATUS" == "PASS" ]]; then
+        READINESS="READY_FOR_COMMIT"
+        READINESS_REASON="ALL DETERMINISTIC GATES PASS + INDEPENDENT REVIEW PASS (FRESH) + FINAL PRE-READINESS IDENTITY VERIFY PASS"
+    elif [[ "$REVIEW_STATUS" == "PASS" && "$FINAL_VERIFY_STATUS" == "MISMATCH" ]]; then
+        READINESS="NEEDS_REVIEW"
+        READINESS_REASON="POST-REVIEW IDENTITY MISMATCH: worktree changed after the review's freshness check. initial/reviewed PATCH SHA256=${SNAPSHOT_PATCH_SHA} final pre-readiness PATCH SHA256=${FINAL_PATCH_SHA}"
+    elif [[ "$REVIEW_STATUS" == "PASS" && "$FINAL_VERIFY_STATUS" != "PASS" ]]; then
+        READINESS="NEEDS_REVIEW"
+        READINESS_REASON="FINAL PRE-READINESS SNAPSHOT VERIFY $FINAL_VERIFY_STATUS; READY_FOR_COMMIT IS FORBIDDEN"
+    else
+        READINESS="NEEDS_REVIEW"
+        case "$REVIEW_STATUS" in
+            STALE)
+                READINESS_REASON="INDEPENDENT REVIEW STALE (WORKTREE CHANGED AFTER REVIEW)"
+                ;;
+            TIMEOUT|ERROR|REJECTED|FAIL)
+                READINESS_REASON="INDEPENDENT REVIEW $REVIEW_STATUS (NEVER TREATED AS PASS)"
+                ;;
+            *)
+                READINESS_REASON="INDEPENDENT REVIEW $REVIEW_STATUS"
+                ;;
+        esac
+    fi
+else
+    READINESS="READY_FOR_REVIEW"
+    READINESS_REASON="ALL DETERMINISTIC GATES PASS; NO INDEPENDENT REVIEW RUN"
+fi
+
+case "$READINESS" in
+    READY_FOR_COMMIT)
+        DECISION="GO COMMIT"
+        ;;
+    READY_FOR_REVIEW)
+        DECISION="HUMAN REVIEW REQUIRED"
+        ;;
+    NEEDS_REVIEW)
+        DECISION="HUMAN REVIEW REQUIRED"
+        ;;
+    BLOCKED)
+        DECISION="HUMAN INTERVENTION REQUIRED"
+        ;;
+    *)
+        DECISION="HUMAN INTERVENTION REQUIRED"
+        ;;
+esac
+
+echo "repository_readiness=$READINESS" >> "$META"
+echo "readiness_reason=$READINESS_REASON" >> "$META"
+echo "validation=$VALIDATION" >> "$META"
+echo "snapshot_status=$SNOT" >> "$META"
+echo "diff_check=$DIFF_CHECK" >> "$META"
+echo "review_status=$REVIEW_STATUS" >> "$META"
+echo "final_verify_status=$FINAL_VERIFY_STATUS" >> "$META"
+echo "final_patch_sha256=${FINAL_PATCH_SHA:-unavailable}" >> "$META"
+echo "semantic_index_before=$SEMANTIC_INDEX_BEFORE" >> "$META"
+echo "semantic_index_after_agent=$SEMANTIC_INDEX_AFTER_AGENT" >> "$META"
+echo "semantic_index_after_agent_state=$SEMANTIC_INDEX_AFTER_AGENT_STATE" >> "$META"
+echo "semantic_index_final=$SEMANTIC_INDEX_FINAL" >> "$META"
+echo "semantic_index_final_state=$SEMANTIC_INDEX_FINAL_STATE" >> "$META"
+echo "raw_index_before=$RAW_INDEX_BEFORE" >> "$META"
+echo "raw_index_after_agent=$RAW_INDEX_AFTER_AGENT" >> "$META"
+echo "raw_index_after_agent_state=$RAW_INDEX_AFTER_AGENT_STATE" >> "$META"
+echo "raw_index_final=$RAW_INDEX_FINAL" >> "$META"
+echo "raw_index_final_state=$RAW_INDEX_FINAL_STATE" >> "$META"
+echo "snapshot_review_index_safety=$SNAPSHOT_REVIEW_INDEX_SAFETY" >> "$META"
+echo "decision_required=$DECISION" >> "$META"
+
+echo
+echo "===== INDEX SAFETY ====="
+printf "Semantic staging after agent  %s\n" "$SEMANTIC_INDEX_AFTER_AGENT_STATE"
+printf "Semantic staging final        %s\n" "$SEMANTIC_INDEX_FINAL_STATE"
+printf "Raw index bytes after agent   %s\n" "$RAW_INDEX_AFTER_AGENT_STATE"
+printf "Raw index bytes final         %s\n" "$RAW_INDEX_FINAL_STATE"
+printf "Snapshot/review safety %s (semantic: after-agent vs final)\n" "$SNAPSHOT_REVIEW_INDEX_SAFETY"
+printf "Snapshot temp index    %s (cleaned on exit)\n" "$SNAPSHOT_INDEX_FILE"
+printf "Verify temp index      %s (cleaned on exit)\n" "$VERIFY_INDEX_FILE"
+printf "Final temp index       %s (cleaned on exit)\n" "$FINAL_INDEX_FILE"
+if [[ "$SNAPSHOT_REVIEW_INDEX_SAFETY" == "PASS" ]]; then
+    echo "PROOF: semantic staging identity after the agent phase and after"
+    echo "the snapshot/review phase are identical; the snapshot/review"
+    echo "layer left staged content unchanged. Snapshot work used separate"
+    echo "temporary index files and all wrapper observations ran with"
+    echo "GIT_OPTIONAL_LOCKS=0, which never refresh or write the real"
+    echo "index."
+    if [[ "$RAW_INDEX_AFTER_AGENT_STATE" == "CHANGED" || "$RAW_INDEX_FINAL_STATE" == "CHANGED" ]]; then
+        echo "RAW INDEX BYTES: CHANGED (stat-cache/physical refresh possible)"
+        echo "SEMANTIC STAGING: UNCHANGED"
+    fi
+else
+    echo "WARNING: semantic staging identity differs between the agent phase"
+    echo "and the snapshot/review phase (staged content was mutated)."
+    printf 'semantic after(agent)=%s\nsemantic final=%s\n' \
+        "$SEMANTIC_INDEX_AFTER_AGENT" "$SEMANTIC_INDEX_FINAL"
+    echo "The no-mutation guarantee for snapshot/review logic is NOT proven for this run."
 fi
 
 echo
-echo "===== GIT STATUS ====="
-git status --short
+echo "===== GIT STATUS (real index) ====="
+git_observe status --short
 
 echo
-echo "===== DIFF STAT ====="
-git --no-pager diff --stat
-git --no-pager diff --cached --stat
-
-echo
-echo "===== PI FINAL OUTPUT ====="
-cat "$LOG"
-
-echo
-echo "===== ARTIFACTS ====="
-echo "$RUN_DIR"
-
-if [[ "$PI_RC" -eq 0 ]]; then
-    notify \
-      "Trajectory Pi finished" \
-      "$RUN_CLASS completed in $ELAPSED_H · $CHANGED_AFTER files changed"
-else
-    notify \
-      "Trajectory Pi ERROR" \
-      "Pi exited $PI_RC after $ELAPSED_H · work preserved"
+echo "===== WORKTREE SNAPSHOT (HEAD -> worktree, temp index) ====="
+if [[ "$SNOT" == "COMPLETE" ]]; then
+    echo "Snapshot: COMPLETE"
+    echo "Changed files : $SNAPSHOT_TOTAL"
+    echo "  modified    : $SNAPSHOT_MODIFIED"
+    echo "  added       : $SNAPSHOT_ADDED"
+    echo "  deleted     : $SNAPSHOT_DELETED"
+    echo "  renamed     : $SNAPSHOT_RENAMED"
+    echo "  copied      : $SNAPSHOT_COPIED"
+    echo "  other       : $SNAPSHOT_OTHER"
+    echo
+    # Human-friendly stat of the SAME snapshot (untracked included).
+    echo "===== SNAPSHOT DIFF STAT ====="
+    cat "$RUN_DIR/worktree-stat.txt"
 fi
 
 if [[ "$CLASSIFICATION" == "RECOVERABLE_PROVIDER_FAILURE" ]]; then
@@ -722,8 +1897,103 @@ if [[ "$CLASSIFICATION" == "RECOVERABLE_PROVIDER_FAILURE" ]]; then
 fi
 
 echo
-echo "No commit, push or merge performed."
+echo "===== PI OUTPUT (agent-reported, unvalidated) ====="
+cat "$LOG"
 
-# Preserve Pi's actual exit code. The classification above is
-# diagnostic only and never converts a failure into success.
+# ------------------------------------------------------------
+# Canonical final report (V0.3, issue #148)
+#
+# Deterministic wrapper evidence is listed separately from anything
+# the agent reported in prose. Pi prose is NEVER presented as a
+# deterministic PASS.
+# ------------------------------------------------------------
+
+echo
+echo "============================================================"
+echo " TRAJECTORY-PI FINISHED"
+echo "============================================================"
+printf "Runtime                 %s\n" "$ELAPSED_H"
+printf "Pi exit code            %s\n" "$PI_RC"
+printf "Agent classification: %s\n" "$CLASSIFICATION"
+printf "Repository state: %s\n" "$READINESS"
+echo
+printf "HEAD BEFORE: %s\n" "$HEAD_BEFORE"
+printf "HEAD AFTER: %s\n" "$HEAD_AFTER"
+printf "SEMANTIC STAGING AFTER AGENT: %s\n" "$SEMANTIC_INDEX_AFTER_AGENT_STATE"
+printf "SEMANTIC STAGING FINAL: %s\n" "$SEMANTIC_INDEX_FINAL_STATE"
+printf "RAW INDEX AFTER AGENT: %s\n" "$RAW_INDEX_AFTER_AGENT_STATE"
+printf "RAW INDEX FINAL: %s\n" "$RAW_INDEX_FINAL_STATE"
+printf "SNAPSHOT/REVIEW INDEX SAFETY: %s\n" "$SNAPSHOT_REVIEW_INDEX_SAFETY"
+if [[ "$RAW_INDEX_FINAL_STATE" == "CHANGED" && \
+      "$SEMANTIC_INDEX_AFTER_AGENT_STATE" == "UNCHANGED" && \
+      "$SEMANTIC_INDEX_FINAL_STATE" == "UNCHANGED" ]]; then
+    echo "RAW INDEX BYTES: CHANGED (stat-cache/physical refresh possible)"
+    echo "SEMANTIC STAGING: UNCHANGED"
+fi
+printf "WORKTREE SNAPSHOT: %s\n" "$SNOT"
+printf "CHANGED FILES: %s\n" "$SNAPSHOT_TOTAL"
+printf "TRACKED MODIFIED: %s\n" "$SNAPSHOT_MODIFIED"
+printf "UNTRACKED: %s\n" "$SNAPSHOT_ADDED"
+printf "DELETED/RENAMED: %s (deleted %s / renamed %s / copied %s)\n" \
+    "$((SNAPSHOT_DELETED + SNAPSHOT_RENAMED))" \
+    "$SNAPSHOT_DELETED" "$SNAPSHOT_RENAMED" "$SNAPSHOT_COPIED"
+printf "PATCH SHA256: %s\n" "${SNAPSHOT_PATCH_SHA:-unavailable}"
+printf "DIFF CHECK: %s\n" "$DIFF_CHECK"
+printf "VALIDATION: %s\n" "$VALIDATION"
+printf "INDEPENDENT REVIEW: %s\n" "$REVIEW_STATUS"
+printf "REVIEWED PATCH SHA256: %s\n" \
+    "$( [[ "$REVIEW_STATUS" == "NOT_RUN" || "$REVIEW_STATUS" == "DISABLED" || "$REVIEW_STATUS" == "SKIPPED" ]] && echo "n/a (review not run)" || echo "${SNAPSHOT_PATCH_SHA:-unavailable}" )"
+printf "POST-REVIEW VERIFY: %s\n" \
+    "$( [[ "$FINAL_VERIFY_STATUS" == "NOT_RUN" ]] && echo "n/a (review not run)" || echo "$FINAL_VERIFY_STATUS" )"
+printf "FINAL PATCH SHA256: %s\n" \
+    "$( [[ -z "$FINAL_PATCH_SHA" ]] && echo "n/a (final verify not run)" || echo "$FINAL_PATCH_SHA" )"
+printf "REVIEW VERDICT: %s\n" \
+    "$( [[ -n "$REVIEW_RECOMMENDATION" && "$REVIEW_RECOMMENDATION" != "n/a" ]] && echo "$REVIEW_RECOMMENDATION" || echo "n/a" )"
+printf "ARTIFACTS: %s\n" "$RUN_DIR"
+echo
+echo "Readiness reason: $READINESS_REASON"
+echo
+echo "Evidence model:"
+echo "  DETERMINISTIC (wrapper-derived): branch, HEAD before/after,"
+echo "    Pi process exit code, complete temp-index snapshot, patch"
+echo "    SHA-256, complete stat/inventory, index identity (pre-run /"
+echo "    after-agent / final) with SEMANTIC staging identity"
+echo "    (git ls-files --stage -z) as the authoritative readiness gate"
+echo "    and raw .git/index bytes as diagnostic only, complete diff"
+echo "    check, post-review identity verification, reviewer"
+echo "    invocation/result."
+echo "  AGENT-REPORTED (Pi prose, unvalidated by wrapper): test/"
+echo "    quality results not executed by the wrapper, implementation"
+echo "    and architecture claims."
+echo
+echo "============================================================"
+echo "DECISION REQUIRED: $DECISION"
+echo "============================================================"
+
+if [[ "$PI_RC" -eq 0 ]]; then
+    notify \
+      "Trajectory Pi finished" \
+      "$RUN_CLASS completed in $ELAPSED_H · $CHANGED_AFTER files changed · $READINESS"
+else
+    notify \
+      "Trajectory Pi ERROR" \
+      "Pi exited $PI_RC after $ELAPSED_H · work preserved · $READINESS"
+fi
+
+echo
+echo "No commit, push, merge, reset, restore, clean, or stash performed."
+if [[ "$SNAPSHOT_REVIEW_INDEX_SAFETY" == "PASS" ]]; then
+    echo "PROVEN for this run: the SEMANTIC staging identity (actual"
+echo "staged entries) matches after the agent phase and after the"
+echo "snapshot/review layer — staged content was left unchanged."
+echo "(Raw .git/index bytes are diagnostic only and never gate this proof.)"
+else
+    echo "The SEMANTIC staging identity differs between the agent phase and"
+echo "the snapshot/review phase; the no-mutation guarantee for"
+echo "snapshot/review logic is NOT proven for this run."
+fi
+
+# Preserve Pi's actual exit code. Readiness/classification are
+# diagnostic and gate human decisions; they never convert Pi's
+# failure into success or vice versa.
 exit "$PI_RC"
