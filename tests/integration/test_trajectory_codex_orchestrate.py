@@ -110,6 +110,20 @@ SECRET_AUTH_CONTENT = b'{"token": "SECRET-AUTH-DO-NOT-TOUCH"}\n'
 SECRET_TRUST_CONTENT = b'{"trusted": ["SECRET-TRUST-DO-NOT-TOUCH"]}\n'
 SECRET_SETTINGS_CONTENT = b'{"sandbox": "SECRET-SANDBOX-SETTING"}\n'
 
+FAKE_STATUS_DELEGATE = r"""#!/usr/bin/env bash
+set -u
+cap="${STATUS_CAPTURE:-}"
+if [[ -n "$cap" ]]; then
+  {
+    printf 'ARGC=%d\n' "$#"
+    for a in "$@"; do printf 'ARG=%s\n' "$a"; done
+  } > "$cap"
+fi
+# Also record cwd to confirm no cwd manipulation
+printf '%s\n' "$(pwd)" > "${STATUS_CWD_CAPTURE:-/dev/null}"
+exit "${STATUS_RC:-0}"
+"""
+
 
 def git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
@@ -176,6 +190,8 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     (scripts / "trajectory-codex-pi").chmod(0o755)
     (scripts / "trajectory_gate.py").write_text(FAKE_GATE)
     (scripts / "trajectory_gate.py").chmod(0o755)
+    (scripts / "trajectory-pi-status").write_text(FAKE_STATUS_DELEGATE)
+    (scripts / "trajectory-pi-status").chmod(0o755)
 
     git(repo, "add", "-A")
     git(repo, "commit", "-m", "init", "--quiet")
@@ -196,7 +212,10 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     monkeypatch.setenv("HOME", str(fake_home))
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
-    for k in ("DELEGATE_RC", "DELEGATE_MODE", "DELEGATE_STAMP", "GATE_RC"):
+    for k in (
+        "DELEGATE_RC", "DELEGATE_MODE", "DELEGATE_STAMP", "GATE_RC",
+        "STATUS_RC", "STATUS_CAPTURE", "STATUS_CWD_CAPTURE",
+    ):
         monkeypatch.delenv(k, raising=False)
     return {
         "home": fake_home,
@@ -1018,3 +1037,284 @@ def test_cli_documents_no_autonomous_state_machine() -> None:
     assert '"GO PUSH"' in code
     assert "GO MERGE" in code
     assert "GO PR" in code
+
+
+# ---------------------------------------------------------------------------
+# STATUS: read-only passthrough to trajectory-pi-status (issue #174)
+# ---------------------------------------------------------------------------
+
+
+def test_status_forwards_exact_arguments(sandbox: dict[str, Path]) -> None:
+    """All status-reader args are forwarded byte-for-argument to the delegate."""
+    args = [
+        "--run", "20250101-120000",
+        "--runs-root", ".trajectory-pi/runs",
+        "--json",
+        "--now", "2026-01-01T00:00:00Z",
+        "--stale-after", "120",
+        "--max-files", "10",
+        "--worktree-live",
+    ]
+    cap = capture_path(sandbox, "status-args")
+    cwd_cap = capture_path(sandbox, "status-cwd")
+    proc = run_cli(
+        sandbox,
+        ["status", *args],
+        {"STATUS_CAPTURE": str(cap), "STATUS_CWD_CAPTURE": str(cwd_cap)},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    delegate = cap.read_text()
+    assert f"ARGC={len(args)}\n" in delegate, delegate
+    arg_lines = [
+        ln[len("ARG="):] for ln in delegate.splitlines() if ln.startswith("ARG=")
+    ]
+    assert arg_lines == args, f"argv altered: {arg_lines!r} != {args!r}"
+
+
+def test_status_forwards_empty_arglist(sandbox: dict[str, Path]) -> None:
+    """status with no extra args: the delegate is invoked with zero args."""
+    cap = capture_path(sandbox, "status-noargs")
+    proc = run_cli(
+        sandbox,
+        ["status"],
+        {"STATUS_CAPTURE": str(cap)},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    delegate = cap.read_text()
+    assert "ARGC=0\n" in delegate, delegate
+
+
+def test_status_forwards_special_characters_unchanged(sandbox: dict[str, Path]) -> None:
+    """Args with spaces, dashes, and special chars must pass through intact."""
+    args = [
+        "--now", "2026-01-01T00:00:00+00:00",
+        "--run", "a-run name with spaces",
+        "--max-files", "99",
+        "-x",  # hypothetical single-dash flag
+    ]
+    cap = capture_path(sandbox, "status-special")
+    proc = run_cli(
+        sandbox,
+        ["status", *args],
+        {"STATUS_CAPTURE": str(cap)},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    delegate = cap.read_text()
+    arg_lines = [
+        ln[len("ARG="):] for ln in delegate.splitlines() if ln.startswith("ARG=")
+    ]
+    assert arg_lines == args, f"special chars mangled: {arg_lines!r} != {args!r}"
+
+
+def test_status_read_only_no_git_mutation(sandbox: dict[str, Path]) -> None:
+    """status must NEVER mutate git state: HEAD, branch, commits, index, status."""
+    before = snapshot_git_state(sandbox["repo"])
+    cap = capture_path(sandbox, "status-readonly")
+    proc = run_cli(
+        sandbox,
+        ["status", "--json", "--now", "2026-01-01T00:00:00Z"],
+        {"STATUS_CAPTURE": str(cap)},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert cap.exists(), "delegate must have been invoked"
+    assert_git_unchanged(sandbox, before)
+
+
+def test_status_no_gate_invocation(sandbox: dict[str, Path]) -> None:
+    """The status subcommand must NEVER trigger trajectory_gate."""
+    glog = capture_path(sandbox, "status-gate")
+    glog.unlink(missing_ok=True)
+    cap = capture_path(sandbox, "status-nogate")
+    proc = run_cli(
+        sandbox,
+        ["status", "--json"],
+        {"STATUS_CAPTURE": str(cap), "GATE_CAPTURE": str(glog)},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert cap.exists(), "status delegate must be invoked"
+    assert not glog.exists(), "gate must NEVER be invoked by status"
+
+
+def test_status_on_protected_branch_allowed(sandbox: dict[str, Path]) -> None:
+    """Status observation is branch-independent; even on main it works."""
+    repo: Path = sandbox["repo"]
+    git(repo, "checkout", "--quiet", PROTECTED)
+    cap = capture_path(sandbox, "status-main")
+    proc = run_cli(
+        sandbox,
+        ["status", "--version"],
+        {"STATUS_CAPTURE": str(cap)},
+    )
+    git(repo, "checkout", "--quiet", BRANCH)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert cap.exists(), "delegate must be invoked even on protected branch"
+
+
+def test_status_on_detached_head_allowed(sandbox: dict[str, Path]) -> None:
+    """Status is a pure observation; it must work even with a detached HEAD."""
+    repo: Path = sandbox["repo"]
+    git(repo, "checkout", "--detach", "--quiet")
+    cap = capture_path(sandbox, "status-detached")
+    proc = run_cli(
+        sandbox,
+        ["status"],
+        {"STATUS_CAPTURE": str(cap)},
+    )
+    git(repo, "checkout", "--quiet", BRANCH)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert cap.exists()
+
+
+def test_status_missing_delegate_refused(sandbox: dict[str, Path]) -> None:
+    """When trajectory-pi-status is absent or unreadable, fail-closed."""
+    delegate_path = sandbox["repo"] / "scripts" / "trajectory-pi-status"
+    delegate_path.unlink()
+    before = snapshot_git_state(sandbox["repo"])
+    proc = run_cli(sandbox, ["status", "--json"])
+    assert proc.returncode == EXIT_PRECONDITION, proc.stdout + proc.stderr
+    assert "status delegate" in proc.stderr, proc.stderr
+    assert "not found" in proc.stderr or "not executable" in proc.stderr
+    assert_git_unchanged(sandbox, before)
+
+
+def test_status_nonzero_exit_propagated_exactly(sandbox: dict[str, Path]) -> None:
+    """The delegate's exit code must propagate EXACTLY (1, 2, 42, 130, 255)."""
+    for rc in (1, 2, 42, 130, 255):
+        cap = capture_path(sandbox, f"status-rc{rc}")
+        proc = run_cli(
+            sandbox,
+            ["status", "--json"],
+            {"STATUS_CAPTURE": str(cap), "STATUS_RC": str(rc)},
+        )
+        assert proc.returncode == rc, (
+            f"status delegate exit {rc} must propagate exactly, got {proc.returncode}"
+        )
+        assert cap.exists(), f"delegate must have been invoked (rc={rc})"
+
+
+def test_status_zero_exit_propagated(sandbox: dict[str, Path]) -> None:
+    """Success exit (0) must also propagate exactly."""
+    cap = capture_path(sandbox, "status-ok")
+    proc = run_cli(
+        sandbox,
+        ["status", "--now", "2026-01-01T00:00:00Z"],
+        {"STATUS_CAPTURE": str(cap), "STATUS_RC": "0"},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert cap.exists()
+
+
+def test_status_is_never_authorization(sandbox: dict[str, Path]) -> None:
+    """Even after a successful status call, the commit gate still requires
+    the exact authorization phrase — status does NOT unlock any gate."""
+    # Run status first (succeeds)
+    cap = capture_path(sandbox, "status-then-gate")
+    proc_status = run_cli(
+        sandbox,
+        ["status", "--json"],
+        {"STATUS_CAPTURE": str(cap)},
+    )
+    assert proc_status.returncode == 0
+
+    # Now attempt commit WITHOUT authorization — must still be refused
+    modified_files(sandbox["repo"])
+    before = snapshot_git_state(sandbox["repo"])
+    proc_commit = run_cli(
+        sandbox,
+        ["commit", "--branch", BRANCH, "--scope", "app/calc.py",
+         "--message", "x"],
+    )
+    assert proc_commit.returncode == EXIT_AUTH_REFUSED, proc_commit.stdout + proc_commit.stderr
+    assert "GO COMMIT" in proc_commit.stderr
+    assert_git_unchanged(sandbox, before)
+
+
+def test_status_output_mentions_delegate_and_read_only(sandbox: dict[str, Path]) -> None:
+    """The CLI's own output documents the delegation and read-only nature."""
+    cap = capture_path(sandbox, "status-output")
+    proc = run_cli(
+        sandbox,
+        ["status", "--json"],
+        {"STATUS_CAPTURE": str(cap)},
+    )
+    assert proc.returncode == 0
+    out = proc.stdout + proc.stderr
+    assert "trajectory-pi-status" in out, f"must name the delegate in output: {out!r}"
+    assert "read-only" in out.lower(), f"must document read-only: {out!r}"
+
+
+def test_status_static_no_forbidden_commands() -> None:
+    """Static analysis: the status path must not contain any forbidden
+    Git mutation, network, or credential operations."""
+    code = REAL_CLI.read_text()
+    status_section_start = code.index("cmd_status()")
+    status_section = code[status_section_start:status_section_start + 2000]  # generous window
+    for forbidden in (
+        "git add", "git commit", "git push", "git merge", "git pull",
+        "git rebase", "git reset", "git restore", "git clean", "git stash",
+        "git checkout", "git switch","+refs",
+        "curl", "wget", "ssh ", "scp ",
+        "auth.json", "trust.json", "settings.json", "credential",
+        "password", "SECRET",
+        "require_worktree", "require_expected_branch",
+        "AUTH_COMMIT", "AUTH_PUSH",
+    ):
+        assert forbidden not in status_section, (
+            f"status path must not contain: {forbidden!r}"
+        )
+
+
+def test_status_delegates_to_status_reader_not_pi_or_gate(sandbox: dict[str, Path]) -> None:
+    """The status command invokes trajectory-pi-status ONLY, never the Pi
+    delegate or trajectory_gate (verified by only the status cap existing)."""
+    pi_cap = capture_path(sandbox, "status-pi").unlink(missing_ok=True)
+    pi_cap = capture_path(sandbox, "status-pi")
+    glog = capture_path(sandbox, "status-gate2").unlink(missing_ok=True)
+    glog = capture_path(sandbox, "status-gate2")
+    status_cap = capture_path(sandbox, "status-only")
+
+    proc = run_cli(
+        sandbox,
+        ["status", "--json"],
+        {
+            "STATUS_CAPTURE": str(status_cap),
+            "DELEGATE_CAPTURE": str(pi_cap),
+            "GATE_CAPTURE": str(glog),
+        },
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert status_cap.exists(), "status delegate MUST be invoked"
+    assert not pi_cap.exists(), "Pi delegate must NOT be invoked by status"
+    assert not glog.exists(), "gate must NOT be invoked by status"
+
+
+def test_status_preserves_existing_behavior(sandbox: dict[str, Path]) -> None:
+    """Adding the status subcommand must not alter implement/commit/push/
+    merge-check behavior: the existing gates and exit codes are unchanged."""
+    # implement still works exactly as before
+    cap = capture_path(sandbox, "status-preserve-impl")
+    proc = run_cli(
+        sandbox,
+        ["implement", "--branch", BRANCH, "--", "t"],
+        {"DELEGATE_CAPTURE": str(cap)},
+    )
+    assert proc.returncode == EXIT_GATE_STOP, proc.stdout + proc.stderr
+    assert "READY_FOR_COMMIT" in proc.stdout
+
+    # commit still requires auth
+    modified_files(sandbox["repo"])
+    proc2 = run_cli(
+        sandbox,
+        ["commit", "--branch", BRANCH, "--scope", "app/calc.py",
+         "--message", "x"],
+    )
+    assert proc2.returncode == EXIT_AUTH_REFUSED
+
+    # push still requires auth
+    proc3 = run_cli(sandbox, ["push", "--branch", BRANCH])
+    assert proc3.returncode == EXIT_AUTH_REFUSED
+
+    # merge-check still requires evidence
+    proc4 = run_cli(sandbox, ["merge-check", "--branch", BRANCH])
+    assert proc4.returncode == EXIT_USAGE
