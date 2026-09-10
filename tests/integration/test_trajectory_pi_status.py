@@ -425,11 +425,14 @@ def test_reader_is_new_and_executable() -> None:
     env = dict(os.environ)
     env["GIT_OPTIONAL_LOCKS"] = "0"
     proc = subprocess.run(
-        ["git", "status", "--porcelain", "--", "scripts/trajectory-pi-status",
+        ["git", "ls-files", "--stage", "--", "scripts/trajectory-pi-status",
          "tests/integration/test_trajectory_pi_status.py"],
         cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=60,
     )
     assert proc.returncode == 0
-    listed = {line[3:].strip() for line in proc.stdout.splitlines()}
-    assert "scripts/trajectory-pi-status" in listed
-    assert "tests/integration/test_trajectory_pi_status.py" in listed
+    staged = {
+        line.split("\t", maxsplit=1)[1]: line.split()[0]
+        for line in proc.stdout.splitlines()
+    }
+    assert staged["scripts/trajectory-pi-status"] == "100755"
+    assert staged["tests/integration/test_trajectory_pi_status.py"] == "100644"
