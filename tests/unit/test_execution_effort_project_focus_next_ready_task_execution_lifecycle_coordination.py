@@ -1,21 +1,27 @@
-"""V1.57 — minimal application-layer coordinator for the V1.50–V1.56 chain.
+"""V1.60 — minimal application-layer coordinator for the lifecycle chain.
 
 Focused unit tests for ``coordinate_task_execution_lifecycle``:
 
-1. successful admitted decision -> durable decision -> application ->
-   durable application, with the EXACT deterministic call order and full
-   identity preservation;
-2. CURRENT rejection with ZERO downstream side effects;
-3. decision persistence failure stops before application;
-4. application failure creates NO application success-history record;
-5. application-history persistence failure is explicit AFTER a real
-   application;
-6. mismatched / hostile identities rejected;
-7. deterministic call ordering and identity preservation;
-8. executable architecture guards (no UUID generation, no wall clock,
-   no provider / runtime / shell surface).
+1. successful admitted decision -> durable admission -> durable decision
+   -> application -> durable application, with the EXACT deterministic
+   call order and full identity preservation (including exact
+   ``admission_record_id`` and ``admission_recorded_at`` preservation);
+2. CURRENT rejection with ZERO downstream side effects (zero admission,
+   decision, application, application-history writes);
+3. admission-history persistence failure stops BEFORE the decision
+   record and application;
+4. decision persistence failure stops before application (the durable
+   admission record remains);
+5. application failure (admission + decision appends already durable)
+   creates NO application success-history record;
+6. application-history persistence failure is explicit AFTER a real
+   application (admission + decision records remain durable);
+7. mismatched / hostile identities rejected by the canonical boundaries;
+8. deterministic call ordering and identity preservation;
+9. executable architecture guards (no UUID generation, no wall clock,
+   no concrete SQLite / provider / runtime / shell surface).
 
-Coverage 8 (SQLite-backed integration) lives in
+Coverage 9 (SQLite-backed integration) lives in
 ``tests/integration/test_task_execution_lifecycle_coordination_sqlite.py``.
 """
 
@@ -31,6 +37,8 @@ import pytest
 
 import trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_lifecycle_coordination as coordination_module  # noqa: E501
 from trajectory_os.application import (
+    DurableTaskExecutionLifecycleAdmissionError,
+    TaskExecutionLifecycleAdmission,
     TaskExecutionLifecycleAdmissionError,
     TaskExecutionLifecycleApplicationHistoryPersistenceError,
     TaskExecutionLifecycleCoordinatorError,
@@ -48,6 +56,9 @@ from trajectory_os.domain.portfolio import Portfolio
 from trajectory_os.domain.relations import RelationType, TrajectoryRelation
 
 DECIDED_AT = datetime(2026, 2, 1, 9, 0, tzinfo=UTC)
+ADMISSION_RECORDED_AT = datetime(
+    2026, 2, 1, 23, 45, tzinfo=timezone(timedelta(hours=9, minutes=30))
+)
 DECISION_RECORDED_AT = datetime(
     2026, 2, 2, 10, 30, tzinfo=timezone(timedelta(hours=5, minutes=30))
 )
@@ -119,10 +130,12 @@ def _scenario() -> tuple[
     UUID,
     UUID,
     UUID,
+    UUID,
 ]:
     """One admissible CURRENT portfolio plus one genuine COMPLETE_TASK
     V1.50 decision referencing its exact identities, plus fresh
-    caller-supplied durable-record identities."""
+    caller-supplied durable-record identities (admission, decision,
+    application)."""
 
     project = _project_entity()
     task = _task_entity(EntityStatus.ACTIVE)
@@ -150,6 +163,7 @@ def _scenario() -> tuple[
         portfolio,
         decision,
         task.id,
+        _uuid(),  # admission_record_id
         _uuid(),  # decision_record_id
         _uuid(),  # application_record_id
     )
@@ -204,6 +218,28 @@ class FakePortfolioRepository:
         self.saved.append(portfolio)
 
 
+class FakeAdmissionRepository:
+    """Scriptable V1.58 ``TaskExecutionLifecycleAdmissionRepository``
+    double."""
+
+    def __init__(
+        self, log: OrderedLog, *, add_error: Exception | None = None
+    ) -> None:
+        self._log = log
+        self._add_error = add_error
+        self.added: list[Any] = []
+
+    def add(self, record: Any) -> None:
+        self._log.actions.append("admission.add")
+        if self._add_error is not None:
+            raise self._add_error
+        self.added.append(record)
+
+    def list_history(self, portfolio_id: UUID) -> tuple[Any, ...]:
+        self._log.actions.append("admission.list_history")
+        return tuple(self.added)
+
+
 class FakeDecisionRepository:
     """Scriptable V1.55 ``TaskExecutionLifecycleDecisionRepository``
     double."""
@@ -225,8 +261,8 @@ class FakeDecisionRepository:
 
 
 class FakeApplicationRepository:
-    """Scriptable V1.53
-    ``TaskExecutionLifecycleApplicationRepository`` double."""
+    """Scriptable V1.53 ``TaskExecutionLifecycleApplicationRepository``
+    double."""
 
     def __init__(
         self, log: OrderedLog, *, add_error: Exception | None = None
@@ -250,12 +286,14 @@ def _fake_stack(
     portfolio: Portfolio,
     *,
     second_load: Portfolio | None = _SENTINEL,  # type: ignore[assignment]
+    admission_add_error: Exception | None = None,
     decision_add_error: Exception | None = None,
     save_error: Exception | None = None,
     application_add_error: Exception | None = None,
 ) -> tuple[
     OrderedLog,
     FakePortfolioRepository,
+    FakeAdmissionRepository,
     FakeDecisionRepository,
     FakeApplicationRepository,
 ]:
@@ -268,6 +306,7 @@ def _fake_stack(
             second_load=second_load,
             save_error=save_error,
         ),
+        FakeAdmissionRepository(log, add_error=admission_add_error),
         FakeDecisionRepository(log, add_error=decision_add_error),
         FakeApplicationRepository(log, add_error=application_add_error),
     )
@@ -276,23 +315,32 @@ def _fake_stack(
 def _run(
     decision: TaskExecutionLifecycleDecision,
     portfolio_repo: FakePortfolioRepository,
+    admission_repo: FakeAdmissionRepository,
     decision_repo: FakeDecisionRepository,
     application_repo: FakeApplicationRepository,
-    *,
+    admission_record_id: Any | None = None,
     decision_record_id: Any | None = None,
     application_record_id: Any | None = None,
+    admission_recorded_at: Any | None = None,
 ) -> Any:
+    if admission_record_id is None:
+        admission_record_id = _uuid()
+    if admission_recorded_at is None:
+        admission_recorded_at = ADMISSION_RECORDED_AT
     if decision_record_id is None:
         decision_record_id = _uuid()
     if application_record_id is None:
         application_record_id = _uuid()
     return coordinate_task_execution_lifecycle(
+        admission_record_id,
+        admission_recorded_at,
         decision_record_id,
         DECISION_RECORDED_AT,
         decision,
         CHANGED_AT,
         application_record_id,
         APPLICATION_RECORDED_AT,
+        admission_repository=admission_repo,
         decision_repository=decision_repo,
         application_repository=application_repo,
         portfolio_repository=portfolio_repo,
@@ -300,17 +348,16 @@ def _run(
 
 
 # ---------------------------------------------------------------------------
-# 1 / 7 — happy path: deterministic call order + identity preservation
+# 1 — happy path: deterministic call order + identity preservation
 # ---------------------------------------------------------------------------
 
 
 def test_happy_path_deterministic_order_and_identity_preservation() -> None:
-    portfolio, decision, task_id, decision_record_id, application_record_id = (
-        _scenario()
-    )
+    portfolio, decision, task_id, a_hist_id, d_id, app_id = _scenario()
     (
         log,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
     ) = _fake_stack(portfolio)
@@ -318,17 +365,20 @@ def test_happy_path_deterministic_order_and_identity_preservation() -> None:
     outcome = _run(
         decision,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
-        decision_record_id=decision_record_id,
-        application_record_id=application_record_id,
+        admission_record_id=a_hist_id,
+        decision_record_id=d_id,
+        application_record_id=app_id,
     )
 
     # Exact deterministic call order: CURRENT admission (one load) ->
-    # durable decision append -> V1.52 replay (second load) -> V1.52 save
-    # -> durable application append.
+    # durable admission append -> durable decision append -> V1.52 replay
+    # (second load) -> V1.52 save -> durable application append.
     assert log.actions == [
         "portfolio.load",
+        "admission.add",
         "decision.add",
         "portfolio.load",
         "portfolio.save",
@@ -336,9 +386,34 @@ def test_happy_path_deterministic_order_and_identity_preservation() -> None:
     ]
     assert len(portfolio_repo.saved) == 1
 
+    # Durable admission record: EXACT V1.51 admission embedded, and the
+    # caller-supplied identity + original-offset timestamp preserved
+    # verbatim.
+    assert outcome.admission_record.admission_record_id == a_hist_id
+    assert outcome.admission_record.recorded_at == ADMISSION_RECORDED_AT
+    expected_admission = TaskExecutionLifecycleAdmission(
+        lifecycle_decision_id=decision.lifecycle_decision_id,
+        decided_at=DECIDED_AT,
+        execution_record_id=decision.execution_record_id,
+        execution_recorded_at=decision.execution_recorded_at,
+        request_id=decision.request_id,
+        intent_id=decision.intent_id,
+        execution_decision_id=decision.execution_decision_id,
+        portfolio_id=portfolio.id,
+        authorized_project_id=decision.authorized_project_id,
+        authorized_task_id=task_id,
+        execution_succeeded=True,
+        disposition=TaskExecutionLifecycleDisposition.COMPLETE_TASK,
+        current_task_status=EntityStatus.ACTIVE,
+    )
+    assert outcome.admission_record.admission == expected_admission
+    # The returned admission record is EXACTLY the one appended to the
+    # admission repository.
+    assert admission_repo.added == [outcome.admission_record]
+
     # Durable decision record: exact V1.50 decision, caller-supplied
     # identity and original offset preserved verbatim.
-    assert outcome.decision_record.decision_record_id == decision_record_id
+    assert outcome.decision_record.decision_record_id == d_id
     assert outcome.decision_record.recorded_at == DECISION_RECORDED_AT
     assert outcome.decision_record.decision == decision
     assert decision_repo.added == [outcome.decision_record]
@@ -365,9 +440,7 @@ def test_happy_path_deterministic_order_and_identity_preservation() -> None:
     )
 
     # Durable application record: exact same transition result embedded.
-    assert (
-        outcome.application_record.application_record_id == application_record_id
-    )
+    assert outcome.application_record.application_record_id == app_id
     assert outcome.application_record.recorded_at == APPLICATION_RECORDED_AT
     assert outcome.application_record.result == transition
     assert application_repo.added == [outcome.application_record]
@@ -377,22 +450,25 @@ def test_deterministic_outcome_values_for_identical_inputs() -> None:
     """Same caller-supplied inputs and same CURRENT portfolio -> same action
     sequence and same outcome values across independent runs."""
 
-    portfolio, decision, task_id, d_id, a_id = _scenario()
+    portfolio, decision, task_id, a_hist_id, d_id, app_id = _scenario()
 
     def run_once() -> tuple[list[str], Any]:
         (
             log,
             portfolio_repo,
+            admission_repo,
             decision_repo,
             application_repo,
         ) = _fake_stack(portfolio)
         outcome = _run(
             decision,
             portfolio_repo,
+            admission_repo,
             decision_repo,
             application_repo,
+            admission_record_id=a_hist_id,
             decision_record_id=d_id,
-            application_record_id=a_id,
+            application_record_id=app_id,
         )
         return list(log.actions), outcome
 
@@ -402,13 +478,16 @@ def test_deterministic_outcome_values_for_identical_inputs() -> None:
     assert first_actions == second_actions
     assert first_actions == [
         "portfolio.load",
+        "admission.add",
         "decision.add",
         "portfolio.load",
         "portfolio.save",
         "application.add",
     ]
-    # Identity chain: the exact same decision, exact same transition
-    # provenance, exact same record shapes and full portfolio equality.
+    # Identity chain: the exact same admission / decision / transition
+    # provenance and full portfolio equality across independent runs.
+    assert first.admission_record == second.admission_record
+    assert first.admission_record.admission == second.admission_record.admission
     assert first.decision_record.decision == second.decision_record.decision
     assert (
         first.transition_result.model_dump(exclude={"portfolio"})
@@ -424,11 +503,12 @@ def test_deterministic_outcome_values_for_identical_inputs() -> None:
 
 
 def test_current_rejection_already_completed_task_zero_side_effects() -> None:
-    portfolio, decision, _task, d_id, a_id = _scenario()
+    portfolio, decision, _task, *ids = _scenario()
     rejected = _with_task_status(portfolio, EntityStatus.COMPLETED)
     (
         log,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
     ) = _fake_stack(rejected)
@@ -437,20 +517,21 @@ def test_current_rejection_already_completed_task_zero_side_effects() -> None:
         _run(
             decision,
             portfolio_repo,
+            admission_repo,
             decision_repo,
             application_repo,
-            decision_record_id=d_id,
-            application_record_id=a_id,
+            *ids,
         )
 
     assert log.actions == ["portfolio.load"]
+    assert admission_repo.added == []
     assert decision_repo.added == []
     assert application_repo.added == []
     assert portfolio_repo.saved == []
 
 
 def test_current_rejection_no_lifecycle_change_zero_side_effects() -> None:
-    portfolio, decision, _task, d_id, a_id = _scenario()
+    portfolio, decision, _task, *ids = _scenario()
     no_change = TaskExecutionLifecycleDecision(
         **{
             **decision.model_dump(),
@@ -460,6 +541,7 @@ def test_current_rejection_no_lifecycle_change_zero_side_effects() -> None:
     (
         log,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
     ) = _fake_stack(portfolio)
@@ -468,20 +550,21 @@ def test_current_rejection_no_lifecycle_change_zero_side_effects() -> None:
         _run(
             no_change,
             portfolio_repo,
+            admission_repo,
             decision_repo,
             application_repo,
-            decision_record_id=d_id,
-            application_record_id=a_id,
+            *ids,
         )
 
     assert log.actions == ["portfolio.load"]
+    assert admission_repo.added == []
     assert decision_repo.added == []
     assert application_repo.added == []
     assert portfolio_repo.saved == []
 
 
 def test_current_rejection_missing_membership_zero_side_effects() -> None:
-    portfolio, decision, _task, d_id, a_id = _scenario()
+    portfolio, decision, _task, *ids = _scenario()
     no_membership = Portfolio(
         id=portfolio.id,
         name=portfolio.name,
@@ -491,6 +574,7 @@ def test_current_rejection_missing_membership_zero_side_effects() -> None:
     (
         log,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
     ) = _fake_stack(no_membership)
@@ -499,29 +583,128 @@ def test_current_rejection_missing_membership_zero_side_effects() -> None:
         _run(
             decision,
             portfolio_repo,
+            admission_repo,
             decision_repo,
             application_repo,
-            decision_record_id=d_id,
-            application_record_id=a_id,
+            *ids,
         )
 
     assert log.actions == ["portfolio.load"]
+    assert admission_repo.added == []
     assert decision_repo.added == []
     assert application_repo.added == []
     assert portfolio_repo.saved == []
 
 
 # ---------------------------------------------------------------------------
-# 3 — decision persistence failure stops BEFORE application
+# 3 — admission-history persistence failure STOPS before the decision
+#    record and application
+# ---------------------------------------------------------------------------
+
+
+def test_admission_append_failure_stops_before_any_later_side_effect() -> None:
+    portfolio, decision, _task, *ids = _scenario()
+    injected = RuntimeError("admission store unavailable")
+    (
+        log,
+        portfolio_repo,
+        admission_repo,
+        decision_repo,
+        application_repo,
+    ) = _fake_stack(portfolio, admission_add_error=injected)
+
+    with pytest.raises(RuntimeError, match="admission store unavailable"):
+        _run(
+            decision,
+            portfolio_repo,
+            admission_repo,
+            decision_repo,
+            application_repo,
+            *ids,
+        )
+
+    # Stopped exactly at the admission append: no decision record, no
+    # second load, no save, no application or application-history record.
+    assert log.actions == ["portfolio.load", "admission.add"]
+    assert admission_repo.added == []
+    assert decision_repo.added == []
+    assert portfolio_repo.saved == []
+    assert application_repo.added == []
+
+
+def test_invalid_admission_record_identity_stops_before_application() -> None:
+    """A bad admission-record identity is rejected by the canonical V1.58
+    boundary with a typed ValueError BEFORE the decision record, the
+    application, or any application-history record."""
+    portfolio, decision, _task, _a_hist_id, _d_id, _app_id = _scenario()
+    (
+        log,
+        portfolio_repo,
+        admission_repo,
+        decision_repo,
+        application_repo,
+    ) = _fake_stack(portfolio)
+
+    with pytest.raises(DurableTaskExecutionLifecycleAdmissionError):
+        _run(
+            decision,
+            portfolio_repo,
+            admission_repo,
+            decision_repo,
+            application_repo,
+            admission_record_id="not-a-uuid",
+        )
+
+    assert log.actions == ["portfolio.load"]
+    assert admission_repo.added == []
+    assert decision_repo.added == []
+    assert portfolio_repo.saved == []
+    assert application_repo.added == []
+
+
+def test_naive_admission_recorded_at_stops_before_application() -> None:
+    """A naive ``admission_recorded_at`` (no offset) is rejected by the
+    canonical V1.58 boundary BEFORE any later side effect."""
+    portfolio, decision, _task, *ids = _scenario()
+    naive = ADMISSION_RECORDED_AT.replace(tzinfo=None)
+    (
+        log,
+        portfolio_repo,
+        admission_repo,
+        decision_repo,
+        application_repo,
+    ) = _fake_stack(portfolio)
+
+    with pytest.raises(DurableTaskExecutionLifecycleAdmissionError):
+        _run(
+            decision,
+            portfolio_repo,
+            admission_repo,
+            decision_repo,
+            application_repo,
+            admission_recorded_at=naive,
+        )
+
+    assert log.actions == ["portfolio.load"]
+    assert admission_repo.added == []
+    assert decision_repo.added == []
+    assert portfolio_repo.saved == []
+    assert application_repo.added == []
+
+
+# ---------------------------------------------------------------------------
+# 4 — decision persistence failure stops BEFORE application (the durable
+#    admission record REMAINS)
 # ---------------------------------------------------------------------------
 
 
 def test_decision_append_failure_stops_before_application() -> None:
-    portfolio, decision, _task, d_id, a_id = _scenario()
+    portfolio, decision, _task, *ids = _scenario()
     injected = RuntimeError("decision store unavailable")
     (
         log,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
     ) = _fake_stack(portfolio, decision_add_error=injected)
@@ -530,15 +713,19 @@ def test_decision_append_failure_stops_before_application() -> None:
         _run(
             decision,
             portfolio_repo,
+            admission_repo,
             decision_repo,
             application_repo,
-            decision_record_id=d_id,
-            application_record_id=a_id,
+            *ids,
         )
 
-    # Stopped exactly at the decision append: no second load, no save,
-    # no application or application-history record.
-    assert log.actions == ["portfolio.load", "decision.add"]
+    # Stopped exactly at the decision append: NO second load, no save,
+    # no application-history record; the EXACT durable admission record
+    # appended before the failure REMAINS.
+    assert log.actions == ["portfolio.load", "admission.add", "decision.add"]
+    assert len(admission_repo.added) == 1
+    assert admission_repo.added[0].admission_record_id == ids[0]  # type: ignore[index]
+    assert decision_repo.added == []
     assert portfolio_repo.saved == []
     assert application_repo.added == []
 
@@ -546,10 +733,11 @@ def test_decision_append_failure_stops_before_application() -> None:
 def test_invalid_decision_record_identity_stops_before_application() -> None:
     """A bad decision-record identity is rejected with a typed ValueError
     BEFORE any real application or application-history record."""
-    portfolio, decision, _task, _d_id, a_id = _scenario()
+    portfolio, decision, _task, _a_hist_id, _d_id, _app_id = _scenario()
     (
         log,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
     ) = _fake_stack(portfolio)
@@ -558,25 +746,27 @@ def test_invalid_decision_record_identity_stops_before_application() -> None:
         _run(
             decision,
             portfolio_repo,
+            admission_repo,
             decision_repo,
             application_repo,
             decision_record_id="not-a-uuid",
-            application_record_id=a_id,
         )
 
-    assert log.actions == ["portfolio.load"]
+    assert log.actions == ["portfolio.load", "admission.add"]
+    assert len(admission_repo.added) == 1
     assert decision_repo.added == []
     assert portfolio_repo.saved == []
     assert application_repo.added == []
 
 
 # ---------------------------------------------------------------------------
-# 4 — application failure creates NO application success-history record
+# 5 — application failure (admission + decision appends already durable)
+#    creates NO application success-history record
 # ---------------------------------------------------------------------------
 
 
 def test_application_replay_rejection_creates_no_application_record() -> None:
-    portfolio, decision, _task, d_id, a_id = _scenario()
+    portfolio, decision, _task, *ids = _scenario()
     # TOCTOU double: the CURRENT state re-derived at the V1.52 boundary
     # (fresh load) no longer admits the transition (task already
     # COMPLETED), so the V1.52 application fails before any save.
@@ -584,6 +774,7 @@ def test_application_replay_rejection_creates_no_application_record() -> None:
     (
         log,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
     ) = _fake_stack(portfolio, second_load=drifted)
@@ -592,20 +783,23 @@ def test_application_replay_rejection_creates_no_application_record() -> None:
         _run(
             decision,
             portfolio_repo,
+            admission_repo,
             decision_repo,
             application_repo,
-            decision_record_id=d_id,
-            application_record_id=a_id,
+            *ids,
         )
 
-    # The durable decision WAS appended (earlier canonical step), the
-    # application was rejected at its own authoritative boundary with
-    # ZERO saves, and NO application-history record exists.
+    # The durable admission AND decision records WERE appended (earlier
+    # canonical steps) and REMAIN; the application was rejected at its
+    # own authoritative boundary with ZERO saves, and NO
+    # application-history record exists.
     assert log.actions == [
         "portfolio.load",
+        "admission.add",
         "decision.add",
         "portfolio.load",
     ]
+    assert len(admission_repo.added) == 1
     assert len(decision_repo.added) == 1
     assert decision_repo.added[0].decision == decision
     assert portfolio_repo.saved == []
@@ -613,11 +807,12 @@ def test_application_replay_rejection_creates_no_application_record() -> None:
 
 
 def test_application_save_failure_creates_no_application_record() -> None:
-    portfolio, decision, _task, d_id, a_id = _scenario()
+    portfolio, decision, _task, *ids = _scenario()
     injected = RuntimeError("portfolio store unavailable")
     (
         log,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
     ) = _fake_stack(portfolio, save_error=injected)
@@ -626,36 +821,41 @@ def test_application_save_failure_creates_no_application_record() -> None:
         _run(
             decision,
             portfolio_repo,
+            admission_repo,
             decision_repo,
             application_repo,
-            decision_record_id=d_id,
-            application_record_id=a_id,
+            *ids,
         )
 
-    # The real transition was attempted and its save failed; the
-    # canonical sequence then STOPS — no application-history record.
+    # Both durable history appends already happened BEFORE the failed
+    # real application; the canonical sequence then STOPS — no
+    # application-history record, both histories REMAIN durable.
     assert log.actions == [
         "portfolio.load",
+        "admission.add",
         "decision.add",
         "portfolio.load",
         "portfolio.save",
     ]
+    assert len(admission_repo.added) == 1
+    assert len(decision_repo.added) == 1
     assert portfolio_repo.saved == []
     assert application_repo.added == []
 
 
 # ---------------------------------------------------------------------------
-# 5 — application-history persistence failure AFTER a real application is
-#    surfaced explicitly
+# 6 — application-history persistence failure AFTER a real application is
+#    surfaced explicitly; admission + decision records REMAIN durable
 # ---------------------------------------------------------------------------
 
 
 def test_application_history_failure_is_explicit_after_real_application() -> None:
-    portfolio, decision, task_id, d_id, a_id = _scenario()
+    portfolio, decision, task_id, *ids = _scenario()
     injected = RuntimeError("application history store unavailable")
     (
         log,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
     ) = _fake_stack(portfolio, application_add_error=injected)
@@ -667,15 +867,16 @@ def test_application_history_failure_is_explicit_after_real_application() -> Non
         _run(
             decision,
             portfolio_repo,
+            admission_repo,
             decision_repo,
             application_repo,
-            decision_record_id=d_id,
-            application_record_id=a_id,
+            *ids,
         )
 
     # The real application DID happen and WAS durably saved.
     assert log.actions == [
         "portfolio.load",
+        "admission.add",
         "decision.add",
         "portfolio.load",
         "portfolio.save",
@@ -686,6 +887,12 @@ def test_application_history_failure_is_explicit_after_real_application() -> Non
         portfolio_repo.saved[0].get_entity(task_id).status  # type: ignore[union-attr]
         is EntityStatus.COMPLETED
     )
+
+    # The earlier durable admission + decision records REMAIN (no
+    # compensation, no removal, no retry).
+    assert len(admission_repo.added) == 1
+    assert len(decision_repo.added) == 1
+    assert decision_repo.added[0].decision == decision
 
     # Explicitly surfaced: exact real transition result attached,
     # original cause chained, and NO application-history success record
@@ -700,12 +907,12 @@ def test_application_history_failure_is_explicit_after_real_application() -> Non
 
 
 # ---------------------------------------------------------------------------
-# 6 — mismatched / hostile identities rejected
+# 7 — mismatched / hostile identities rejected by the canonical boundaries
 # ---------------------------------------------------------------------------
 
 
 def test_missing_portfolio_rejected_before_any_side_effect() -> None:
-    portfolio, decision, _task, d_id, a_id = _scenario()
+    portfolio, decision, _task, *ids = _scenario()
     other_portfolio_id = _uuid()
     mismatched = TaskExecutionLifecycleDecision(
         **{**decision.model_dump(), "portfolio_id": other_portfolio_id}
@@ -713,6 +920,7 @@ def test_missing_portfolio_rejected_before_any_side_effect() -> None:
     (
         log,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
     ) = _fake_stack(portfolio)
@@ -721,29 +929,31 @@ def test_missing_portfolio_rejected_before_any_side_effect() -> None:
         _run(
             mismatched,
             portfolio_repo,
+            admission_repo,
             decision_repo,
             application_repo,
-            decision_record_id=d_id,
-            application_record_id=a_id,
+            *ids,
         )
 
     # The decision references a portfolio the store cannot resolve:
-    # the coordinator must reject it before any durable decision
-    # record, application, or application-history interaction happens.
+    # the coordinator must reject it before any durable admission,
+    # decision, application, or application-history interaction happens.
     assert log.actions == ["portfolio.load"]
+    assert admission_repo.added == []
     assert decision_repo.added == []
     assert application_repo.added == []
     assert portfolio_repo.saved == []
 
 
 def test_unknown_task_identity_rejected_zero_side_effects() -> None:
-    portfolio, decision, _task, d_id, a_id = _scenario()
+    portfolio, decision, _task, *ids = _scenario()
     unknown_task = TaskExecutionLifecycleDecision(
         **{**decision.model_dump(), "authorized_task_id": _uuid()}
     )
     (
         log,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
     ) = _fake_stack(portfolio)
@@ -752,20 +962,21 @@ def test_unknown_task_identity_rejected_zero_side_effects() -> None:
         _run(
             unknown_task,
             portfolio_repo,
+            admission_repo,
             decision_repo,
             application_repo,
-            decision_record_id=d_id,
-            application_record_id=a_id,
+            *ids,
         )
 
     assert log.actions == ["portfolio.load"]
+    assert admission_repo.added == []
     assert decision_repo.added == []
     assert application_repo.added == []
     assert portfolio_repo.saved == []
 
 
 def test_project_task_identity_swap_rejected_zero_side_effects() -> None:
-    portfolio, decision, _task, d_id, a_id = _scenario()
+    portfolio, decision, _task, *ids = _scenario()
     swapped = TaskExecutionLifecycleDecision(
         **{
             **decision.model_dump(),
@@ -776,6 +987,7 @@ def test_project_task_identity_swap_rejected_zero_side_effects() -> None:
     (
         log,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
     ) = _fake_stack(portfolio)
@@ -784,23 +996,25 @@ def test_project_task_identity_swap_rejected_zero_side_effects() -> None:
         _run(
             swapped,
             portfolio_repo,
+            admission_repo,
             decision_repo,
             application_repo,
-            decision_record_id=d_id,
-            application_record_id=a_id,
+            *ids,
         )
 
     assert log.actions == ["portfolio.load"]
+    assert admission_repo.added == []
     assert decision_repo.added == []
     assert application_repo.added == []
     assert portfolio_repo.saved == []
 
 
 def test_non_genuine_decision_rejected_before_any_repository_interaction() -> None:
-    portfolio, decision, _task, d_id, a_id = _scenario()
+    portfolio, decision, _task, a_hist_id, d_id, app_id = _scenario()
     (
         log,
         portfolio_repo,
+        admission_repo,
         decision_repo,
         application_repo,
     ) = _fake_stack(portfolio)
@@ -808,18 +1022,22 @@ def test_non_genuine_decision_rejected_before_any_repository_interaction() -> No
 
     with pytest.raises(TaskExecutionLifecycleCoordinatorError):
         coordinate_task_execution_lifecycle(
+            a_hist_id,
+            ADMISSION_RECORDED_AT,
             d_id,
             DECISION_RECORDED_AT,
             hostile,
             CHANGED_AT,
-            a_id,
+            app_id,
             APPLICATION_RECORDED_AT,
+            admission_repository=admission_repo,
             decision_repository=decision_repo,
             application_repository=application_repo,
             portfolio_repository=portfolio_repo,
         )
 
     assert log.actions == []
+    assert admission_repo.added == []
     assert decision_repo.added == []
     assert application_repo.added == []
     assert portfolio_repo.saved == []
@@ -844,7 +1062,7 @@ def test_module_never_generates_identities_or_reads_the_wall_clock() -> None:
         func = node.func
         if isinstance(func, ast.Attribute):
             value_name = func.value.id if isinstance(func.value, ast.Name) else None
-            assert not (value_name == "datetime" and func.attr == "now"), (
+            assert not (value_name == "datetime" and func.attr in {"now", "utcnow"}), (
                 "module reads the wall clock"
             )
             assert func.attr not in {"uuid4", "uuid5", "uuid6", "uuid7"}, (
@@ -854,6 +1072,13 @@ def test_module_never_generates_identities_or_reads_the_wall_clock() -> None:
             assert func.id not in {"uuid4", "uuid5", "uuid6", "uuid7"}, (
                 f"module generates an identity: {func.id}"
             )
+    # No time-of-day / wall-clock API usage of the ``time`` module either.
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            modules = [alias.name for alias in node.names]
+            if isinstance(node, ast.ImportFrom):
+                modules.append(node.module or "")
+            assert "time" not in modules, "module imports the ``time`` API"
 
 
 def test_module_does_not_reference_forbidden_surfaces() -> None:
@@ -866,5 +1091,10 @@ def test_module_does_not_reference_forbidden_surfaces() -> None:
         "urllib",
         "import sqlite3",
         "threading",
+        "SqliteTaskExecutionLifecycleAdmissionRepository",
+        "SqliteTaskExecutionLifecycleDecisionRepository",
+        "SqliteTaskExecutionLifecycleApplicationRepository",
+        "SqlitePortfolioRepository",
+        "ollama",
     ):
         assert forbidden not in text, f"forbidden surface referenced: {forbidden}"
