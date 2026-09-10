@@ -37,6 +37,10 @@ from trajectory_os.adapters.persistence.sqlite_task_execution_lifecycle_decision
     DuplicateTaskExecutionLifecycleDecisionRecordError,
     SqliteTaskExecutionLifecycleDecisionRepository,
 )
+from trajectory_os.adapters.persistence.sqlite_task_execution_lifecycle_outcomes import (  # noqa: E501
+    DuplicateTaskExecutionLifecycleOutcomeRecordError,
+    SqliteTaskExecutionLifecycleOutcomeRepository,
+)
 from trajectory_os.adapters.persistence.sqlite_task_execution_results import (
     DuplicateTaskExecutionResultRecordError,
     SqliteTaskExecutionResultRepository,
@@ -52,6 +56,7 @@ __all__ = [
     "DuplicateTaskExecutionLifecycleAdmissionRecordError",
     "DuplicateTaskExecutionLifecycleApplicationRecordError",
     "DuplicateTaskExecutionLifecycleDecisionRecordError",
+    "DuplicateTaskExecutionLifecycleOutcomeRecordError",
     "DuplicateTaskExecutionResultRecordError",
     "SqliteCalibratedEstimateRevisionRepository",
     "SqliteExecutionEffortCalibrationFactorDecisionRepository",
@@ -62,6 +67,7 @@ __all__ = [
     "SqliteTaskExecutionLifecycleAdmissionRepository",
     "SqliteTaskExecutionLifecycleApplicationRepository",
     "SqliteTaskExecutionLifecycleDecisionRepository",
+    "SqliteTaskExecutionLifecycleOutcomeRepository",
     "SqliteTaskExecutionResultRepository",
     "SqlitePortfolioRepository",
 ]

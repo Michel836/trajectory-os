@@ -414,6 +414,7 @@ def test_no_new_persistence_table_or_materialized_state(db_path: Path) -> None:
             "task_execution_lifecycle_application_records",  # V1.54 shared schema
             "task_execution_lifecycle_decision_records",  # V1.56 shared schema
             "task_execution_lifecycle_admission_records",  # V1.59 shared schema
+            "task_execution_lifecycle_outcome_records",  # V1.62 shared schema
         }
 
 
