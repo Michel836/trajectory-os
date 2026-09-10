@@ -49,10 +49,14 @@ from trajectory_os.adapters.persistence import (
 )
 from trajectory_os.adapters.persistence import (
     SqliteTaskExecutionLifecycleOutcomeRepository,
+)
+from trajectory_os.adapters.persistence import (
     SqliteTaskExecutionLifecycleOutcomeRepository as _ExportedRepository,
 )
 from trajectory_os.adapters.persistence.models import (
     PortfolioRow,
+)
+from trajectory_os.adapters.persistence.models import (
     TaskExecutionLifecycleOutcomeRecordRow as Row,
 )
 from trajectory_os.application import (
@@ -363,7 +367,10 @@ def test_round_trip_preserves_exact_record_and_original_offsets(
     )
 
     # Transition result: entity id and changed_at with exact offset.
-    assert stored.outcome.transition_result.entity_id == original.outcome.transition_result.entity_id
+    assert (
+        stored.outcome.transition_result.entity_id
+        == original.outcome.transition_result.entity_id
+    )
     assert (
         stored.outcome.transition_result.changed_at.isoformat()
         == original.outcome.transition_result.changed_at.isoformat()
@@ -395,7 +402,12 @@ def test_transition_result_portfolio_snapshot_preserved_exactly(
 
     assert stored.portfolio == original.portfolio
     assert stored.portfolio.id == original.portfolio.id
-    assert [entity for entity in stored.portfolio.entities if entity.id == _ids.task_id][0].status is EntityStatus.COMPLETED
+    stored_task = [
+        entity
+        for entity in stored.portfolio.entities
+        if entity.id == _ids.task_id
+    ][0]
+    assert stored_task.status is EntityStatus.COMPLETED
     assert stored.portfolio.entities == original.portfolio.entities
     assert stored.portfolio.relations == original.portfolio.relations
 
@@ -420,7 +432,9 @@ def test_duplicated_scalar_columns_persisted_exactly(tmp_path: Path) -> None:
     assert row.admission_record_id == str(original.admission_record.admission_record_id)
     assert row.decision_record_id == str(original.decision_record.decision_record_id)
     assert row.application_record_id == str(original.application_record.application_record_id)
-    assert row.lifecycle_decision_id == str(original.admission_record.admission.lifecycle_decision_id)
+    assert row.lifecycle_decision_id == str(
+        original.admission_record.admission.lifecycle_decision_id
+    )
     assert row.execution_record_id == str(original.admission_record.admission.execution_record_id)
     assert row.authorized_task_id == str(original.admission_record.admission.authorized_task_id)
     assert row.transition_entity_id == str(original.transition_result.entity_id)
