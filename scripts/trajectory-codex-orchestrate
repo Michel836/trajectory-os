@@ -117,6 +117,12 @@ Commands:
               Run canonical merge-check with explicit GitHub evidence,
               then STOP. NEVER merges.
 
+  status      [STATUS-READER ARGS...]
+              Read-only: delegates EXACTLY to trajectory-pi-status.
+              Forwards all arguments unchanged, propagates exit code
+              exactly. Never authorization. No Git mutation. Branch-
+              independent observation only.
+
 Exit codes: 0 help, 2 usage, 3 precondition refused, 5 stopped at the
 human GO gate (phase evidence verified), 6 authorization refused,
 7 blocked by evidence, otherwise the exact delegate/gate status.
@@ -142,6 +148,7 @@ repo_root="$(dirname -- "$script_dir")"
 REPO="$repo_root"
 PI_DELEGATE="$script_dir/trajectory-codex-pi"
 GATE="$script_dir/trajectory_gate.py"
+STATUS_DELEGATE="$script_dir/trajectory-pi-status"
 
 run_gate() {
     # Canonical safety logic lives in trajectory_gate.py; delegate to it.
@@ -706,6 +713,41 @@ cmd_merge_check() {
 }
 
 # ------------------------------------------------------------
+# status (read-only passthrough to trajectory-pi-status)
+# ------------------------------------------------------------
+
+cmd_status() {
+    local -a args=("$@")
+
+    # The status reader is located in the same scripts/ directory as
+    # this orchestrator (no search, no env var, no network).
+    [[ -f "$STATUS_DELEGATE" ]] || die "status delegate not found: $STATUS_DELEGATE"
+    [[ -x "$STATUS_DELEGATE" ]] || die "status delegate not executable: $STATUS_DELEGATE"
+
+    # Pure delegation: ALL arguments are forwarded byte-for-argument to
+    # trajectory-pi-status.  This orchestrator NEVER parses Pi logs,
+    # artifacts, telemetry, model, speed, tokens, ETA, phase, files,
+    # blockers, or gates.  The status reader is the sole truth source.
+    #
+    # This is a read-only observation subcommand.  It is NEVER
+    # authorization and does not change the five human gates.
+
+    echo "=== $PREFIX: STATUS (read-only delegate to trajectory-pi-status) ==="
+    if (( ${#args[@]} > 0 )); then
+        echo "forwarded argv:"
+        local f
+        for f in "${args[@]}"; do
+            echo "  $f"
+        done
+    fi
+    echo "---- status delegate ----"
+    "$STATUS_DELEGATE" "${args[@]}"
+    local rc=$?
+    echo "---- status delegate exited: $rc ----" >&2
+    return "$rc"
+}
+
+# ------------------------------------------------------------
 # Dispatch
 # ------------------------------------------------------------
 
@@ -732,6 +774,10 @@ case "$command" in
         ;;
     merge-check)
         cmd_merge_check "$@"
+        exit $?
+        ;;
+    status)
+        cmd_status "$@"
         exit $?
         ;;
     -h|--help)

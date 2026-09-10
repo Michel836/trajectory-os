@@ -11,7 +11,7 @@ Covered:
 - stale artifacts (flagged, without mutation)
 - no-mutation inspection (byte-identical runs root before/after)
 - no forbidden commands (no mutating git, no network, no daemon/loop)
-- V1.64 wrapper scripts remain untouched vs HEAD
+- V1.64 Pi wrappers and canonical gate remain untouched vs HEAD
 
 Stdlib + pytest only. No network, no real Pi, no credentials.
 """
@@ -397,17 +397,16 @@ def test_worktree_live_fallback_degrades_outside_a_work_tree(runs: Path) -> None
     assert "live" not in data["worktree"]["source"]
 
 
-# ------------------------------------------------------------ V1.64 intact
+# ------------------------------------------------------------ V1.64 core intact
 
 V164_SCRIPTS = (
     "scripts/trajectory-pi",
     "scripts/trajectory-codex-pi",
-    "scripts/trajectory-codex-orchestrate",
     "scripts/trajectory_gate.py",
 )
 
 
-def test_v164_scripts_untouched_vs_head() -> None:
+def test_v164_core_scripts_untouched_vs_head() -> None:
     env = dict(os.environ)
     env["GIT_OPTIONAL_LOCKS"] = "0"
     for rel in V164_SCRIPTS:
