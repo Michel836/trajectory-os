@@ -1,0 +1,668 @@
+#!/usr/bin/env python3
+"""trajectory-pi-status — read-only status reader for trajectory-pi runs.
+
+ISSUE #172 (V1.65 Live Codex/Pi observability).
+
+Reads artifacts written by scripts/trajectory-pi (V1.64) under
+<cwd>/.trajectory-pi/runs/<timestamp>/ and renders a deterministic,
+read-only status for a live or finished Codex/Pi run:
+
+    model, elapsed, ETA, speed, counters, phase, Pi state,
+    changed files (worktree), last event, blockers, readiness,
+    next gate, warnings.
+
+Guarantees:
+    * Read-only: never creates, modifies, or deletes run artifacts.
+    * The only external observation is one read-only Git call
+      (`git status --porcelain`) executed with GIT_OPTIONAL_LOCKS=0
+      (no index/lock writes). Never add, commit, push, fetch, or
+      any other mutating or network Git operation.
+    * No network: no calls to external services of any kind.
+    * No invented metrics: absent telemetry renders as
+      unknown/unavailable and is flagged in warnings.
+    * Stdlib only (Python 3.11+); one-shot invocation; no daemon,
+      no background processes.
+    * Deterministic: with --now the output is a pure function of
+      the artifacts, stable for testing and for Codex.
+
+Usage:
+    scripts/trajectory-pi-status [--run NAME|PATH] [--runs-root DIR]
+                                 [--json] [--now 2026-01-01T00:00:00Z]
+                                 [--stale-after 120] [--max-files 10]
+                                 [--version]
+
+Exit codes:
+    0 — status rendered (including stale, blocked, or unknown runs)
+    2 — usage error, or no selectable run found
+    1 — internal error (unexpected failure)
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+VERSION = "1.65.0"
+MISSING = "unknown"
+UNAVAILABLE = "unavailable"
+DEFAULT_STALE_AFTER = 120
+DEFAULT_MAX_FILES = 10
+
+RUN_DIR_RE = re.compile(r"^\d{8}-\d{6}$")
+HB_RE = re.compile(
+    r"^\[(\d{2}):(\d{2}):(\d{2})\]\s+elapsed=(\d{2}):(\d{2}):(\d{2})\s*\|\s*"
+    r"([^|]*?)\s*\|"
+)
+ETA_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*(?:-|~|en)\s*(\d+(?:\.\d+)?)\s*min$")
+FILES_RE = re.compile(r"files=(\d+)(?:\s*\(([-+]\d+)\))?")
+OLLAMA_RE = re.compile(r"ollama=([A-Za-z]+)")
+GEN3S_RE = re.compile(r"gen_3s=([0-9]+(?:\.[0-9]+)?|unavailable)\s*tok/s")
+
+
+def hhmmss(total: int) -> str:
+    h, rem = divmod(max(0, int(total)), 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def clamp_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def read_lines(path: Path) -> list[str] | None:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+
+
+def parse_meta(lines: list[str] | None) -> tuple[dict[str, str], int]:
+    """Parse `key=value` meta. Returns (mapping, malformed_line_count)."""
+    meta: dict[str, str] = {}
+    malformed = 0
+    for raw in lines or []:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        if not sep or not key.strip():
+            malformed += 1
+            continue
+        meta[key.strip()] = value.strip()
+    return meta, malformed
+
+
+def parse_heartbeat(line: str) -> dict[str, Any] | None:
+    """Parse one status.log heartbeat line. None if malformed."""
+    m = HB_RE.match(line.strip())
+    if not m:
+        return None
+    hh, mm, ss, eh, em, es, phase = m.groups()
+    rec: dict[str, Any] = {
+        "ts": f"{hh}:{mm}:{ss}",
+        "elapsed_seconds": int(eh) * 3600 + int(em) * 60 + int(es),
+        "elapsed": f"{eh}:{em}:{es}",
+        "phase": phase.strip() or MISSING,
+    }
+    fm = FILES_RE.search(line)
+    if fm:
+        rec["files"] = int(fm.group(1))
+        rec["files_delta"] = fm.group(2)
+    fm = OLLAMA_RE.search(line)
+    if fm:
+        rec["ollama"] = fm.group(1)
+    fm = GEN3S_RE.search(line)
+    if fm:
+        rec["gen_3s"] = fm.group(1)
+    return rec
+
+
+def parse_status_log(
+    lines: list[str] | None,
+) -> tuple[list[dict[str, Any]], int]:
+    beats: list[dict[str, Any]] = []
+    malformed = 0
+    for raw in lines or []:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        rec = parse_heartbeat(line)
+        if rec is None:
+            malformed += 1
+        else:
+            beats.append(rec)
+    return beats, malformed
+
+
+def parse_eta_window(value: str) -> tuple[float, float] | None:
+    m = ETA_RE.match(value.strip())
+    if not m:
+        return None
+    return float(m.group(1)), float(m.group(2))
+
+
+def iso_window(window: tuple[float, float]) -> str:
+    def fmt(x: float) -> str:
+        return str(int(x)) if float(x).is_integer() else str(x)
+
+    return f"{fmt(window[0])}~{fmt(window[1])} min"
+
+
+def parse_iso(value: str) -> datetime | None:
+    try:
+        dt = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt
+
+
+def file_age_seconds(path: Path, now: datetime) -> int | None:
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    try:
+        return max(0, int(now.timestamp() - mtime))
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def select_run(runs_root: Path, explicit: str | None) -> Path | None:
+    """Resolve the run directory (latest by name, or explicit one)."""
+    if explicit:
+        p = Path(explicit)
+        if p.is_dir():
+            return p
+        resolved = runs_root / p.name
+        if resolved.is_dir():
+            return resolved
+        return None
+    if not runs_root.is_dir():
+        return None
+    candidates = [
+        p for p in runs_root.iterdir()
+        if RUN_DIR_RE.match(p.name) and p.is_dir()
+    ]
+    return max(candidates, key=lambda p: p.name) if candidates else None
+
+
+def parse_porcelain(lines: list[str] | None) -> list[tuple[str, str]]:
+    """Parse `git status --porcelain` records from an artifact file."""
+    out: list[tuple[str, str]] = []
+    for raw in lines or []:
+        line = raw.rstrip("\n")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if len(line) < 4:
+            continue
+        code = line[:2]
+        path = line[3:].strip().strip("'")
+        if not path:
+            continue
+        out.append((code, path))
+    return out
+
+
+def porcelain_summary(entries: list[tuple[str, str]]) -> str:
+    """Render a compact, measured summary of porcelain entries."""
+    modified = sum(1 for code, _ in entries if "M" in code)
+    untracked = sum(1 for code, _ in entries if code == "??")
+    parts = [f"{len(entries)} changed"]
+    if modified:
+        parts.append(f"{modified} modified")
+    if untracked:
+        parts.append(f"{untracked} untracked")
+    return " (".join([parts[0], ", ".join(parts[1:]) + ")"]) if len(parts) > 1 else parts[0]
+
+
+def git_status_ro(cwd: Path) -> list[str] | None:
+    """Read the current worktree without locks, writes, or network access."""
+    env = dict(os.environ)
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(cwd),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.decode("utf-8", errors="replace").splitlines()
+
+
+def compute_eta(
+    ended: bool,
+    elapsed_seconds: int | None,
+    window: tuple[float, float] | None,
+) -> str:
+    """Deterministic, non-invented ETA from meta window + measured elapsed."""
+    if ended:
+        return "n/a (run ended)"
+    # trajectory-pi records an expected duration window, not measurable
+    # completion progress. It must never be presented as an ETA.
+    _ = elapsed_seconds, window
+    return "unknown (no measured progress baseline)"
+
+
+def compute_speed(beats: list[dict[str, Any]]) -> str:
+    if not beats:
+        return UNAVAILABLE
+    last_ts = beats[-1]["ts"]
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", str(beats[-1].get("gen_3s", ""))):
+        return f"{beats[-1]['gen_3s']} tok/s (gen_3s @ {last_ts})"
+    prior = [b for b in reversed(beats) if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", str(b.get("gen_3s", "")))]
+    if prior:
+        return (f"{prior[0]['gen_3s']} tok/s (gen_3s @ {prior[0]['ts']}) — "
+                f"most recent sample unavailable")
+    return UNAVAILABLE
+
+
+def compute_counters(beats: list[dict[str, Any]]) -> str:
+    if not beats:
+        return UNAVAILABLE
+    last = beats[-1]
+    parts: list[str] = []
+    if "files" in last:
+        delta = f" ({last['files_delta']})" if last.get("files_delta") else ""
+        parts.append(f"files={last['files']}{delta}")
+    if "ollama" in last:
+        parts.append(f"ollama={last['ollama']}")
+    return " | ".join(parts) if parts else UNAVAILABLE
+
+
+def pi_state_for(
+    ended: bool,
+    beats: list[dict[str, Any]],
+    started: datetime | None,
+    last_event_age: int | None,
+    stale_after: float,
+    pi_exit: Any,
+    classification: str | None,
+) -> tuple[str, str]:
+    """Return (state, detail). Never invents a live state."""
+    if ended:
+        detail = f"pi_exit_code={pi_exit if pi_exit is not None else 'unknown'}"
+        _ = classification
+        return "ended", detail
+    if not beats:
+        if started is not None:
+            return "running", "no heartbeat telemetry yet"
+        return "unknown", "no heartbeat and no ended_at"
+    if last_event_age is None or last_event_age <= stale_after:
+        return "running", (f"live; last heartbeat "
+                           f"{beats[-1]['elapsed']} elapsed"
+                           + (f", {last_event_age}s ago" if last_event_age is not None else ""))
+    return "stale", (f"last heartbeat {beats[-1]['elapsed']} elapsed"
+                     f", {last_event_age}s ago (threshold {int(stale_after)}s)")
+
+
+def collect(
+    run_dir: Path,
+    now: datetime,
+    stale_after: float,
+    max_files: int,
+    worktree_live: bool,
+) -> dict[str, Any]:
+    """Build the full state dict. Read-only: artifact bytes are only read."""
+    warnings: list[str] = []
+
+    meta_raw = read_lines(run_dir / "meta.txt")
+    meta, meta_bad = parse_meta(meta_raw)
+    if meta_raw is None:
+        warnings.append("missing meta.txt (metadata unavailable)")
+    if meta_bad:
+        warnings.append(f"meta.txt has {meta_bad} malformed line(s)")
+
+    status_raw = read_lines(run_dir / "status.log")
+    beats, status_bad = parse_status_log(status_raw)
+    if status_raw is None:
+        warnings.append("missing status.log (no heartbeat telemetry)")
+    if status_bad:
+        warnings.append(f"status.log has {status_bad} malformed line(s)")
+
+    pi_log_raw = read_lines(run_dir / "pi.log")
+
+    started = parse_iso(meta.get("started_at", "") or "")
+    ended = parse_iso(meta.get("ended_at", "") or "") is not None
+    ended_at = meta.get("ended_at")
+    pi_exit = clamp_int(meta.get("pi_exit_code"))
+    classification = meta.get("agent_classification")
+    readiness = meta.get("repository_readiness")
+    reason = meta.get("readiness_reason")
+    decision = meta.get("decision_required")
+
+    # ---- last event -------------------------------------------------
+    last_event: str | None
+    if ended and ended_at:
+        bits = [f"ended_at={ended_at}",
+                f"pi_exit_code={pi_exit if pi_exit is not None else 'unknown'}"]
+        if readiness:
+            bits.append(f"repository_readiness={readiness}")
+        if not readiness and pi_log_raw:
+            bits.append(f"last pi.log: {pi_log_raw[-1][:120]}")
+        last_event = " ".join(bits)
+    else:
+        raw_lines = [l.strip() for l in (status_raw or []) if l.strip()]
+        raw_lines += [l.strip() for l in (pi_log_raw or []) if l.strip()]
+        last_event = raw_lines[-1][:200] if raw_lines else None
+
+    # ---- elapsed / speed / counters / phase --------------------------
+    elapsed_seconds = clamp_int(meta.get("elapsed_seconds"))
+    ended_elapsed = elapsed_seconds if ended else None
+    if ended_elapsed is None and beats:
+        ended_elapsed = beats[-1]["elapsed_seconds"]
+        if not ended:
+            ended_elapsed = None
+    if not ended and beats and started is not None:
+        wall = int((now - started).total_seconds())
+        if wall >= 0:
+            measured = beats[-1]["elapsed_seconds"]
+            if elapsed_seconds is None and wall > measured:
+                # still live: use wall clock, bounded by measurement
+                pass
+    if ended:
+        elapsed_text = hhmmss(ended_elapsed) if ended_elapsed is not None else MISSING
+    elif beats:
+        elapsed_text = beats[-1]["elapsed"]
+    elif started is not None:
+        wall = int((now - started).total_seconds())
+        elapsed_text = hhmmss(wall) if wall >= 0 else MISSING
+    else:
+        elapsed_text = MISSING
+
+    speed = compute_speed(beats)
+    counters = compute_counters(beats)
+    phase = beats[-1]["phase"] if beats else MISSING
+
+    # ---- staleness ----------------------------------------------------
+    if beats:
+        if started is not None:
+            last_age = (int((now - started).total_seconds())
+                        - beats[-1]["elapsed_seconds"])
+        else:
+            last_age = None
+        if last_age is None or last_age < 0:
+            last_age = file_age_seconds(run_dir / "status.log", now)
+    else:
+        last_age = None
+
+    pi_state, pi_detail = pi_state_for(
+        ended, beats, started, last_age, stale_after, pi_exit, classification,
+    )
+    if pi_state == "stale":
+        warnings.append("STALE status.log (run state unconfirmed)")
+
+    # ---- worktree / changed files ------------------------------------
+    worktree: dict[str, Any] = {
+        "state": MISSING, "source": MISSING, "entries": [], "truncated": 0,
+    }
+    changed: list[tuple[str, str]] = []
+    source_name: str | None = None
+
+    files_lines = read_lines(run_dir / "worktree-files.txt")
+    if files_lines is not None and parse_porcelain(files_lines):
+        changed = parse_porcelain(files_lines)
+        source_name = "worktree-files.txt"
+    else:
+        status_txt = read_lines(run_dir / "worktree-status.txt")
+        if status_txt is not None and parse_porcelain(status_txt):
+            changed = parse_porcelain(status_txt)
+            source_name = "worktree-status.txt"
+        else:
+            live = git_status_ro(Path.cwd()) if worktree_live else None
+            if live is not None:
+                changed = parse_porcelain(live)
+                source_name = "git status (read-only, live)"
+            else:
+                source_name = None
+    if changed and source_name:
+        truncated = changed[max_files:]
+        kept = changed[:max_files]
+        worktree["entries"] = [{"code": c, "path": p} for c, p in kept]
+        worktree["state"] = porcelain_summary(changed)
+        worktree["source"] = source_name
+        worktree["truncated"] = len(truncated)
+        worktree["age_seconds"] = (
+            file_age_seconds(run_dir / source_name, now)
+            if source_name in ("worktree-files.txt", "worktree-status.txt")
+            else None
+        )
+    if not changed:
+        worktree["state"] = (
+            f"{UNAVAILABLE} (no worktree artifact)"
+            if not worktree_live else UNAVAILABLE
+        )
+
+    # ---- blockers / readiness ----------------------------------------
+    blockers: list[str] = []
+    if pi_state == "stale":
+        blockers.append("stale heartbeat telemetry (run state unconfirmed)")
+    if ended:
+        if readiness in {"NEEDS_REVIEW", "BLOCKED"}:
+            tail = f" — {reason}" if reason else ""
+            blockers.append(f"readiness: {readiness}{tail}")
+        elif not readiness:
+            blockers.append(
+                f"repository_readiness={MISSING} (Pi exited code "
+                f"{pi_exit if pi_exit is not None else 'unknown'})")
+        review_status = meta.get("review_status")
+        if review_status and review_status != "PASS":
+            blockers.append(f"independent review: {review_status}")
+            review_lines = read_lines(run_dir / "review.txt") or []
+            in_blockers = False
+            for review_line in review_lines:
+                stripped = review_line.strip()
+                if stripped == "BLOCKERS:":
+                    in_blockers = True
+                    continue
+                if in_blockers and (not stripped or stripped.endswith(":")):
+                    if not stripped:
+                        continue
+                    break
+                if in_blockers and stripped.startswith("- ") and stripped != "- None":
+                    blockers.append(f"review blocker: {stripped[2:]}")
+        diff_check = meta.get("diff_check")
+        if diff_check and diff_check != "PASS":
+            blockers.append(f"diff check: {diff_check}")
+        snapshot_status = meta.get("snapshot_status")
+        if snapshot_status and snapshot_status != "COMPLETE":
+            blockers.append(f"snapshot: {snapshot_status}")
+    elif (pi_state == "running" and beats
+          and "beyond expected range" in beats[-1]["phase"]):
+        blockers.append("heartbeat phase: beyond expected range")
+
+    # ---- next gate ----------------------------------------------------
+    if decision:
+        next_gate = f"human decision first (decision_required={decision})"
+    elif pi_state == "running":
+        next_gate = "continuing; implement gate: python scripts/trajectory_gate.py implement"
+    elif pi_state == "ended":
+        if readiness == "READY_FOR_COMMIT":
+            next_gate = "commit-check gate: python scripts/trajectory_gate.py commit-check"
+        elif readiness == "READY_FOR_REVIEW":
+            next_gate = ("human review, then commit-check gate: "
+                         "python scripts/trajectory_gate.py commit-check")
+        elif readiness:
+            next_gate = f"blocked: repository_readiness={readiness} (see blockers)"
+        else:
+            next_gate = f"{UNAVAILABLE} (no readiness artifact)"
+    elif pi_state == "stale":
+        next_gate = f"{UNAVAILABLE} (stale state; re-observe before acting)"
+    else:
+        next_gate = MISSING
+
+    # ---- eta -------------------------------------------------------------
+    window = parse_eta_window(meta.get("eta", "") or "")
+    eta = compute_eta(ended, ended_elapsed, window)
+
+    return {
+        "schema": f"trajectory-pi-status/{VERSION}",
+        "generated_at": now.isoformat(),
+        "run": run_dir.name,
+        "run_dir": str(run_dir),
+        "run_class": meta.get("run_class", MISSING),
+        "branch": meta.get("branch", MISSING),
+        "model": meta.get("model", MISSING),
+        "started_at": meta.get("started_at", MISSING),
+        "ended_at": meta.get("ended_at", MISSING),
+        "elapsed": elapsed_text,
+        "eta": eta,
+        "speed": speed,
+        "counters": counters,
+        "phase": phase,
+        "pi_state": pi_state,
+        "pi_state_detail": pi_detail,
+        "last_event": last_event or MISSING,
+        "worktree": worktree,
+        "blockers": blockers,
+        "readiness": {
+            "repository_readiness": readiness or MISSING,
+            "reason": reason,
+            "decision_required": decision,
+        },
+        "next_gate": next_gate,
+        "warnings": warnings,
+        "artifacts": {
+            "meta.txt": meta_raw is not None,
+            "status.log": status_raw is not None,
+            "pi.log": pi_log_raw is not None,
+            "worktree-files.txt": files_lines is not None,
+            "worktree-status.txt": (
+                read_lines(run_dir / "worktree-status.txt") is not None
+            ),
+        },
+    }
+
+
+def render_text(state: dict[str, Any]) -> str:
+    wt = state["worktree"]
+    rd = state["readiness"]
+    pad = "  "
+    lines = [
+        f"RUN: {state['run']}  "
+        f"(class={state['run_class']}, branch={state['branch']})",
+    ]
+
+    def row(key: str, value: object) -> None:
+        lines.append(f"{pad}{key:<12}: {MISSING if value in (None, '') else value}")
+
+    row("pi_state", f"{state['pi_state']} ({state['pi_state_detail']})")
+    row("model", state["model"])
+    row("started_at", state["started_at"])
+    row("elapsed", state["elapsed"])
+    row("eta", state["eta"])
+    row("speed", state["speed"])
+    row("counters", state["counters"])
+    row("phase", state["phase"])
+    row("last_event", state["last_event"])
+    if wt["state"] in {MISSING, UNAVAILABLE}:
+        row("worktree", wt["state"])
+    else:
+        row("worktree", wt["state"]
+            + (f"  [{wt['source']}, {wt['age_seconds']}s old"
+               if wt.get("age_seconds") is not None else f"  [{wt['source']}"
+               ) + (" (truncated)" if wt["truncated"] else "") + "]")
+        for e in wt["entries"]:
+            lines.append(f"{pad}    {e['code']:<4}{e['path']}")
+    blockers = state["blockers"]
+    if blockers:
+        lines.append(f"{pad}{'blockers':<12}:")
+        for b in blockers:
+            lines.append(f"{pad}    - {b}")
+    else:
+        row("blockers", "none")
+    row("readiness", rd["repository_readiness"])
+    if rd["reason"]:
+        lines.append(f"{pad}{'':<12}  reason: {rd['reason']}")
+    if rd["decision_required"]:
+        lines.append(f"{pad}{'':<12}  decision: {rd['decision_required']}")
+    row("next_gate", state["next_gate"])
+    warnings = state["warnings"]
+    if warnings:
+        lines.append(f"{pad}{'warnings':<12}:")
+        for w in warnings:
+            lines.append(f"{pad}    WARNING: {w}")
+    else:
+        row("warnings", "none")
+    return "\n".join(lines) + "\n"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="trajectory-pi-status",
+        description="Read-only status reader for trajectory-pi runs (V1.65).",
+    )
+    parser.add_argument("--run", default=None,
+                        help="run name or directory (default: latest under runs root)")
+    parser.add_argument("--runs-root", default=".trajectory-pi/runs",
+                        help="runs root (default: .trajectory-pi/runs under cwd)")
+    parser.add_argument("--json", action="store_true",
+                        help="emit JSON instead of text")
+    parser.add_argument("--now", default=None,
+                        help="deterministic now (ISO-8601), for stable testing")
+    parser.add_argument("--stale-after", type=float, default=DEFAULT_STALE_AFTER,
+                        help=f"stale threshold seconds (default {DEFAULT_STALE_AFTER})")
+    parser.add_argument("--max-files", type=int, default=DEFAULT_MAX_FILES,
+                        help=f"max changed-file entries shown (default {DEFAULT_MAX_FILES})")
+    parser.add_argument("--worktree-live", action="store_true",
+                        help="optionally fall back to one lock-free git status observation")
+    parser.add_argument("--version", action="version",
+                        version=f"trajectory-pi-status {VERSION}")
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.now is not None:
+        now = parse_iso(args.now)
+        if now is None:
+            print(f"error: invalid --now value: {args.now}", file=sys.stderr)
+            return 2
+    else:
+        now = datetime.now().astimezone()
+    runs_root = Path(args.runs_root)
+    run_dir = select_run(runs_root, args.run)
+    if run_dir is None or not run_dir.is_dir():
+        detail = "run not found" if args.run else "no runs found"
+        print(f"error: {detail} (looked under {runs_root}); "
+              f"pass --run NAME|PATH or --runs-root DIR", file=sys.stderr)
+        return 2
+    try:
+        state = collect(
+            Path(run_dir).resolve(), now, args.stale_after,
+            max(0, args.max_files), args.worktree_live,
+        )
+    except Exception as exc:  # noqa: BLE001 — top-level guard: exit 1
+        print(f"error: internal failure: {exc!r}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(state, indent=2, ensure_ascii=False))
+    else:
+        print(render_text(state), end="")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
