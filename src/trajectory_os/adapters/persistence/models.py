@@ -416,6 +416,60 @@ class TaskExecutionLifecycleDecisionRecordRow(Base):
     decision_snapshot: Mapped[str] = mapped_column(String(), nullable=False)
 
 
+class TaskExecutionLifecycleAdmissionRecordRow(Base):
+    """One durable, immutable V1.51 CURRENT-state lifecycle admission record
+    (V1.58 record, persisted by V1.59).
+
+    ``admission_record_id`` is the durable identity of exactly this persisted
+    historical record. It is a primary key only for durable record identity
+    and MUST NOT be interpreted as an admission idempotency key.
+
+    ``portfolio_id`` is the owning portfolio and follows the established
+    durable-history convention with ``ON DELETE CASCADE``.
+
+    ``lifecycle_decision_id``, ``execution_record_id``, and
+    ``authorized_task_id`` are plain non-unique scalar snapshot columns for
+    queryability and corruption visibility. They deliberately carry NO
+    uniqueness and NO foreign keys into replaceable/current tables: the
+    same semantic values are legal under distinct ``admission_record_id``
+    values, and historical admission records must never be deleted or
+    corrupted by replacement of current snapshot state.
+
+    ``disposition`` is stored by its ``TaskExecutionLifecycleDisposition``
+    string value. ``current_task_status`` is stored by its ``EntityStatus``
+    string value: it is HISTORICAL admission evidence only and is never
+    interpreted as current, effective, or later-authorized task state.
+    ``decided_at`` and ``recorded_at`` store the exact ISO-8601 text with
+    each original UTC offset preserved (never normalized).
+
+    ``admission_snapshot`` stores deterministic explicit JSON of the exact
+    embedded V1.51 ``TaskExecutionLifecycleAdmission``. It is never a
+    pickle or opaque binary.
+
+    Append-only: V1.59 exposes no update, delete, replace, or upsert path.
+    """
+
+    __tablename__ = "task_execution_lifecycle_admission_records"
+
+    admission_record_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+    portfolio_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    lifecycle_decision_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    execution_record_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    authorized_task_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    disposition: Mapped[str] = mapped_column(String(), nullable=False)
+    current_task_status: Mapped[str] = mapped_column(String(), nullable=False)
+    decided_at: Mapped[str] = mapped_column(String(), nullable=False)
+    recorded_at: Mapped[str] = mapped_column(String(), nullable=False)
+    admission_snapshot: Mapped[str] = mapped_column(String(), nullable=False)
+
+
 class PortfolioRow(Base):
     """One canonical portfolio."""
 
