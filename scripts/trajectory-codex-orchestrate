@@ -1,0 +1,743 @@
+#!/usr/bin/env bash
+# ============================================================
+# trajectory-codex-orchestrate — issue #170
+# Human-gated Codex orchestration CLI (deterministic, fail-closed).
+#
+# Phase model (each phase STOPS at its human gate; the CLI never
+# crosses a gate by itself and has NO autonomous state machine):
+#
+#   implement     delegate to trajectory-codex-pi, inspect the LATEST
+#                 Pi run artifacts, validate the diff / validation
+#                 evidence, then STOP: "GO COMMIT" is a human decision.
+#                 This subcommand performs NO commit of any kind.
+#
+#   commit        requires the exact authorization input "GO COMMIT",
+#                 then adds and commits EXACTLY the explicitly
+#                 authorized scope, then invokes the canonical
+#                 trajectory_gate push-check, then STOP: "GO PUSH"
+#                 is a human decision. This subcommand performs NO
+#                 remote update of any kind.
+#
+#   push          requires the exact authorization input "GO PUSH",
+#                 then performs a plain remote push only (a forced
+#                 update is impossible: no force flag is ever
+#                 emitted), verifies the remote HEAD authoritatively
+#                 via `git ls-remote`, then invokes the canonical
+#                 trajectory_gate pr-check, then STOP: "GO PR"
+#                 is a human decision. This subcommand performs NO
+#                 pull creation from its own side.
+#
+#   merge-check   accepts EXPLICIT GitHub evidence (a local JSON
+#                 evidence file), invokes the canonical
+#                 trajectory_gate merge-check, then STOP:
+#                 "GO MERGE (human)" is exclusively a human decision.
+#                 This subcommand NEVER merges.
+#
+# Guarantees:
+# - NEVER invokes git add / commit / push / or any remote mutation
+#   before its phase-specific authorization has been given EXACTLY;
+# - NEVER emits: push force, commit amend, ref move, worktree
+#   discard, index bypass, untracked discard, or shelved-state
+#   commands. Only: status, branch, rev-parse, rev-list, diff, add,
+#   commit, push, ls-remote, remote;
+# - expected branch and authorized scope are enforced exactly;
+# - delegate / gate exit statuses are propagated exactly;
+# - reuses existing safety logic: the Pi runner safety lives in
+#   scripts/trajectory-codex-pi -> scripts/trajectory-pi and all
+#   readiness gating lives in scripts/trajectory_gate.py;
+# - no network of its own, no sandbox/settings state mutation, and
+#   the caller's Pi state (auth, trust, settings, sessions) is never
+#   read, copied, or touched;
+# - repository root is resolved from this script's own location
+#   (<repo>/scripts/trajectory-codex-orchestrate), independent of
+#   cwd and git state.
+#
+# Exit codes:
+#    0  help printed (--help) — no phase was executed
+#    2  invalid invocation (usage error, including a missing subcommand)
+#    3  precondition refused (repo/branch/remote/delegate/gate)
+#    5  phase evidence verified; STOPPED at its human GO gate
+#    6  authorization refused (missing or not the exact phrase)
+#    7  blocked (Pi evidence insufficient / scope violation /
+#       remote HEAD verification failed)
+#   else exactly the delegate's or gate's own exit status
+# ============================================================
+
+set -u
+
+PREFIX="trajectory-codex-orchestrate"
+
+EXIT_USAGE=2
+EXIT_PRECONDITION=3
+EXIT_GATE_STOP=5
+EXIT_AUTH_REFUSED=6
+EXIT_BLOCKED=7
+
+# The exact phrases the human must supply verbatim (the canonical gate
+# vocabulary of scripts/trajectory_gate.py). Anything else is refused.
+AUTH_COMMIT="GO COMMIT"
+AUTH_PUSH="GO PUSH"
+
+die() {
+    local message="$1"
+    local code="${2:-$EXIT_PRECONDITION}"
+    printf '%s ERROR: %s\n' "$PREFIX" "$message" >&2
+    if [[ "$code" == "$EXIT_USAGE" || "$code" == "$EXIT_AUTH_REFUSED" ]]; then
+        printf '%s: refused (fail-closed); nothing was executed.\n' "$PREFIX" >&2
+    fi
+    exit "$code"
+}
+
+usage() {
+    _print_help
+}
+
+_print_help() {
+    cat <<EOF
+Usage: $PREFIX COMMAND [OPTIONS]
+
+Human-gated Codex orchestration. Every phase stops at its human gate;
+authorization phrases must be supplied verbatim or the phase refuses.
+
+Commands:
+  implement   --branch BRANCH [-- PI-RUNNER ARGS... [-- PROMPT...]]
+              Delegate to trajectory-codex-pi, validate the latest Pi
+              run evidence, then STOP before GO COMMIT (never commits).
+
+  commit      --branch BRANCH --scope PATH [--scope PATH...]
+              --message MSG --authorize "GO COMMIT"
+              Commit exactly the authorized scope, run canonical
+              push-check, then STOP before GO PUSH (never pushes).
+
+  push        --branch BRANCH [--remote NAME] --authorize "GO PUSH"
+              Plain push only, verify remote HEAD, run canonical
+              pr-check, then STOP before GO PR (never creates a pull).
+
+  merge-check --branch BRANCH --evidence EVIDENCE.JSON
+              Run canonical merge-check with explicit GitHub evidence,
+              then STOP. NEVER merges.
+
+Exit codes: 0 help, 2 usage, 3 precondition refused, 5 stopped at the
+human GO gate (phase evidence verified), 6 authorization refused,
+7 blocked by evidence, otherwise the exact delegate/gate status.
+EOF
+}
+
+# ------------------------------------------------------------
+# Resolve repository root from this script's own location
+# (same convention as scripts/trajectory-codex-pi).
+# ------------------------------------------------------------
+
+self="$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null)" || self=""
+if [[ -z "$self" || ! -r "$self" ]]; then
+    die "cannot resolve this script"
+fi
+
+script_dir="$(cd -- "$(dirname -- "$self")" 2>/dev/null && pwd -P)"
+[[ -n "${script_dir:-}" ]] || die "cannot resolve the scripts directory"
+
+repo_root="$(dirname -- "$script_dir")"
+[[ -d "$repo_root" ]] || die "repository root not found from script location: $repo_root"
+
+REPO="$repo_root"
+PI_DELEGATE="$script_dir/trajectory-codex-pi"
+GATE="$script_dir/trajectory_gate.py"
+
+run_gate() {
+    # Canonical safety logic lives in trajectory_gate.py; delegate to it.
+    # Direct exec when executable (its own interpreter line), python3
+    # otherwise.
+    if [[ -x "$GATE" ]]; then
+        "$GATE" "$@"
+    else
+        python3 "$GATE" "$@"
+    fi
+}
+
+# ------------------------------------------------------------
+# Shared precondition: usable git worktree, non-detached branch
+# matching the expected branch exactly, protected branch refused.
+# ------------------------------------------------------------
+
+require_worktree() {
+    git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+        || die "not a git worktree: $REPO"
+}
+
+require_expected_branch() {
+    local expected="$1"
+    local current
+    current="$(git -C "$REPO" branch --show-current 2>/dev/null)" || current=""
+    if [[ -z "$current" ]]; then
+        die "refused on a non-branch (detached) worktree; expected branch '$expected'"
+    fi
+    if [[ "$current" != "$expected" ]]; then
+        die "branch mismatch: expected '$expected' but worktree is on '$current'"
+    fi
+    case "$expected" in
+        main|master)
+            die "protected branch '$expected' is not orchestratable; refuse this phase there"
+            ;;
+    esac
+}
+
+value_or_die() {
+    # flag, following value
+    [[ -n "${2:-}" ]] || die "missing value for $1" 2
+}
+
+normalize_scope() {
+    local value="$1"
+    value="${value#./}"
+    value="${value%/}"
+    printf '%s' "$value"
+}
+
+require_safe_scope() {
+    local scope="$1"
+    [[ -n "$scope" && "$scope" != "." && "$scope" != ".." ]] \
+        || die "invalid --scope '$scope': a repository-relative path is required" $EXIT_USAGE
+    [[ "$scope" != /* && "$scope" != ../* && "$scope" != */../* && "$scope" != */.. ]] \
+        || die "invalid --scope '$scope': scope must not escape the repository" $EXIT_USAGE
+}
+
+path_in_scope() {
+    local path="$1"
+    local scope
+    for scope in "${SCOPES[@]}"; do
+        if [[ "$path" == "$scope" || "$path" == "$scope"/* ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+require_scope_paths() {
+    # Fail-closed: EVERY changed path named in the porcelain status
+    # listing (tracked modifications, untracked additions, and BOTH
+    # sides of a rename) must lie inside the authorized scope.
+    local label="$1"
+    local entry path newpath oldpath status
+    local -a offenders=()
+    local -a entries=()
+
+    mapfile -d '' -t entries < <(git -C "$REPO" status --porcelain -z --untracked-files=all)
+    local i=0
+    while (( i < ${#entries[@]} )); do
+        entry="${entries[$i]}"
+        (( i += 1 ))
+        [[ -n "$entry" ]] || continue
+        status="${entry:0:2}"
+        path="${entry:3}"
+        if [[ "$status" == R* || "$status" == C* || "$status" == *R || "$status" == *C ]]; then
+            oldpath="${entries[$i]:-}"
+            (( i += 1 ))
+            newpath="$path"
+            path_in_scope "$newpath" || offenders+=("$newpath (renamed from $oldpath)")
+            path_in_scope "$oldpath" || offenders+=("$oldpath")
+        else
+            path_in_scope "$path" || offenders+=("$path")
+        fi
+    done
+
+    if (( ${#offenders[@]} > 0 )); then
+        die "$label: file(s) outside the authorized scope: ${offenders[*]}" $EXIT_BLOCKED
+    fi
+}
+
+meta_value() {
+    # meta_value FILE KEY -> value of the FIRST 'KEY=' line in FILE ("")
+    sed -n "s/^[[:space:]]*$2=//p" "$1" 2>/dev/null | head -n 1
+}
+
+# ------------------------------------------------------------
+# implement
+# ------------------------------------------------------------
+
+cmd_implement() {
+    local -a args=(${1+"$@"})
+    local expected_branch=""
+    local -a forward=()
+    local i=0 saw_sep=0 a
+
+    # Everything except `--branch <v>` is forwarded byte-for-argument,
+    # in order, to the Pi delegate. After the first `--`, EVERYTHING
+    # is literal prompt content (never consumed as an option here).
+    while (( i < ${#args[@]} )); do
+        a="${args[$i]}"
+        if (( saw_sep )); then
+            forward+=("$a"); (( i += 1 )); continue
+        fi
+        case "$a" in
+            --)
+                saw_sep=1
+                ;;
+            --branch)
+                (( i + 1 < ${#args[@]} )) || die "missing value for --branch" $EXIT_USAGE
+                expected_branch="${args[$((i + 1))]}"
+                (( i += 2 ))
+                ;;
+            *)
+                forward+=("$a")
+                (( i += 1 ))
+                ;;
+        esac
+    done
+
+    [[ -n "$expected_branch" ]] || die "implement: --branch BRANCH is required" $EXIT_USAGE
+    require_worktree
+    require_expected_branch "$expected_branch"
+
+    [[ -x "$PI_DELEGATE" ]] || die "Pi delegate not found or not executable: $PI_DELEGATE"
+
+    echo "=== $PREFIX: IMPLEMENT (delegate to Pi, STOP before GO COMMIT) ==="
+    echo "branch: $expected_branch"
+    echo "delegate: $PI_DELEGATE"
+    if (( ${#forward[@]} > 0 )); then
+        echo "forwarded argv:"
+        local f
+        for f in "${forward[@]}"; do
+            echo "  $f"
+        done
+    fi
+    echo "---- Pi delegate ----"
+    "$PI_DELEGATE" ${forward[@]+"${forward[@]}"}
+    local pi_rc=$?
+    echo "---- Pi delegate exited: $pi_rc ----"
+    if (( pi_rc != 0 )); then
+        echo "BLOCKED: Pi delegate exited non-zero ($pi_rc)."
+        echo "STOP: inspect the run and decide. This CLI performs NO commit."
+        return "$pi_rc"
+    fi
+
+    # --- Inspect the LATEST Pi run artifacts (fail-closed) ---
+    local runs_dir="$REPO/.trajectory-pi/runs"
+    if [[ ! -d "$runs_dir" ]]; then
+        echo "BLOCKED: no Pi run artifacts found under: $runs_dir"
+        echo "STOP: no evidence; GO COMMIT is not evidenced. This CLI performs NO commit."
+        return "$EXIT_BLOCKED"
+    fi
+
+    local latest
+    latest="$(find "$runs_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+        | LC_ALL=C sort | tail -n 1)"
+    if [[ -z "$latest" ]]; then
+        echo "BLOCKED: no Pi run directory under: $runs_dir"
+        echo "STOP: no evidence; GO COMMIT is not evidenced. This CLI performs NO commit."
+        return "$EXIT_BLOCKED"
+    fi
+
+    local meta="$latest/meta.txt"
+    if [[ ! -f "$meta" || ! -r "$meta" ]]; then
+        echo "BLOCKED: latest run lacks a readable meta.txt: $meta"
+        echo "STOP: no evidence; GO COMMIT is not evidenced. This CLI performs NO commit."
+        return "$EXIT_BLOCKED"
+    fi
+
+    echo
+    echo "=== $PREFIX: IMPLEMENT EVIDENCE (latest Pi run) ==="
+    echo "latest run: $latest"
+
+    local readiness reason validation snapshot diffc classification meta_branch head_before decision
+    readiness="$(meta_value "$meta" repository_readiness)"
+    reason="$(meta_value "$meta" readiness_reason)"
+    validation="$(meta_value "$meta" validation)"
+    snapshot="$(meta_value "$meta" snapshot_status)"
+    diffc="$(meta_value "$meta" diff_check)"
+    classification="$(meta_value "$meta" agent_classification)"
+    meta_branch="$(meta_value "$meta" branch)"
+    head_before="$(meta_value "$meta" head_before)"
+    decision="$(meta_value "$meta" decision_required)"
+
+    local current_head=""
+    if [[ -n "$head_before" ]]; then
+        current_head="$(git -C "$REPO" rev-parse --verify -q HEAD 2>/dev/null)" || current_head=""
+    fi
+
+    local -a failures=()
+    [[ "$readiness" == "READY_FOR_COMMIT" ]] \
+        || failures+=("repository_readiness=$readiness (wanted READY_FOR_COMMIT)")
+    [[ "$decision" == "GO COMMIT" ]] \
+        || failures+=("decision_required='$decision' (wanted 'GO COMMIT')")
+    if [[ "$validation" == "PASS" || "$validation" == "NOT_CONFIGURED" ]]; then :; else
+        failures+=("validation=$validation (wanted PASS or NOT_CONFIGURED)")
+    fi
+    [[ "$diffc" == "PASS" ]] \
+        || failures+=("diff_check=$diffc (wanted PASS)")
+    [[ "$snapshot" == "COMPLETE" ]] \
+        || failures+=("snapshot_status=$snapshot (wanted COMPLETE)")
+    [[ "$classification" == "AGENT_COMPLETED" ]] \
+        || failures+=("agent_classification=$classification (wanted AGENT_COMPLETED)")
+    [[ "$meta_branch" == "$expected_branch" ]] \
+        || failures+=("run branch='${meta_branch:-unset}' (expected '$expected_branch')")
+    if [[ -n "$head_before" ]]; then
+        [[ "$head_before" == "$current_head" ]] \
+            || failures+=("HEAD moved after the run (run head_before=$head_before, now ${current_head:-unknown})")
+    fi
+
+    echo "  repository_readiness=$readiness"
+    echo "  readiness_reason=$reason"
+    echo "  validation=$validation"
+    echo "  snapshot_status=$snapshot"
+    echo "  diff_check=$diffc"
+    echo "  agent_classification=$classification"
+    echo "  run_branch=$meta_branch"
+    echo "  head_before=$head_before"
+    echo "  decision_required=$decision"
+
+    if (( ${#failures[@]} > 0 )); then
+        local c
+        echo
+        echo "EVIDENCE NOT VALIDATED:"
+        for c in "${failures[@]}"; do
+            echo "  FAIL: $c"
+        done
+        echo "BLOCKED: deterministic Pi evidence is missing or inconsistent."
+        echo "STOP: GO COMMIT is not evidenced. This CLI performs NO commit."
+        return "$EXIT_BLOCKED"
+    fi
+
+    echo
+    echo "EVIDENCE VALIDATED: all deterministic readiness checks consistent."
+    echo "HUMAN GATE: 'GO COMMIT' is a HUMAN decision (see the gate report for the"
+    echo "full evidence). This CLI has NO autonomous state machine and will not"
+    echo "commit. To proceed, a human must authorize the 'commit' phase explicitly."
+    return "$EXIT_GATE_STOP"
+}
+
+# ------------------------------------------------------------
+# commit
+# ------------------------------------------------------------
+
+cmd_commit() {
+    local -a args=(${1+"$@"})
+    local expected_branch=""
+    local message=""
+    local authz=""
+    local -a scopes=()
+    local i=0 a
+
+    while (( i < ${#args[@]} )); do
+        a="${args[$i]}"
+        case "$a" in
+            --branch)
+                (( i + 1 < ${#args[@]} )) || die "missing value for --branch" $EXIT_USAGE
+                expected_branch="${args[$((i + 1))]}"
+                ;;
+            --scope)
+                (( i + 1 < ${#args[@]} )) || die "missing value for --scope" $EXIT_USAGE
+                local scope
+                scope="$(normalize_scope "${args[$((i + 1))]}")"
+                require_safe_scope "$scope"
+                scopes+=("$scope")
+                ;;
+            --message|-m)
+                (( i + 1 < ${#args[@]} )) || die "missing value for --message" $EXIT_USAGE
+                message="${args[$((i + 1))]}"
+                ;;
+            --authorize)
+                (( i + 1 < ${#args[@]} )) || die "missing value for --authorize" $EXIT_USAGE
+                authz="${args[$((i + 1))]}"
+                ;;
+            -h|--help)
+                usage
+                ;;
+            *)
+                die "commit: unknown argument '$a' (fail-closed)" $EXIT_USAGE
+                ;;
+        esac
+        (( i += 2 ))
+    done
+
+    [[ -n "$expected_branch" ]] || die "commit: --branch BRANCH is required" $EXIT_USAGE
+    [[ -n "$message" ]] || die "commit: --message MSG is required" $EXIT_USAGE
+    if (( ${#scopes[@]} == 0 )); then
+        die "commit: at least one --scope PATH is required (nothing implicit is ever authorized)" $EXIT_USAGE
+    fi
+
+    # Phase-specific authorization: exact phrase, checked BEFORE any git
+    # mutation (or any read beyond the worktree check) of the phase itself.
+    if [[ "$authz" != "$AUTH_COMMIT" ]]; then
+        echo "=== $PREFIX: COMMIT ==="
+        die "commit: no authorization received; the exact phrase '$AUTH_COMMIT' is required as --authorize (human gate not crossed)" $EXIT_AUTH_REFUSED
+    fi
+
+    require_worktree
+    require_expected_branch "$expected_branch"
+
+    # Scope enforcement over the ACTUAL working tree BEFORE staging:
+    # every changed path (tracked changes and untracked additions alike)
+    # must lie inside the explicitly authorized scope.
+    SCOPES=("${scopes[@]}")
+    require_scope_paths "commit"
+
+    echo "=== $PREFIX: COMMIT (authorized: '$AUTH_COMMIT') ==="
+    echo "branch: $expected_branch"
+    echo "scope : ${scopes[*]}"
+    echo "message: $message"
+
+    # Stage EXACTLY the authorized scope items (explicit paths only).
+    git -C "$REPO" add -- "${scopes[@]}" 2>&1
+    (( $? == 0 )) || die "git add failed for the authorized scope"
+
+    # The staged set must be non-empty and fully inside the scope.
+    local staged
+    staged="$(git -C "$REPO" diff --cached --name-only 2>/dev/null)" || staged=""
+    if [[ -z "$staged" ]]; then
+        die "nothing to commit within the authorized scope (no staged change)" $EXIT_BLOCKED
+    fi
+    local line
+    local -a offenders=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        path_in_scope "$line" || offenders+=("$line")
+    done <<< "$staged"
+    if (( ${#offenders[@]} > 0 )); then
+        die "staged set escapes the authorized scope: ${offenders[*]}" $EXIT_BLOCKED
+    fi
+
+    # Commit (the index now holds exactly the authorized, verified set).
+    git -C "$REPO" commit -m "$message"
+    (( $? == 0 )) || die "git commit failed"
+    local new_head
+    new_head="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)" || new_head=""
+    echo "committed $new_head (scope: ${scopes[*]})"
+
+    # Canonical push readiness gate (READ-ONLY; its own logic decides).
+    local -a gate_cmd=("$GATE" push-check "--repo=$REPO" "--expected-branch=$expected_branch")
+    local s
+    for s in "${scopes[@]}"; do
+        gate_cmd+=("--allow=$s")
+    done
+    if [[ -x "$GATE" ]]; then
+        "${gate_cmd[@]}"
+    else
+        python3 "${gate_cmd[@]}"  # gate script, then its args
+    fi
+    local gate_rc=$?
+    echo "trajectory_gate push-check exited: $gate_rc"
+
+    if (( gate_rc == 0 )); then
+        echo "HUMAN GATE: 'GO PUSH' is a HUMAN decision."
+        echo "This CLI has NO autonomous state machine and will not push."
+        return "$EXIT_GATE_STOP"
+    fi
+    if (( gate_rc == 10 )); then
+        echo "BLOCKED: canonical push-check is not ready (see report above)."
+        echo "STOP before GO PUSH. This CLI does not push."
+        return 10
+    fi
+    echo "BLOCKED: canonical push-check failed (exit $gate_rc)."
+    return "$gate_rc"
+}
+
+# ------------------------------------------------------------
+# push
+# ------------------------------------------------------------
+
+cmd_push() {
+    local -a args=(${1+"$@"})
+    local expected_branch=""
+    local remote="origin"
+    local authz=""
+    local i=0 a
+
+    while (( i < ${#args[@]} )); do
+        a="${args[$i]}"
+        case "$a" in
+            --branch)
+                (( i + 1 < ${#args[@]} )) || die "missing value for --branch" $EXIT_USAGE
+                expected_branch="${args[$((i + 1))]}"
+                ;;
+            --remote)
+                (( i + 1 < ${#args[@]} )) || die "missing value for --remote" $EXIT_USAGE
+                remote="${args[$((i + 1))]}"
+                ;;
+            --authorize)
+                (( i + 1 < ${#args[@]} )) || die "missing value for --authorize" $EXIT_USAGE
+                authz="${args[$((i + 1))]}"
+                ;;
+            -h|--help)
+                usage
+                ;;
+            *)
+                die "push: unknown argument '$a' (fail-closed)" $EXIT_USAGE
+                ;;
+        esac
+        (( i += 2 ))
+    done
+
+    [[ -n "$expected_branch" ]] || die "push: --branch BRANCH is required" $EXIT_USAGE
+
+    # Phase-specific authorization: exact phrase, checked BEFORE any
+    # remote command of this phase is issued.
+    if [[ "$authz" != "$AUTH_PUSH" ]]; then
+        echo "=== $PREFIX: PUSH ==="
+        die "push: no authorization received; the exact phrase '$AUTH_PUSH' is required as --authorize (human gate not crossed)" $EXIT_AUTH_REFUSED
+    fi
+
+    require_worktree
+    require_expected_branch "$expected_branch"
+    git -C "$REPO" remote get-url "$remote" >/dev/null 2>&1 \
+        || die "remote '$remote' is not configured; nothing safe to push to"
+
+    echo "=== $PREFIX: PUSH (authorized: '$AUTH_PUSH') ==="
+    echo "remote: $remote"
+    echo "branch: $expected_branch"
+    echo "mode  : plain push only (a forced update is never emitted)"
+
+    # Plain remote update: explicit remote + branch, no force flag.
+    git -C "$REPO" push "$remote" "refs/heads/$expected_branch"
+    local push_rc=$?
+    if (( push_rc != 0 )); then
+        echo "BLOCKED: plain push failed (exit $push_rc); no further action taken."
+        return "$push_rc"
+    fi
+
+    # Authoritative remote HEAD verification (`git ls-remote`, read-only).
+    local head_local head_remote lsr
+    head_local="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)" || head_local=""
+    lsr="$(git -C "$REPO" ls-remote "$remote" "refs/heads/$expected_branch" 2>/dev/null)" || lsr=""
+    head_remote=""
+    local first_line
+    first_line="${lsr%%$'\n'*}"
+    if [[ -n "$first_line" ]]; then
+        head_remote="${first_line%%[[:space:]]*}"
+    fi
+    if [[ -z "$head_local" || -z "$head_remote" || "$head_local" != "$head_remote" ]]; then
+        echo "BLOCKED: remote HEAD verification FAILED (local=$head_local remote=${head_remote:-unknown})."
+        return "$EXIT_BLOCKED"
+    fi
+    echo "remote HEAD verified: $head_local == $head_remote"
+
+    # Canonical PR readiness gate (READ-ONLY; its own logic decides).
+    if [[ -x "$GATE" ]]; then
+        "$GATE" pr-check "--repo=$REPO" "--expected-branch=$expected_branch"
+    else
+        python3 "$GATE" pr-check "--repo=$REPO" "--expected-branch=$expected_branch"
+    fi
+    local gate_rc=$?
+    echo "trajectory_gate pr-check exited: $gate_rc"
+
+    if (( gate_rc == 0 )); then
+        echo "HUMAN GATE: 'GO PR' is a HUMAN decision."
+        echo "This CLI has NO autonomous state machine and will not create a pull."
+        return "$EXIT_GATE_STOP"
+    fi
+    if (( gate_rc == 10 )); then
+        echo "BLOCKED: canonical pr-check is not ready (see report above)."
+        echo "STOP before GO PR. This CLI does not create a pull."
+        return 10
+    fi
+    echo "BLOCKED: canonical pr-check failed (exit $gate_rc)."
+    return "$gate_rc"
+}
+
+# ------------------------------------------------------------
+# merge-check
+# ------------------------------------------------------------
+
+cmd_merge_check() {
+    local -a args=(${1+"$@"})
+    local expected_branch=""
+    local evidence=""
+    local i=0 a
+
+    while (( i < ${#args[@]} )); do
+        a="${args[$i]}"
+        case "$a" in
+            --branch)
+                (( i + 1 < ${#args[@]} )) || die "missing value for --branch" $EXIT_USAGE
+                expected_branch="${args[$((i + 1))]}"
+                ;;
+            --evidence)
+                (( i + 1 < ${#args[@]} )) || die "missing value for --evidence" $EXIT_USAGE
+                evidence="${args[$((i + 1))]}"
+                ;;
+            -h|--help)
+                usage
+                ;;
+            *)
+                die "merge-check: unknown argument '$a' (fail-closed)" $EXIT_USAGE
+                ;;
+        esac
+        (( i += 2 ))
+    done
+
+    [[ -n "$expected_branch" ]] || die "merge-check: --branch BRANCH is required" $EXIT_USAGE
+    [[ -n "$evidence" ]] || die "merge-check: --evidence EVIDENCE.JSON is required (explicit GitHub evidence)" $EXIT_USAGE
+
+    # Resolve and require the EXPLICIT evidence file BEFORE any gate
+    # invocation (fail-closed on a missing / unreadable / non-regular file).
+    local evidence_abs="$evidence"
+    case "$evidence" in
+        /*) : ;;
+        *) evidence_abs="$(pwd)/$evidence" ;;
+    esac
+    [[ -f "$evidence_abs" && -r "$evidence_abs" && -s "$evidence_abs" ]] \
+        || die "merge-check: evidence file is missing, unreadable, or empty: $evidence_abs"
+
+    require_worktree
+    require_expected_branch "$expected_branch"
+
+    echo "=== $PREFIX: MERGE-CHECK (evidence-gated; this CLI NEVER merges) ==="
+    echo "branch  : $expected_branch"
+    echo "evidence: $evidence_abs"
+
+    if [[ -x "$GATE" ]]; then
+        "$GATE" merge-check "--repo=$REPO" "--expected-branch=$expected_branch" "--evidence=$evidence_abs"
+    else
+        python3 "$GATE" merge-check "--repo=$REPO" "--expected-branch=$expected_branch" "--evidence=$evidence_abs"
+    fi
+    local gate_rc=$?
+    echo "trajectory_gate merge-check exited: $gate_rc"
+
+    if (( gate_rc == 0 )); then
+        echo "HUMAN GATE: 'GO MERGE (human)' is EXCLUSIVELY a human decision."
+        echo "This CLI never merges; the merge (if any) is a human action elsewhere."
+        return "$EXIT_GATE_STOP"
+    fi
+    if (( gate_rc == 10 )); then
+        echo "BLOCKED: canonical merge-check is not ready (see report above); no merge of any kind."
+        return 10
+    fi
+    echo "BLOCKED: canonical merge-check failed (exit $gate_rc); no merge of any kind."
+    return "$gate_rc"
+}
+
+# ------------------------------------------------------------
+# Dispatch
+# ------------------------------------------------------------
+
+if (( $# < 1 )); then
+    _print_help
+    exit "$EXIT_USAGE"
+fi
+
+command="${1}"
+shift
+
+case "$command" in
+    implement)
+        cmd_implement "$@"
+        exit $?
+        ;;
+    commit)
+        cmd_commit "$@"
+        exit $?
+        ;;
+    push)
+        cmd_push "$@"
+        exit $?
+        ;;
+    merge-check)
+        cmd_merge_check "$@"
+        exit $?
+        ;;
+    -h|--help)
+        usage
+        ;;
+    *)
+        die "unknown command '$command' (see --help)" $EXIT_USAGE
+        ;;
+esac
