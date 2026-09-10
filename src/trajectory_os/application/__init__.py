@@ -140,6 +140,12 @@ from trajectory_os.application.execution_effort_project_focus_next_ready_task_ex
     TaskExecutionLifecycleAdmissionError,
     admit_current_task_execution_lifecycle,
 )
+from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_lifecycle_admission_history import (  # noqa: E501
+    DurableTaskExecutionLifecycleAdmissionError,
+    TaskExecutionLifecycleAdmissionRecord,
+    TaskExecutionLifecycleAdmissionRepository,
+    record_task_execution_lifecycle_admission_durably,
+)
 from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_lifecycle_admission_persistence import (  # noqa: E501
     DurableTaskExecutionLifecycleApplicationError,
     TaskExecutionLifecyclePortfolioNotFoundError,
@@ -351,6 +357,10 @@ __all__ = [
     "decide_task_execution_lifecycle",
     "TaskExecutionLifecycleAdmission",
     "TaskExecutionLifecycleAdmissionError",
+    "DurableTaskExecutionLifecycleAdmissionError",
+    "TaskExecutionLifecycleAdmissionRecord",
+    "TaskExecutionLifecycleAdmissionRepository",
+    "record_task_execution_lifecycle_admission_durably",
     "admit_current_task_execution_lifecycle",
     "DurableTaskExecutionLifecycleApplicationError",
     "TaskExecutionLifecyclePortfolioNotFoundError",
