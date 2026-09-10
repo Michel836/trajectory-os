@@ -470,6 +470,74 @@ class TaskExecutionLifecycleAdmissionRecordRow(Base):
     admission_snapshot: Mapped[str] = mapped_column(String(), nullable=False)
 
 
+class TaskExecutionLifecycleOutcomeRecordRow(Base):
+    """One durable, immutable V1.60 coordinated lifecycle outcome record
+    (V1.61 record, persisted by V1.62).
+
+    ``outcome_record_id`` is the sole durable identity of exactly this
+    persisted historical record. It is a primary key only for durable
+    record identity and MUST NOT be interpreted as any kind of idempotency
+    key. Two value-equivalent V1.61 records under distinct
+    ``outcome_record_id`` values are legal separate rows; nothing here
+    deduplicates by portfolio, task, decision, execution, admission,
+    application, timestamps, outcome, or transition result equality.
+
+    ``portfolio_id`` is the owning portfolio and follows the established
+    durable-history convention with ``ON DELETE CASCADE``.
+
+    ``admission_record_id``, ``decision_record_id``,
+    ``application_record_id``, ``lifecycle_decision_id``,
+    ``execution_record_id``, ``authorized_task_id``,
+    ``transition_entity_id``, and ``transition_changed_at`` are narrow
+    explicit snapshot columns for corruption visibility only. They
+    deliberately carry NO uniqueness and NO foreign keys into
+    replaceable/current tables: the same semantic values are legal under
+    distinct ``outcome_record_id`` values, and historical outcome records
+    must never be deleted or corrupted by replacement of current snapshot
+    state.
+
+    All embedded lifecycle values are HISTORICAL EVIDENCE ONLY; no stored
+    row authorizes any later mutation, and no current, latest, or
+    effective state is derived from this table.
+
+    ``recorded_at`` and ``transition_changed_at`` store the exact
+    ISO-8601 text, each preserving its original UTC offset (never
+    normalized).
+
+    ``outcome_snapshot`` stores deterministic explicit JSON of the exact
+    embedded V1.60 ``TaskExecutionLifecycleOutcome``. It is never a
+    pickle or opaque binary.
+
+    Append-only: V1.62 exposes no update, delete, replace, or upsert path.
+    """
+
+    __tablename__ = "task_execution_lifecycle_outcome_records"
+
+    outcome_record_id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+    )
+    portfolio_id: Mapped[str] = mapped_column(
+        ForeignKey("portfolios.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    admission_record_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    decision_record_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    application_record_id: Mapped[str] = mapped_column(
+        String(36), nullable=False
+    )
+    lifecycle_decision_id: Mapped[str] = mapped_column(
+        String(36), nullable=False
+    )
+    execution_record_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    authorized_task_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    transition_entity_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    transition_changed_at: Mapped[str] = mapped_column(String(), nullable=False)
+    recorded_at: Mapped[str] = mapped_column(String(), nullable=False)
+    outcome_snapshot: Mapped[str] = mapped_column(String(), nullable=False)
+
+
 class PortfolioRow(Base):
     """One canonical portfolio."""
 
