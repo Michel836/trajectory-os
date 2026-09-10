@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# ============================================================
+# trajectory-codex-pi — issue #168
+# Codex-safe local Pi orchestration.
+#
+# A minimal, deterministic, MODELS-ONLY wrapper around the
+# existing trajectory-pi runner. It exists so an external
+# orchestrator (e.g. Codex) can delegate Pi work without
+# exposing any Pi credential or state:
+#
+# - locates the repository root from its own location
+#   (<repo>/scripts/trajectory-codex-pi);
+# - exports PI_CODING_AGENT_DIR=<repo>/.trajectory-pi/pi-agent
+#   so Pi state for the run lives inside the repository's
+#   git-ignored local state, not in the caller's HOME;
+# - synchronizes ONLY $HOME/.pi/agent/models.json (byte-for-byte
+#   copy of that single file) into that directory;
+# - fails clearly BEFORE delegation when the source models
+#   file is missing or unreadable;
+# - delegates every user argument byte-for-argument to
+#   <repo>/scripts/trajectory-pi and returns exactly that
+#   delegate's exit status (exec replaces this process).
+#
+# Guarantees:
+# - NEVER copies the caller's Pi credential/auth/trust state,
+#   credentials, tokens, secrets, or any Pi state other than
+#   models.json; only the single models.json path is ever read;
+# - duplicates or bypasses nothing: the delegate (trajectory-pi)
+#   keeps its full V0.3 protections, including refusal of
+#   writable agent work on main/master;
+# - performs no commit, push, PR, or merge; no network access;
+#   no sandbox, trust, or settings configuration mutation.
+# ============================================================
+
+set -u
+
+fail() {
+    printf 'trajectory-codex-pi ERROR: %s\n' "$1" >&2
+    exit 1
+}
+
+# ------------------------------------------------------------
+# Locate the repository root from this script's own location.
+# The wrapper lives in <repo>/scripts/trajectory-codex-pi, so
+# the repository root is the parent of the scripts directory.
+# This is deterministic and independent of cwd or git state.
+# ------------------------------------------------------------
+
+self="$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null)" || self=""
+if [[ -z "$self" || ! -r "$self" ]]; then
+    fail "cannot resolve this wrapper script"
+fi
+
+script_dir="$(cd -- "$(dirname -- "$self")" 2>/dev/null && pwd -P)"
+if [[ -z "${script_dir:-}" ]]; then
+    fail "cannot resolve the scripts directory"
+fi
+
+repo_root="$(dirname -- "$script_dir")"
+if [[ ! -d "$repo_root" ]]; then
+    fail "repository root not found from script location: $repo_root"
+fi
+
+delegate="$repo_root/scripts/trajectory-pi"
+if [[ ! -x "$delegate" ]]; then
+    fail "delegate not found or not executable: $delegate"
+fi
+
+# ------------------------------------------------------------
+# Models-only synchronization
+#
+# EXACTLY ONE FILE is ever read from the caller's Pi agent
+# state: models.json. Its byte content is copied verbatim.
+# No directory sync (no rsync/cp -r) is used, so no other Pi
+# state — credentials, tokens, secrets, trust or session state —
+# can be read or copied by this wrapper.
+# ------------------------------------------------------------
+
+home_dir="${HOME:-}"
+if [[ -z "$home_dir" || ! -d "$home_dir" ]]; then
+    fail "HOME is not set to a usable directory"
+fi
+
+src_models="$home_dir/.pi/agent/models.json"
+if [[ ! -e "$src_models" ]]; then
+    fail "source models file is missing (delegation refused): $src_models"
+fi
+if [[ ! -f "$src_models" ]]; then
+    fail "source models path is not a regular file (delegation refused): $src_models"
+fi
+if [[ ! -r "$src_models" ]]; then
+    fail "source models file is not readable (delegation refused): $src_models"
+fi
+
+agent_dir="$repo_root/.trajectory-pi/pi-agent"
+if ! mkdir -p -- "$agent_dir" 2>/dev/null; then
+    fail "cannot create Pi agent directory: $agent_dir"
+fi
+
+if ! cp -f -- "$src_models" "$agent_dir/models.json" 2>/dev/null; then
+    fail "cannot synchronize models.json into: $agent_dir"
+fi
+if [[ ! -r "$agent_dir/models.json" ]]; then
+    fail "synchronized models.json is not readable: $agent_dir/models.json"
+fi
+
+# ------------------------------------------------------------
+# Delegation: exact argv passthrough, exact exit status.
+# env + exec below replace this process, so the wrapper's exit
+# status is exactly trajectory-pi's exit status (signals and
+# non-zero codes included) and no wrapper state survives.
+# ------------------------------------------------------------
+
+export PI_CODING_AGENT_DIR="$agent_dir"
+
+exec "$delegate" "$@"
