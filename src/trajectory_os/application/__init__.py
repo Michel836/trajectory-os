@@ -170,6 +170,12 @@ from trajectory_os.application.execution_effort_project_focus_next_ready_task_ex
     TaskExecutionLifecycleDecisionRepository,
     record_task_execution_lifecycle_decision_durably,
 )
+from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_lifecycle_outcome_history import (  # noqa: E501
+    DurableTaskExecutionLifecycleOutcomeError,
+    TaskExecutionLifecycleOutcomeRecord,
+    TaskExecutionLifecycleOutcomeRepository,
+    record_task_execution_lifecycle_outcome_durably,
+)
 from trajectory_os.application.execution_effort_project_focus_next_ready_task_execution_persistence import (  # noqa: E501
     DurableTaskExecutionResultError,
     TaskExecutionResultRecord,
@@ -378,6 +384,10 @@ __all__ = [
     "TaskExecutionLifecycleCoordinatorPortfolioNotFoundError",
     "TaskExecutionLifecycleOutcome",
     "coordinate_task_execution_lifecycle",
+    "DurableTaskExecutionLifecycleOutcomeError",
+    "TaskExecutionLifecycleOutcomeRecord",
+    "TaskExecutionLifecycleOutcomeRepository",
+    "record_task_execution_lifecycle_outcome_durably",
     "PortfolioProjectFocusNextReadyTaskSelection",
     "PortfolioProjectFocusNextReadyTaskSelectionError",
     "select_first_ready_task_candidate",
