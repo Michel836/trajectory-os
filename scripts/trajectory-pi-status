@@ -270,7 +270,7 @@ def compute_eta(
     # trajectory-pi records an expected duration window, not measurable
     # completion progress. It must never be presented as an ETA.
     _ = elapsed_seconds, window
-    return "unknown (no measured progress baseline)"
+    return "unavailable (no measured progress baseline)"
 
 
 def compute_speed(beats: list[dict[str, Any]]) -> str:

@@ -239,7 +239,7 @@ def test_live_run_parsed_telemetry(runs: Path) -> None:
     assert "pi_state    : running (live" in out
     assert "model       : fake-model" in out
     assert "elapsed     : 00:00:20" in out           # last heartbeat
-    assert "unknown (no measured progress baseline)" in out  # no invented ETA
+    assert "unavailable (no measured progress baseline)" in out  # no invented ETA
     assert "9.3 tok/s (gen_3s @ 12:00:20)" in out
     assert "tokens      : unavailable" in out
     assert "files=1 (+1) | ollama=active" in out
@@ -252,7 +252,7 @@ def test_live_run_parsed_telemetry(runs: Path) -> None:
     assert data["model"] == "fake-model"
     assert data["run"] == LIVE
     assert data["blockers"] == []
-    assert data["eta"].startswith("unknown")
+    assert data["eta"].startswith("unavailable")
     assert data["tokens"] == "unavailable"
 
 
@@ -262,7 +262,7 @@ def test_absent_telemetry_never_invented(runs: Path) -> None:
     out = proc.stdout
     assert "pi_state    : running" in out
     assert "speed       : unavailable" in out
-    assert "unknown (no measured progress baseline)" in out
+    assert "unavailable (no measured progress baseline)" in out
     assert "unavailable (no worktree artifact)" in out
     data = json.loads(run_reader(
         runs.parent, "--run", str(runs / MALFORMED), "--json").stdout)

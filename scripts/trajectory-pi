@@ -1740,7 +1740,9 @@ fi
 # Agent execution classification (separate from repository readiness)
 #
 # Provider-failure recognition uses the exact stable phrase in the
-# Pi log. Classification never performs reset/clean/retry/commit/
+# Pi log after the locally enforced non-empty final-query guarantee.
+# This identifies the upstream provider/Pi failure without claiming that
+# compaction itself is observable from this wrapper. Classification never performs reset/clean/retry/commit/
 # push/merge and never changes the exit code.
 # completion_evidence_present() is AGENT-CONVERSATION evidence only.
 # ------------------------------------------------------------
@@ -1753,8 +1755,8 @@ fi
 CURRENT_STATUS_AFTER="$(status_fingerprint)"
 AGENT_CHANGED_AFTER="$(count_added_since_baseline "$CURRENT_STATUS_AFTER")"
 
-if [[ "$PI_RC" -ne 0 && "$PROVIDER_MISSING_QUERY" -eq 1 && "$AGENT_CHANGED_AFTER" -gt 0 ]]; then
-    CLASSIFICATION="RECOVERABLE_PROVIDER_FAILURE"
+if [[ "$PI_RC" -ne 0 && "$PROVIDER_MISSING_QUERY" -eq 1 ]]; then
+    CLASSIFICATION="UPSTREAM_PROVIDER_MISSING_QUERY"
 elif [[ "$PI_RC" -eq 0 ]]; then
     if completion_evidence_present "$LOG"; then
         CLASSIFICATION="AGENT_COMPLETED"
@@ -1969,10 +1971,11 @@ if [[ "$SNOT" == "COMPLETE" ]]; then
     cat "$RUN_DIR/worktree-stat.txt"
 fi
 
-if [[ "$CLASSIFICATION" == "RECOVERABLE_PROVIDER_FAILURE" ]]; then
+if [[ "$CLASSIFICATION" == "UPSTREAM_PROVIDER_MISSING_QUERY" ]]; then
     echo
-    echo "RECOVERABLE PROVIDER FAILURE"
-    echo "Pi aborted on the known provider failure: no user query found in messages."
+    echo "UPSTREAM PROVIDER MISSING-QUERY FAILURE"
+    echo "Pi aborted on the known upstream provider failure: no user query found in messages."
+    echo "The wrapper cannot deterministically attribute it to Pi compaction."
     echo "All agent worktree changes have been PRESERVED as-is."
     echo "No reset, clean, automatic retry, commit, push, or merge was performed."
     echo "The preserved work must be inspected and resumed by a human before further action."
