@@ -982,6 +982,11 @@ def test_static_no_forbidden_git_actions_or_network_tooling() -> None:
     assert "--expected-branch" in executable
 
 
+def test_orchestration_entrypoint_is_directly_executable() -> None:
+    """The documented CLI entrypoint must be runnable without `bash`."""
+    assert REAL_CLI.stat().st_mode & 0o111
+
+
 def test_no_credential_or_sandbox_state_mutation(sandbox: dict[str, Path]) -> None:
     seed: Path = sandbox["seed"]
     before = {p.name: p.read_bytes() for p in seed.iterdir()}

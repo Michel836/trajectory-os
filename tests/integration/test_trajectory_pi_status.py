@@ -1,4 +1,4 @@
-"""Integration tests for scripts/trajectory-pi-status (issue #172 / V1.65).
+"""Integration tests for scripts/trajectory-pi-status (issue #176 / V1.67).
 
 Every test drives the real ``scripts/trajectory-pi-status`` reader against a
 deterministic synthetic ``.trajectory-pi/runs`` root inside ``tmp_path``.
@@ -79,10 +79,10 @@ decision_required=GO COMMIT
     _write(d / "status.log",
            "[09:50:01] elapsed=00:00:01 | within expected startup | "
            "files=0 (+0) | ollama=active | GPU 12% | 100 W | "
-           "VRAM 1000/2000 MiB | gen_3s=10.5 tok/s\n"
+           "VRAM 1000/2000 MiB | gen_3s=10.5 tok/s | gen_total=10 tokens\n"
            "[09:51:01] elapsed=00:01:01 | within expected startup | "
            "files=2 (+2) | ollama=active | GPU 55% | 200 W | "
-           "VRAM 1500/2000 MiB | gen_3s=12.25 tok/s\n")
+           "VRAM 1500/2000 MiB | gen_3s=12.25 tok/s | gen_total=25 tokens\n")
     _write(d / "pi.log", "fake finished transcript\n")
     _write(d / "worktree-status.txt",
            "# current working-tree status (real index)\n"
@@ -218,6 +218,7 @@ def test_completed_run_parsed_telemetry_and_rendering(runs: Path) -> None:
     assert "elapsed     : 00:08:00" in out          # meta elapsed_seconds=480
     assert "eta         : n/a (run ended)" in out
     assert "12.25 tok/s (gen_3s" in out             # last heartbeat speed
+    assert "25 tokens (gen_total @ 09:51:01)" in out
     assert "files=2 (+2) | ollama=active" in out    # counters
     assert "phase       : within expected startup" in out
     assert "repository_readiness=READY_FOR_COMMIT" in out
@@ -240,6 +241,7 @@ def test_live_run_parsed_telemetry(runs: Path) -> None:
     assert "elapsed     : 00:00:20" in out           # last heartbeat
     assert "unknown (no measured progress baseline)" in out  # no invented ETA
     assert "9.3 tok/s (gen_3s @ 12:00:20)" in out
+    assert "tokens      : unavailable" in out
     assert "files=1 (+1) | ollama=active" in out
     assert "phase       : within expected startup" in out
     assert "[12:00:20] elapsed=00:00:20" in out      # last event line
@@ -251,6 +253,7 @@ def test_live_run_parsed_telemetry(runs: Path) -> None:
     assert data["run"] == LIVE
     assert data["blockers"] == []
     assert data["eta"].startswith("unknown")
+    assert data["tokens"] == "unavailable"
 
 
 def test_absent_telemetry_never_invented(runs: Path) -> None:
@@ -266,6 +269,50 @@ def test_absent_telemetry_never_invented(runs: Path) -> None:
     assert data["speed"] == "unavailable"
     assert data["worktree"]["state"].startswith("unavailable")
     assert data["readiness"]["repository_readiness"] == "unknown"
+
+
+def test_completed_empty_snapshot_renders_clean_not_unavailable(
+    runs: Path,
+) -> None:
+    run = runs / COMPLETED
+    _write(run / "worktree-files.txt", "")
+    _write(run / "worktree-status.txt", "# current working-tree status (real index)\n")
+    _write(run / "worktree-metadata.txt", "snapshot_status=COMPLETE\ntotal_files=0\n")
+
+    data = json.loads(run_reader(
+        runs.parent, "--run", str(run), "--json").stdout)
+
+    assert data["worktree"]["state"] == "clean / 0 changed"
+    assert data["worktree"]["source"] == "worktree-files.txt"
+    assert data["worktree"]["entries"] == []
+
+
+def test_incomplete_snapshot_is_explicit_and_never_clean(runs: Path) -> None:
+    run = runs / COMPLETED
+    _write(run / "worktree-files.txt", "")
+    _write(run / "worktree-metadata.txt", "snapshot_status=FAILED\ntotal_files=0\n")
+
+    data = json.loads(run_reader(
+        runs.parent, "--run", str(run), "--json").stdout)
+
+    assert data["worktree"]["state"].startswith("unavailable")
+    assert data["worktree"]["state"] != "clean / 0 changed"
+    assert any("snapshot evidence" in warning for warning in data["warnings"])
+
+
+def test_decreasing_cumulative_tokens_are_unavailable(runs: Path) -> None:
+    run = runs / LIVE
+    _write(run / "status.log",
+           "[12:00:01] elapsed=00:00:01 | within expected startup | "
+           "files=0 (+0) | ollama=active | gen_total=20 tokens\n"
+           "[12:00:20] elapsed=00:00:20 | within expected startup | "
+           "files=0 (+0) | ollama=active | gen_total=19 tokens\n")
+
+    data = json.loads(run_reader(runs.parent, "--json").stdout)
+
+    assert data["tokens"] == "unavailable"
+    assert any("cumulative token telemetry decreased" in warning
+               for warning in data["warnings"])
 
 
 def test_empty_run_dir_no_crash(tmp_path: Path) -> None:
