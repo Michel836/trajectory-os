@@ -91,3 +91,64 @@ Out of scope (deferred), explicitly:
 - executing a resume action (V1.77+);
 - remote control, daemons, or provider-side cancellation;
 - automatic escalation beyond SIGTERM.
+
+## Revision V1.77–V1.80 — operator hardening, structured results, audit
+
+Status: Accepted (2026-09-11)
+
+The verdict engine, exit-code ladder and SIGTERM-only contract are
+unchanged (the control surface remains `trajectory-pi-control/1.76`).
+This revision adds three operator-facing guarantees around it:
+
+**V1.77 — hardened targeting and validated bounds.**
+
+1. ``--run`` resolves a bare run name **only** under the runs root; a
+   same-named directory elsewhere (e.g. the CWD) can never be selected
+   by accident. An explicit path must resolve inside the runs root;
+   escaping it is a usage error (64), never a target.
+2. ``--grace`` must be a finite, non-negative number of seconds; invalid
+   values are usage errors (64), so a negative or NaN grace window cannot
+   exist at decision time.
+3. Stdout carries only the rendered payload and stderr only diagnostics;
+   repeated passive reads with fixed input and clock are byte-identical.
+
+**V1.78 — structured results.**
+
+Every command's JSON payload embeds a ``result`` envelope with schema
+``trajectory-pi-control-result/1`` and a fixed, ordered field set
+(``command, run_id, outcome, action_requested, action_performed, reasons,
+target_state, targetable, stoppable, target_pid, signal_requested,
+signal_sent, lock, grace_seconds, identity, lifecycle, audit,
+generated_at, evidence_source``).  Unknown facts are JSON ``null`` — never
+omitted, never invented; ``generated_at`` is the literal ``"unknown"``
+unless an operator-supplied time tag exists.  This envelope is additive:
+all pre-existing top-level keys of the 1.76 payload remain.
+
+**V1.79 — bounded local audit trail.**
+
+1. ``stop`` (and its refusals) append sanitized records to a bounded,
+   local trail at ``<runs-root>/control-audit.jsonl`` (mode ``0600``,
+   bounded to the newest 256 records, existing/malformed lines preserved
+   byte-for-byte, atomic write).
+2. Records are constrained to a strict allow-list
+   (``control-audit/1``): ts, component, command, runs_root, action,
+   decision, outcome, reasons, refusal_reason, run_id,
+   target_pid, identity_state, identity_reasons, signal_requested,
+   signal_sent, lock, grace_seconds — so secrets, tokens, environment
+   values and arbitrary caller data cannot enter by construction.
+3. Passive reads (``list``/``status``) are never audited and never create
+   the trail, so they remain byte-identical evidence-only operations.
+4. The trail is **evidence, not gating**: a failed trail write reports
+   ``audit="unavailable"`` in the structured result and never changes the
+   control decision already determined.
+
+Consequences:
+
+- repeated safe refusals are idempotent, inspectable, and auditable
+  without ever mutating the run directory they refer to;
+- one operator can always reconstruct *which* stop was attempted, *why*
+  it was refused or what was signalled, from the local trail alone;
+- the guarantee set grows only in the safe direction: no new action is
+  added (stop remains the only action; resume is still proposed-only),
+  and every new surface fails closed and reports missing facts as
+  ``null``.

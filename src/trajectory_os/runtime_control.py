@@ -1,4 +1,4 @@
-"""Deterministic runtime-control core for TrajectoryOS Pi runs (V1.73-V1.76).
+"""Deterministic runtime-control core for TrajectoryOS Pi runs (V1.73-V1.80).
 
 Provider-agnostic, stdlib-only, local-only building blocks that let the
 ``trajectory-pi-control`` CLI and the ``trajectory-pi-status`` reader answer
@@ -17,12 +17,22 @@ control-plane questions about a **recorded** run:
 * **V1.76 controlled recovery** — a read-only *recovery readiness* view over
   producer evidence (terminal state + valid transcript + clean exit
   evidence).  It proposes a *resume hint shape* only; it never acts.
+* **V1.78 structured results** — :func:`build_result` assembles the stable,
+  fixed-shape machine-readable *result contract* for one control operation:
+  every field either carries measured evidence or is ``None`` (unknown is
+  never invented; key order and presence are constant).
+* **V1.79 bounded audit trail** — :func:`append_audit_record` appends one
+  sanitized record to a bounded, local audit file under the runs root.
+  Records pass through a strict allow-list so secrets, tokens and
+  environment values can never enter the trail; malformed prior trail state
+  is preserved byte-for-byte and never crashes the writer.
 
 Everything here is deterministic and side-effect-free except the explicit IO
 helpers (``snapshot_process``, ``classify_run_state``,
 ``collect_recovery_facts``, the lock functions, ``append_control_event``,
-``send_sigterm``).  Each touches only the run directory or ``/proc`` reads
-of a specific pid — never network, never daemons, never arbitrary paths.
+``send_sigterm``, ``append_audit_record``).  Each touches only its run
+directory, the runs-root audit file, or ``/proc`` reads of a specific pid —
+never network, never daemons, never arbitrary paths.
 """
 
 from __future__ import annotations
@@ -33,7 +43,7 @@ import os
 import re
 import signal
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -47,15 +57,23 @@ __all__ = [
     "LOCK_FILENAME",
     "RUN_DIR_RE",
     "STALE_AFTER_SECONDS",
+    "AUDIT_FILENAME",
+    "AUDIT_KEY_ORDER",
+    "AUDIT_MAX_RECORDS",
+    "AUDIT_SCHEMA",
     "IdentityVerdict",
     "LockInfo",
     "ProcSnapshot",
+    "RESULT_FIELDS",
+    "RESULT_SCHEMA",
     "RecoveryFacts",
     "RunControlView",
     "acquire_control_lock",
     "ancestor_chain",
+    "append_audit_record",
     "append_control_event",
     "build_view",
+    "build_result",
     "classify_run_state",
     "collect_recovery_facts",
     "evaluate_recovery",
@@ -67,6 +85,7 @@ __all__ = [
     "parse_meta",
     "read_lock",
     "release_control_lock",
+    "sanitize_audit_record",
     "send_sigterm",
     "snapshot_process",
     "target_pid_for_stop",
@@ -93,6 +112,7 @@ END_RE = re.compile(r"^\[\d{2}:\d{2}:\d{2}\]\s+rc=(-?\d+)$")
 
 LOCK_FILENAME = "control.lock"
 EVENTS_FILENAME = "control-events.jsonl"
+AUDIT_FILENAME = "control-audit.jsonl"
 LOCK_ACTIONS = ("stop",)
 
 
@@ -473,8 +493,8 @@ def make_resume_hint(
             "source": facts.evidence_source,
             "exit_code": facts.pi_exit_code,
         },
-        "suggested_next_action": "resume-run (implemented in V1.77)",
-        "note": "read-only proposal; no action taken by this surface",
+                    "suggested_next_action": "resume-run (proposed only by this surface)",
+            "note": "read-only proposal; no action taken by this surface",
     }
 
 
@@ -736,3 +756,284 @@ def send_sigterm(pid: int) -> bool:
     except (ProcessLookupError, OverflowError):
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# V1.78 — structured control result contract (pure)
+# ---------------------------------------------------------------------------
+
+#: Schema identifier of the machine-readable result envelope (stable).
+RESULT_SCHEMA = "trajectory-pi-control-result/1"
+
+#: Exact, ordered field set of every structured result.
+#: Presence and order are part of the contract: a result always has exactly
+#: these keys, in this order.  A field that is unknown is present with the
+#: JSON value ``null`` — unknown is never omitted and never invented.
+RESULT_FIELDS: tuple[str, ...] = (
+    "schema",
+    "command",
+    "run_id",
+    "outcome",
+    "action_requested",
+    "action_performed",
+    "reasons",
+    "target_state",
+    "targetable",
+    "stoppable",
+    "target_pid",
+    "signal_requested",
+    "signal_sent",
+    "lock",
+    "grace_seconds",
+    "identity",
+    "lifecycle",
+    "audit",
+    "generated_at",
+    "evidence_source",
+)
+
+
+def _result_identity(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Normalize an identity evidence mapping; unknown stays ``None``."""
+    if value is None:
+        return None
+    return {
+        "state": value.get("state"),
+        "reasons": [str(reason) for reason in (value.get("reasons") or [])],
+    }
+
+
+def _result_lifecycle(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Normalize a lifecycle evidence mapping; unknown stays ``None``."""
+    if value is None:
+        return None
+    return {
+        "state": value.get("state"),
+        "reasons": [str(reason) for reason in (value.get("reasons") or [])],
+        "started_at": value.get("started_at"),
+        "ended_at": value.get("ended_at"),
+    }
+
+
+def build_result(
+    *,
+    command: str,
+    outcome: str,
+    reasons: Sequence[str] = (),
+    run_id: str | None = None,
+    action_requested: str | None = None,
+    action_performed: str | None = None,
+    target_state: str | None = None,
+    targetable: bool | None = None,
+    stoppable: bool | None = None,
+    target_pid: int | None = None,
+    signal_requested: str | None = None,
+    signal_sent: bool | None = None,
+    lock: str | None = None,
+    grace_seconds: float | None = None,
+    identity: Mapping[str, Any] | None = None,
+    lifecycle: Mapping[str, Any] | None = None,
+    audit: str | None = None,
+    generated_at: str | None = None,
+    evidence_source: str | None = "run-directory",
+) -> dict[str, Any]:
+    """Assemble one structured control operation result (V1.78 contract).
+
+    Rules baked in here (not in the callers):
+
+    * the result has exactly :data:`RESULT_FIELDS`, in that order;
+    * every unknown fact is JSON ``null`` — never an invented value;
+    * absent evidence mappings render as ``null``, not as empty objects;
+    * ``generated_at`` defaults to the literal ``"unknown"`` so a result is
+      never stamped with an unobserved clock;
+    * the output is a pure function of the arguments (deterministic).
+    """
+    if not isinstance(command, str) or not command:
+        raise ValueError("build_result: command must be a non-empty string")
+    if not isinstance(outcome, str) or not outcome:
+        raise ValueError("build_result: outcome must be a non-empty string")
+
+    out: dict[str, Any] = {
+        "schema": RESULT_SCHEMA,
+        "command": command,
+        "run_id": run_id,
+        "outcome": outcome,
+        "action_requested": action_requested,
+        "action_performed": action_performed,
+        "reasons": [str(reason) for reason in reasons],
+        "target_state": target_state,
+        "targetable": targetable,
+        "stoppable": stoppable,
+        "target_pid": target_pid,
+        "signal_requested": signal_requested,
+        "signal_sent": signal_sent,
+        "lock": lock,
+        "grace_seconds": grace_seconds,
+        "identity": _result_identity(identity),
+        "lifecycle": _result_lifecycle(lifecycle),
+        "audit": audit,
+        "generated_at": generated_at if generated_at is not None else "unknown",
+        "evidence_source": evidence_source,
+    }
+    return {key: out[key] for key in RESULT_FIELDS}
+
+
+# ---------------------------------------------------------------------------
+# V1.79 — bounded local audit trail for control operations
+# ---------------------------------------------------------------------------
+
+#: Schema identifier + record count bound of the audit trail contract.
+AUDIT_SCHEMA = "control-audit/1"
+
+#: Maximum number of records kept in the trail; older records are trimmed
+#: deterministically (the newest records are retained).
+AUDIT_MAX_RECORDS = 256
+
+#: Strict allow-list: only these keys may ever enter an audit record.
+#: Everything else (environment values, tokens, credentials, provider auth
+#: state, arbitrary caller data) is dropped, so the trail cannot leak
+#: secrets by construction.
+_AUDIT_ALLOWED_KEYS: frozenset[str] = frozenset(
+    {
+        "schema",
+        "ts",
+        "component",
+        "command",
+        "decision",
+        "outcome",
+        "reasons",
+        "run_id",
+        "action",
+        "target_pid",
+        "identity_state",
+        "identity_reasons",
+        "signal_requested",
+        "signal_sent",
+        "lock",
+        "grace_seconds",
+        "refusal_reason",
+        "runs_root",
+    }
+)
+
+#: Deterministic record key order (independent of caller dict order).
+AUDIT_KEY_ORDER: tuple[str, ...] = (
+    "schema",
+    "ts",
+    "component",
+    "runs_root",
+    "command",
+    "decision",
+    "outcome",
+    "reasons",
+    "run_id",
+    "action",
+    "target_pid",
+    "identity_state",
+    "identity_reasons",
+    "signal_requested",
+    "signal_sent",
+    "lock",
+    "grace_seconds",
+    "refusal_reason",
+)
+
+
+def _audit_value(key: str, value: Any) -> Any:
+    """Coerce one allow-listed value to a stable JSON-safe type."""
+    if key in ("reasons", "identity_reasons"):
+        if not isinstance(value, (list, tuple)):
+            return [str(value)]
+        return [str(item) for item in value]
+    if key == "target_pid":
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return None
+        return None
+    if key == "signal_sent":
+        return value if isinstance(value, bool) else None
+    if key == "grace_seconds":
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def sanitize_audit_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Reduce ``record`` to the audit contract (pure, deterministic).
+
+    * only :data:`_AUDIT_ALLOWED_KEYS` survive; anything else is dropped;
+    * ``None`` values are dropped ("unknown" simply does not appear);
+    * surviving values are coerced to a stable scalar/list shape;
+    * output keys follow :data:`AUDIT_KEY_ORDER`.
+    """
+    kept: dict[str, Any] = {}
+    for key in _AUDIT_ALLOWED_KEYS:
+        if key not in record or record[key] is None:
+            continue
+        value = _audit_value(key, record[key])
+        if value is not None:
+            kept[key] = value
+    ordered = {"schema": AUDIT_SCHEMA}
+    for key in AUDIT_KEY_ORDER:
+        if key in kept and key != "schema":
+            ordered[key] = kept[key]
+    return ordered
+
+
+def _audit_lines(runs_root: Path) -> list[str]:
+    """Existing trail lines, preserved byte-for-byte (malformed-safe)."""
+    path = runs_root / AUDIT_FILENAME
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []  # absent trail: a valid empty state, not an error
+    return [line for line in raw.splitlines() if line.strip()]
+
+
+def append_audit_record(runs_root: Path | str, record: Mapping[str, Any]) -> str:
+    """Append one sanitized record to the runs-root audit trail (V1.79).
+
+    Deterministic, bounded, local, fail-safe:
+
+    * the record is sanitized through :func:`sanitize_audit_record` before
+      any byte touches disk (no secrets, no arbitrary caller data);
+    * existing trail lines — including malformed ones — are preserved
+      byte-for-byte; they are counted, trimmed and kept, never parsed or
+      dropped, so a corrupted prior state cannot block a new record;
+    * the trail is bounded to :data:`AUDIT_MAX_RECORDS` newest records, so
+      it cannot grow without limit;
+    * the write is atomic (tmp file + ``os.replace``) and the trail file is
+      created with mode ``0o600`` so the local evidence never widens access.
+
+    Returns ``"ok"`` on success or ``"unavailable"`` when the trail cannot
+    be written.  The *control decision itself* never depends on the audit
+    write; this is evidence, not gating.
+    """
+    try:
+        root = Path(runs_root)
+        kept = sanitize_audit_record(record)
+        lines = (_audit_lines(root) + [json.dumps(kept, sort_keys=True)])
+        lines = lines[-AUDIT_MAX_RECORDS:]
+        final = root / AUDIT_FILENAME
+        tmp = root / (AUDIT_FILENAME + ".tmp")
+        with tmp.open("w", encoding="utf-8") as handle:
+            for line in lines:
+                handle.write(line + "\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, final)
+    except (OSError, ValueError, TypeError):
+        return "unavailable"
+    return "ok"

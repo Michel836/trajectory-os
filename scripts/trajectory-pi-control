@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TrajectoryOS Pi runtime control (V1.73-V1.76).
+"""TrajectoryOS Pi runtime control (V1.73-V1.80).
 
 Deterministic, local-only control surface for recorded ``trajectory-pi``
 runs.  This tool **inspects** runs, **classifies** whether a run is safe to
@@ -7,7 +7,9 @@ target, and performs **bounded graceful stops**.  It never:
 
 * sends SIGKILL (a grace timeout is reported, never escalated);
 * talks to any provider, network, or daemon;
-* mutates anything outside the selected run directory.
+* mutates anything outside the selected run directory or the runs-root
+  audit trail file (control actions only — never passive reads);
+* starts, resumes or re-schedules anything (stop is the only action).
 
 Commands
 --------
@@ -18,12 +20,42 @@ Commands
           bounded grace period (default 10s); report STOPPED (exit 0) or
           GRACE_TIMEOUT (exit 3) with reasons.
 
+V1.77 hardening
+---------------
+* ``--run`` selection is explicit and fail-closed: a bare run name resolves
+  **only** under the runs root (no CWD fallback, so a same-named directory
+  elsewhere can never be picked); an explicit path must resolve **inside**
+  the runs root (escaping it is a usage error, never a target).
+* ``--grace`` must be a finite, non-negative number of seconds (usage error
+  otherwise); negative or NaN grace windows are impossible.
+* stdout carries exactly the rendered payload, stderr exactly diagnostics;
+  repeated passive reads with fixed input and clock are byte-identical.
+
+V1.78 structured results
+------------------------
+Every command's JSON payload embeds a stable ``result`` envelope
+(``trajectory-pi-control-result/1``) with a fixed, ordered field set:
+command, run_id, outcome, requested/performed action, target state,
+targetability, target pid, identity and lifecycle evidence, signal and
+grace facts, lock outcome, and a deterministic generated_at tag.  Unknown
+facts are JSON ``null`` — never omitted, never invented.
+
+V1.79 bounded audit trail
+-------------------------
+Control actions (``stop`` and its refusals) append sanitized records to a
+bounded, local trail at ``<runs-root>/control-audit.jsonl`` (mode 0600,
+bounded to the newest 256 records, records constrained to a strict
+allow-list so secrets, tokens and environment values cannot enter it).
+Passive reads (``list``/``status``) are never audited and never write it.
+A trail write failure reports ``audit=unavailable`` and never changes the
+control decision that has already been determined.
+
 Fail-closed semantics
 ---------------------
 A run is *stoppable* only when ALL hold (see
 ``trajectory_os.runtime_control``): recorded pid present, state observed
 ``running``/``stale``, process alive, cwd and start-time identity verified
-against the run's fingerprint, and the pid is not in this tool's own
+against the run's recorded workspace, and the pid is not in this tool's own
 process tree.  Any missing fact -> not stoppable, with the precise reason
 (exit 2).  With no ``--run``, at most one stoppable run may exist among all
 runs, otherwise the stop is refused (ambiguous or absent target).
@@ -35,7 +67,8 @@ Exit codes
   3  grace timeout: SIGTERM delivered but the process did not exit
   5  lock conflict: another live holder owns the run's control lock
   6  corrupt lock: the lock file is unreadable (fail closed, never guessed)
-  64 usage error
+  64 usage error (invalid subcommand/option, invalid --grace, unknown run,
+     no runs found, run path escaping the runs root)
 
 The tool is deterministic: with the same runs-root contents, clocks and a
 bounded grace window, its JSON output is a pure function of those inputs.
@@ -45,6 +78,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -78,23 +112,35 @@ def _run_names(runs_root: Path) -> list[str]:
     ]
 
 
+def _usage(message: str):
+    print(f"trajectory-pi-control: {message}", file=sys.stderr)
+    raise SystemExit(64)
+
+
+# V1.77: explicit, fail-closed run selection (no accidental targets).
 def _resolve_run(runs_root: Path, run: str | None) -> Path:
+    """Resolve ``--run`` to a run directory **under** the runs root.
+
+    * a bare run name resolves only under the runs root — a same-named
+      directory in the CWD or elsewhere can never be picked by accident;
+    * an explicit path must resolve *inside* the runs root; escaping it is
+      a usage error, never a target;
+    * the target must be a directory matching the run-name format.
+    """
     if run is not None:
-        candidate = Path(run)
-        if not candidate.is_dir():
-            candidate = runs_root / run
+        looks_like_path = any(sep in run for sep in (os.sep, "/")) or os.path.isabs(run)
+        candidate = Path(run) if looks_like_path else runs_root / run
         if not (candidate.is_dir() and RC.RUN_DIR_RE.fullmatch(candidate.name)):
-            raise SystemExit(_usage(f"unknown run: {run!r}"))
+            _usage(f"unknown run: {run!r}")
+        try:
+            candidate.resolve().relative_to(runs_root.resolve())
+        except (ValueError, OSError):
+            _usage(f"unknown run: {run!r} (outside runs root: {runs_root})")
         return candidate
     names = _run_names(runs_root)
     if not names:
-        raise SystemExit(_usage(f"no runs found under {runs_root}"))
+        _usage(f"no runs found under {runs_root}")
     return runs_root / max(names)
-
-
-def _usage(message: str) -> str:
-    print(f"trajectory-pi-control: {message}", file=sys.stderr)
-    raise SystemExit(64)
 
 
 def _self_pid_tree() -> tuple[int, ...]:
@@ -114,6 +160,51 @@ def _emit(payload: dict[str, object], human: str, as_json: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
+# V1.78 — structured result envelope (single construction point, stable keys)
+# ---------------------------------------------------------------------------
+
+
+def _result(args: argparse.Namespace, *, now_tag: bool, **kw: object) -> dict[str, object]:
+    """Build the fixed-shape V1.78 result envelope for one operation."""
+    command = args.command[0] if args.command else "status"
+    return RC.build_result(
+        command=command,
+        generated_at=args.now_tag if now_tag else None,
+        **kw,
+    )
+
+
+def _result_identity(view: RC.RunControlView) -> dict[str, object] | None:
+    return {"state": view.identity.state, "reasons": list(view.identity.reasons)}
+
+
+def _result_lifecycle(run_dir: Path, view: RC.RunControlView) -> dict[str, object]:
+    meta = RC.parse_meta(run_dir / "meta.txt")
+    return {
+        "state": view.state,
+        "reasons": list(view.state_reasons),
+        "started_at": meta.get("started_at"),
+        "ended_at": meta.get("ended_at"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# V1.79 — audit trail (control actions only; never passive reads)
+# ---------------------------------------------------------------------------
+
+
+def _audit_stop(args: argparse.Namespace, runs_root: Path, record: dict[str, object]) -> str:
+    base: dict[str, object] = {
+        "ts": args.now_tag,
+        "component": "trajectory-pi-control",
+        "command": "stop",
+        "runs_root": str(runs_root),
+        **record,
+    }
+    return RC.append_audit_record(runs_root, base)
+
+
+# ---------------------------------------------------------------------------
 # subcommand implementations
 # ---------------------------------------------------------------------------
 
@@ -130,6 +221,13 @@ def cmd_list(args: argparse.Namespace) -> int:
         "runs_root": str(runs_root),
         "generated_at": args.now_tag,
         "runs": views,
+        "result": _result(
+            args,
+            now_tag=False,
+            outcome="OK",
+            audit=None,
+            evidence_source="runs-root",
+        ),
     }
     human = f"runs under {runs_root}: {len(views)}"
     for item in views:
@@ -156,6 +254,19 @@ def cmd_status(args: argparse.Namespace) -> int:
         "generated_at": args.now_tag,
         "run": run_dir.name,
         "control": view.to_dict(),
+        "result": _result(
+            args,
+            now_tag=False,
+            outcome="OK",
+            run_id=run_dir.name,
+            target_state=view.state,
+            targetable=view.targetable,
+            stoppable=view.stoppable,
+            target_pid=view.target_pid,
+            identity=_result_identity(view),
+            lifecycle=_result_lifecycle(run_dir, view),
+            evidence_source="run-directory",
+        ),
     }
     c = view.to_dict()
     human = (
@@ -176,6 +287,77 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _stop_reject(
+    args: argparse.Namespace,
+    runs_root: Path,
+    *,
+    outcome: str,
+    reasons: list[str],
+    run_dir: Path | None,
+    view: RC.RunControlView | None,
+    human: str,
+    lock: str | None = None,
+    audit: bool = True,
+    exit_code: int = 2,
+) -> int:
+    """One deterministic, audited refusal for a stop attempt (V1.77-V1.79)."""
+    result = _result(
+        args,
+        now_tag=True,
+        outcome=outcome,
+        reasons=reasons,
+        action_requested="stop",
+        action_performed=None,
+        run_id=run_dir.name if run_dir is not None else None,
+        target_state=view.state if view is not None else None,
+        targetable=view.targetable if view is not None else None,
+        stoppable=view.stoppable if view is not None else None,
+        target_pid=view.target_pid if view is not None else None,
+        lock=lock,
+        grace_seconds=args.grace,
+        identity=_result_identity(view) if view is not None else None,
+        lifecycle=(
+            _result_lifecycle(run_dir, view)
+            if run_dir is not None and view is not None
+            else None
+        ),
+        evidence_source="run-directory" if run_dir is not None else "runs-root",
+    )
+    if audit:
+        result["audit"] = _audit_stop(
+            args,
+            runs_root,
+            {
+                "decision": "refused",
+                "outcome": outcome,
+                "reasons": reasons,
+                "refusal_reason": reasons[0] if reasons else None,
+                "action": "stop",
+                "run_id": result["run_id"],
+                "target_pid": result["target_pid"],
+                "identity_state": result["identity"]["state"] if result["identity"] else None,
+                "lock": lock,
+                "grace_seconds": args.grace,
+            },
+        )
+    print(f"stop refused: {outcome} ({', '.join(reasons) or 'n/a'})", file=sys.stderr)
+    _emit(
+        {
+            "schema": f"trajectory-pi-control/{RC.CONTROL_CORE}",
+            "command": "stop",
+            "outcome": outcome,
+            "reasons": reasons,
+            "run": result["run_id"],
+            "target_pid": result["target_pid"],
+            "lock": lock,
+            "result": result,
+        },
+        human,
+        args.json,
+    )
+    return exit_code
+
+
 def cmd_stop(args: argparse.Namespace) -> int:
     runs_root = Path(args.runs_root)
     grace = float(args.grace)
@@ -189,35 +371,33 @@ def cmd_stop(args: argparse.Namespace) -> int:
             if view.stoppable:
                 stoppable.append((name, view))
         if len(stoppable) == 0:
-            _emit(
-                {
-                    "schema": f"trajectory-pi-control/{RC.CONTROL_CORE}",
-                    "command": "stop",
-                    "outcome": "REJECTED",
-                    "reasons": ["no-stoppable-run-in-runs-root"],
-                    "run": None,
-                },
-                "stop rejected: no stoppable run was found in the runs root "
-                "(fail closed; inspect with `list`)",
-                as_json,
+            return _stop_reject(
+                args,
+                runs_root,
+                outcome="REJECTED",
+                reasons=["no-stoppable-run-in-runs-root"],
+                run_dir=None,
+                view=None,
+                human=(
+                    "stop rejected: no stoppable run was found in the runs root "
+                    "(fail closed; inspect with `list`)"
+                ),
             )
-            return 2
         if len(stoppable) > 1:
             names = [n for n, _ in stoppable]
-            _emit(
-                {
-                    "schema": f"trajectory-pi-control/{RC.CONTROL_CORE}",
-                    "command": "stop",
-                    "outcome": "REJECTED",
-                    "reasons": [f"ambiguous-target:{len(stoppable)}", *names],
-                    "run": None,
-                },
-                f"stop rejected (ambiguous-target: {len(stoppable)}): "
-                f"multiple stoppable runs found; select one with --run "
-                f"({', '.join(names)})",
-                as_json,
+            return _stop_reject(
+                args,
+                runs_root,
+                outcome="REJECTED",
+                reasons=[f"ambiguous-target:{len(stoppable)}", *names],
+                run_dir=None,
+                view=None,
+                human=(
+                    f"stop rejected (ambiguous-target: {len(stoppable)}): "
+                    f"multiple stoppable runs found; select one with --run "
+                    f"({', '.join(names)})"
+                ),
             )
-            return 2
         name, view = stoppable[0]
         run_dir = runs_root / name
     else:
@@ -225,68 +405,65 @@ def cmd_stop(args: argparse.Namespace) -> int:
         view = _view(run_dir, args.now)
         if not view.stoppable:
             reasons = list(view.stoppable_reasons) or [f"state-is-{view.state}"]
-            _emit(
-                {
-                    "schema": f"trajectory-pi-control/{RC.CONTROL_CORE}",
-                    "command": "stop",
-                    "outcome": "REJECTED",
-                    "reasons": reasons,
-                    "run": run_dir.name,
-                    "control": view.to_dict(),
-                },
-                f"stop rejected for {run_dir.name}: {', '.join(reasons)} "
-                "(fail closed; a stale, dead, or unverified target is never signalled)",
-                as_json,
+            return _stop_reject(
+                args,
+                runs_root,
+                outcome="REJECTED",
+                reasons=reasons,
+                run_dir=run_dir,
+                view=view,
+                human=(
+                    f"stop rejected for {run_dir.name}: {', '.join(reasons)} "
+                    "(fail closed; a stale, dead, or unverified target is never signalled)"
+                ),
             )
-            return 2
 
     target = view.target_pid
     if target is None:
-        _emit(
-            {
-                "schema": f"trajectory-pi-control/{RC.CONTROL_CORE}",
-                "command": "stop",
-                "outcome": "REJECTED",
-                "reasons": ["no-recorded-pid"],
-                "run": run_dir.name,
-            },
-            f"stop rejected for {run_dir.name}: no recorded pid",
-            as_json,
+        return _stop_reject(
+            args,
+            runs_root,
+            outcome="REJECTED",
+            reasons=["no-recorded-pid"],
+            run_dir=run_dir,
+            view=view,
+            human=f"stop rejected for {run_dir.name}: no recorded pid",
         )
-        return 2
 
     # Run-local control lock: refuse while another live holder is working.
     holder = os.getpid()
     outcome = RC.acquire_control_lock(run_dir, "stop", holder_pid=holder)
     if outcome == "conflict":
         info = RC.read_lock(run_dir)
-        _emit(
-            {
-                "schema": f"trajectory-pi-control/{RC.CONTROL_CORE}",
-                "command": "stop",
-                "outcome": "LOCK_CONFLICT",
-                "reasons": [f"lock-held-by-alive:{info.holder}"],
-                "run": run_dir.name,
-            },
-            f"stop rejected for {run_dir.name}: another live control holder "
-            f"(pid {info.holder}) owns the run lock",
-            as_json,
+        return _stop_reject(
+            args,
+            runs_root,
+            outcome="LOCK_CONFLICT",
+            reasons=[f"lock-held-by-alive:{info.holder}"],
+            run_dir=run_dir,
+            view=view,
+            lock="conflict",
+            exit_code=5,
+            human=(
+                f"stop rejected for {run_dir.name}: another live control holder "
+                f"(pid {info.holder}) owns the run lock"
+            ),
         )
-        return 5
     if outcome == "corrupt":
-        _emit(
-            {
-                "schema": f"trajectory-pi-control/{RC.CONTROL_CORE}",
-                "command": "stop",
-                "outcome": "LOCK_CORRUPT",
-                "reasons": ["lock-file-corrupt-fail-closed"],
-                "run": run_dir.name,
-            },
-            f"stop rejected for {run_dir.name}: the run lock file is corrupt "
-            "(fail closed; a human must inspect the run directory)",
-            as_json,
+        return _stop_reject(
+            args,
+            runs_root,
+            outcome="LOCK_CORRUPT",
+            reasons=["lock-file-corrupt-fail-closed"],
+            run_dir=run_dir,
+            view=view,
+            lock="corrupt",
+            exit_code=6,
+            human=(
+                f"stop rejected for {run_dir.name}: the run lock file is corrupt "
+                "(fail closed; a human must inspect the run directory)"
+            ),
         )
-        return 6
 
     RC.append_control_event(
         run_dir,
@@ -329,6 +506,7 @@ def cmd_stop(args: argparse.Namespace) -> int:
             f"{grace:.1f}s; no SIGKILL is ever sent by this surface — "
             f"inspect the run manually"
         )
+    reasons: list[str] = [] if stopped else [f"grace-timeout:{grace:.1f}s"]
     RC.append_control_event(
         run_dir,
         event="stop-result",
@@ -339,16 +517,57 @@ def cmd_stop(args: argparse.Namespace) -> int:
     )
     RC.release_control_lock(run_dir)
 
+    result = _result(
+        args,
+        now_tag=True,
+        outcome=outcome_str,
+        reasons=reasons,
+        action_requested="stop",
+        action_performed="sigterm-sent" if sent else None,
+        run_id=run_dir.name,
+        target_state=view.state,
+        targetable=view.targetable,
+        stoppable=view.stoppable,
+        target_pid=target,
+        signal_requested="SIGTERM" if sent else None,
+        signal_sent=bool(sent),
+        lock=outcome,
+        grace_seconds=grace,
+        identity=_result_identity(view),
+        lifecycle=_result_lifecycle(run_dir, view),
+        evidence_source="run-directory",
+    )
+    result["audit"] = _audit_stop(
+        args,
+        runs_root,
+        {
+            "decision": "signal",
+            "outcome": outcome_str,
+            "reasons": reasons,
+            "action": "stop",
+            "run_id": run_dir.name,
+            "target_pid": target,
+            "identity_state": view.identity.state,
+            "identity_reasons": list(view.identity.reasons),
+            "signal_requested": "SIGTERM" if sent else None,
+            "signal_sent": bool(sent),
+            "lock": outcome,
+            "grace_seconds": grace,
+        },
+    )
+
     _emit(
         {
             "schema": f"trajectory-pi-control/{RC.CONTROL_CORE}",
             "command": "stop",
             "outcome": outcome_str,
+            "reasons": reasons,
             "run": run_dir.name,
             "target_pid": target,
             "grace_seconds": grace,
             "lock": outcome,
             "control": view.to_dict(),
+            "result": result,
             "note": note,
         },
         f"{outcome_str}: run {run_dir.name} (target pid {target}); {note}",
@@ -371,7 +590,7 @@ def main(argv: list[str] | None = None) -> int:
     root = _Parser(
         prog="trajectory-pi-control",
         description="Deterministic safe-target, graceful-stop and recovery-readiness "
-        "control surface for trajectory-pi runs (V1.73-V1.76).",
+        "control surface for trajectory-pi runs (V1.73-V1.80).",
     )
     root.add_argument(
         "command",
@@ -396,14 +615,17 @@ def main(argv: list[str] | None = None) -> int:
     root.add_argument(
         "--grace", type=float, default=10.0, help="grace seconds after SIGTERM (default 10)"
     )
-    root.add_argument(
-        "--now", type=float, default=None, help=argparse.SUPPRESS
-    )
+    root.add_argument("--now", type=float, default=None, help=argparse.SUPPRESS)
     root.add_argument(
         "--now-tag", default=time.strftime("%Y-%m-%dT%H:%M:%S"), help=argparse.SUPPRESS
     )
 
     args = root.parse_args(argv)
+
+    # V1.77: the grace window must be a finite, non-negative bound.
+    if not (math.isfinite(args.grace) and args.grace >= 0.0):
+        _usage(f"invalid --grace: {args.grace!r} (must be finite and >= 0)")
+
     mode = args.command[0] if args.command else "status"
     dispatch = {"list": cmd_list, "status": cmd_status, "stop": cmd_stop}
     return dispatch[mode](args)
