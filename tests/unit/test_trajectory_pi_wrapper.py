@@ -7,9 +7,16 @@ server and no real Pi provider, and add no dependencies.
 
 from __future__ import annotations
 
+import contextlib
+import json
 import os
+import re
 import shlex
+import shutil
+import signal
 import subprocess
+import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -17,6 +24,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER = REPO_ROOT / "scripts" / "trajectory-pi"
+READER = REPO_ROOT / "scripts" / "trajectory-pi-status"
 
 PROVIDER_PHRASE = "no user query found in messages"
 FALLBACK_QUERY = (
@@ -41,6 +49,10 @@ ctx={ctx}
 # is ever spawned (the reviewer is a direct Ollama call, not Pi).
 printf 'AGENT\\n' >> "$ctx/agent_invocations.log"
 printf '%s\\n' "$@" > "$ctx/args.log"
+# V1.70 — self-reported identity of the executed agent process, so tests can
+# prove pi_pid is producer-observed evidence of THIS process (the wrapper
+# records PI_PID=$! of this exact spawned process).
+printf '%s\\n' "$$" > "$ctx/pi_pid_seen"
 touch_file="$ctx/touch_file"
 if [[ -s "$touch_file" ]]; then
     printf 'agent work\\n' > "$(cat "$touch_file")"
@@ -126,6 +138,29 @@ class TPContext:
         lines = [line for line in lines if line != ""]
         assert lines, "fake pi argv log is empty"
         return lines
+
+    # ------------------------------------------------------------- V1.70+
+    def runs_root(self) -> Path:
+        return self.work / ".trajectory-pi" / "runs"
+
+    def run_dirs(self) -> list[Path]:
+        runs = self.runs_root()
+        return sorted(runs.iterdir()) if runs.is_dir() else []
+
+    def latest_run_dir(self) -> Path:
+        run_dirs = self.run_dirs()
+        assert run_dirs, "no run directory was created"
+        return run_dirs[-1]
+
+    def status_log_text(self) -> str:
+        status = self.latest_run_dir() / "status.log"
+        assert status.is_file(), "no status.log was created"
+        return status.read_text()
+
+    @property
+    def pi_pid_seen(self) -> Path:
+        """Self-reported PID file written by the fake pi process."""
+        return self.ctx / "pi_pid_seen"
 
     def latest_meta(self) -> str:
         run_dirs = sorted((self.work / ".trajectory-pi" / "runs").iterdir())
@@ -1110,3 +1145,268 @@ def test_parser_contradictory_responses_never_allow_commit(
     #     contract maps READY_FOR_COMMIT exclusively onto a PASS
     #     verdict, so `RESULT != PASS` proves commit is impossible.
     _assert_never_pass(tmp_path, mutate(_CANONICAL_PASS))
+
+
+# ---------------------------------------------------------------------------
+# V1.70+ — producer-native run identity and lifecycle evidence
+#
+# Contract (Issue #271): the wrapper records identity and lifecycle facts
+# exactly as it observes them — never derived after the fact, never shared
+# between runs, and never written before the event happens. The reader
+# (scripts/trajectory-pi-status) then exposes the same evidence fail-closed.
+# ---------------------------------------------------------------------------
+
+
+def _meta_kv(meta: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in meta.splitlines():
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        out.setdefault(key, value)
+    return out
+
+
+def _run_dir_with_key(runs_root: Path, key: str, deadline: float = 30.0) -> Path:
+    deadline_at = time.monotonic() + deadline
+    while time.monotonic() < deadline_at:
+        if runs_root.is_dir():
+            for d in sorted(runs_root.iterdir()):
+                meta = d / "meta.txt"
+                if meta.is_file() and key in meta.read_text():
+                    return d
+        time.sleep(0.2)
+    raise AssertionError(f"no run recorded {key!r} within {deadline}s")
+
+
+def test_run_identity_is_recorded_by_producer(tp: TPContext) -> None:
+    tp.scenario(rc=0, output="")
+    result = tp.run(*SMOKE_ARGS, "--", "identity test")
+    assert result.returncode == 0, result.stderr
+
+    meta = tp.latest_meta()
+    kv = _meta_kv(meta)
+    latest = tp.latest_run_dir()
+
+    # run_id: stable, unique, and identical to the authoritative run dir name.
+    assert kv.get("run_id") == latest.name
+    assert kv.get("run_id") not in ("", "unknown")
+
+    # pid: the wrapper's own (producer-observed) process id.
+    recorded_pid = kv.get("pid", "")
+    assert recorded_pid.isdigit() and int(recorded_pid) > 0, kv
+
+    # workspace: canonical absolute repository path (logical or resolved).
+    workspace = Path(kv.get("workspace", ""))
+    assert workspace.is_absolute()
+    assert workspace in (tp.work, tp.work.resolve())
+
+    # started_at is written exactly once at run start (never re-emitted).
+    assert sum(1 for line in meta.splitlines() if line.startswith("started_at=")) == 1
+
+    # the wrapper report exposes the identity for humans too
+    assert f"RUN ID                  {kv['run_id']}" in result.stdout
+
+
+def test_pi_pid_is_the_spawned_pi_process_itself(tp: TPContext) -> None:
+    tp.scenario(rc=0, output="")
+    result = tp.run(*SMOKE_ARGS, "--", "pi pid test")
+    assert result.returncode == 0, result.stderr
+
+    kv = _meta_kv(tp.latest_meta())
+    recorded = kv.get("pi_pid", "")
+
+    # the fake pi self-reports its own runtime pid; the producer-observed
+    # PI_PID must be exactly that same spawned process
+    assert tp.pi_pid_seen.is_file(), "fake pi did not run"
+    self_reported = tp.pi_pid_seen.read_text().strip()
+    assert recorded == self_reported
+    assert recorded.isdigit()
+
+    # lifecycle owner (wrapper) and executed agent are distinct processes
+    assert recorded != kv.get("pid", "")
+
+
+def test_lifecycle_evidence_is_ordered_and_written_once(tp: TPContext) -> None:
+    tp.scenario(rc=0, output="")
+    result = tp.run(*SMOKE_ARGS, "--", "lifecycle test")
+    assert result.returncode == 0, result.stderr
+
+    lines = tp.latest_meta().splitlines()
+
+    def row(field: str) -> int:
+        hits = [i for i, line in enumerate(lines) if line.startswith(f"{field}=")]
+        assert len(hits) == 1, f"{field} must be written exactly once: {lines}"
+        return hits[0]
+
+    # evidence is never claimed before the event happened:
+    # start -> pi spawned -> pi exited -> run end -> classification
+    order = [
+        row("started_at"),
+        row("pi_pid"),
+        row("ended_at"),
+        row("pi_exit_code"),
+        row("agent_classification"),
+    ]
+    assert order == sorted(order), f"lifecycle evidence out of order: {lines}"
+
+
+def test_heartbeat_elapsed_is_monotonic_across_run(tp: TPContext) -> None:
+    tp.scenario(rc=0, output="")
+    result = tp.run(*SMOKE_ARGS, "--", "heartbeat test")
+    assert result.returncode == 0, result.stderr
+
+    heartbeat_lines = [
+        line for line in tp.status_log_text().splitlines() if line.startswith("[")
+    ]
+    assert heartbeat_lines, "expected at least one heartbeat line"
+
+    seconds: list[int] = []
+    for line in heartbeat_lines:
+        match = re.search(r"elapsed=(\d+):(\d+):(\d+)", line)
+        assert match, line
+        seconds.append(
+            int(match.group(1)) * 3600 + int(match.group(2)) * 60 + int(match.group(3))
+        )
+    assert seconds == sorted(seconds), (
+        f"heartbeat elapsed must be non-decreasing: {heartbeat_lines}"
+    )
+
+
+def test_distinct_runs_have_distinct_identities_and_directories(tp: TPContext) -> None:
+    tp.scenario(rc=0, output="")
+    assert tp.run(*SMOKE_ARGS, "--", "first run").returncode == 0
+    first_dir = tp.latest_run_dir()
+
+    # advance the second-resolution run-id clock so the second run must take
+    # a fresh identity rather than sharing (or clobbering) the first run's
+    time.sleep(1.2)
+    tp.scenario(rc=0, output="")
+    assert tp.run(*SMOKE_ARGS, "--", "second run").returncode == 0
+
+    run_dirs = tp.run_dirs()
+    assert len(run_dirs) == 2
+    assert run_dirs[-1] != first_dir
+
+    # recorded run_id always equals its own authoritative run dir, per run
+    recorded = {_meta_kv((d / "meta.txt").read_text())["run_id"] for d in run_dirs}
+    assert recorded == {d.name for d in run_dirs}
+    assert len(recorded) == 2
+
+
+def test_existing_run_identity_is_never_overwritten(tp: TPContext) -> None:
+    # A run directory already exists under the wrapper's second-resolution
+    # run-id: a new run taking that same identity must fail closed and must
+    # never merge its evidence into the existing run's artifacts.
+    # Determinism: a `date` PATH shim (tp.run already prepends tp.ctx.parent
+    # / "bin") pins ONLY the run-identity format string (+%Y%m%d-%H%M%S) to
+    # a fixed stamp and forwards every other date invocation to the real
+    # date, so the collision branch below is always taken (no wall-clock
+    # race) while timestamps/elapsed remain producer-real.
+    stamp = "20990101-000000"
+    real_date = shutil.which("date")
+    assert real_date, "no real date binary found for the shim fallback"
+    shim = tp.ctx.parent / "bin" / "date"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "${1:-}" == "+%Y%m%d-%H%M%S" ]]; then\n'
+        f"    printf '%s\\n' '{stamp}'\n"
+        "    exit 0\n"
+        "fi\n"
+        f'exec {real_date} "$@"\n'
+    )
+    shim.chmod(0o755)
+
+    existing = tp.runs_root() / stamp
+    existing.mkdir(parents=True, exist_ok=True)
+    marker = existing / "meta.txt"
+    marker.write_text("existing_run=1\n")
+    marker_before = marker.read_text()
+
+    tp.scenario(rc=0, output="")
+    (tp.ctx / "agent_invocations.log").unlink(missing_ok=True)
+
+    result = tp.run(*SMOKE_ARGS, "--", "collision run")
+
+    # failed closed on the unique-run-identity invariant
+    assert result.returncode == 5, result.stderr
+    assert "Run identity must be unique" in result.stderr
+    # the pre-existing run's evidence is untouched
+    assert marker.read_text() == marker_before
+    assert sorted(p.name for p in existing.iterdir()) == ["meta.txt"]
+    # and no agent process was ever spawned for the failed run
+    assert not (tp.ctx / "agent_invocations.log").exists()
+
+
+def test_interrupted_run_records_exit_evidence_and_stays_inspectable(
+    tp: TPContext,
+) -> None:
+    # a long-running pi that only exits via a forwarded signal still must
+    # leave complete lifecycle/exit/classification evidence, and the
+    # read-only reader must still recognize the run (control-plane readiness
+    # rests on stable identity + exit evidence, even for interrupted runs)
+    binary = tp.ctx.parent / "bin"
+    (binary / "pi").write_text("#!/usr/bin/env bash\nsleep 60\n")
+    (binary / "pi").chmod(0o755)
+
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("TRAJECTORY_PI_BOOTSTRAP", "TRAJECTORY_PI_BOOTSTRAP_COPY")
+    }
+    env["PATH"] = f"{binary}{os.pathsep}{env['PATH']}"
+
+    proc = subprocess.Popen(
+        ["bash", str(WRAPPER), *SMOKE_ARGS, "--", "long-running run"],
+        cwd=tp.work, env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=4)
+        assert proc.poll() is None, "the long-running pi should still be alive"
+        run_dir = _run_dir_with_key(tp.runs_root(), "pi_pid=")
+        proc.send_signal(signal.SIGTERM)
+        rc = proc.wait(timeout=30)
+        assert rc == 143, (
+            f"wrapper should map forwarded-TERM to 143, got {rc}\n"
+            f"{proc.stdout}\n{proc.stderr}"
+        )
+
+        meta = (run_dir / "meta.txt").read_text()
+        assert "started_at=" in meta and "ended_at=" in meta
+        assert "pi_exit_code=143" in meta
+        # a forwarded-signal termination must never be claimed as a
+        # clean completion
+        assert "AGENT_COMPLETED" not in meta
+
+        # the reader still recognizes the (interrupted) run: stable identity,
+        # ended state, complete evidence -> control-surface ready
+        out = subprocess.run(
+            [sys.executable, str(READER),
+             "--run", run_dir.name,
+             "--runs-root", str(tp.runs_root()), "--json"],
+            capture_output=True, text=True, check=True,
+        )
+        data = json.loads(out.stdout)
+        assert data["run_id"] == run_dir.name
+        assert data["identity"]["pid"] != "unknown"
+        assert data["lifecycle"]["state"] == "ended"
+        assert data["control"]["ready_for_control"] is True
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
+def test_producer_run_identity_contract_pinned_in_source() -> None:
+    # structural (positive) guard for the producer contract. Unlike a
+    # byte-identical HEAD comparison this works both with uncommitted
+    # changes in a PR and after the increment is merged.
+    src = WRAPPER.read_text()
+    assert "run_id=$STAMP" in src
+    assert "pid=$$" in src
+    assert "workspace=$WORKSPACE" in src
+    assert "pi_pid=$PI_PID" in src
+    # fail-closed collision guard exists and runs before any artifact write
+    # into the run directory (the guard precedes the first identity write)
+    assert src.index('[[ -e "$RUN_DIR" || -L "$RUN_DIR" ]]') < src.index("run_id=$STAMP")

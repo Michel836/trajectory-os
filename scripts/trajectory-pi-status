@@ -44,6 +44,25 @@ V1.69 (run identity and lifecycle metadata, additive):
 
     All pre-V1.69 fields and semantics (V1.68 baseline) are unchanged.
 
+V1.72 (runtime control-plane foundation, additive, read-only):
+    the reader exposes deterministic producer-evidence views suitable as
+    the foundation for future run control (no control is implemented):
+      * identity.pi_pid   only when the producer recorded the executed
+                          Pi process identity; malformed values render
+                          unknown — nothing is ever invented;
+      * control           a derived, fail-closed view answering "is the
+                          metadata sufficient to safely contemplate a
+                          future control action": the observed state
+                          (running/stale/ended/unknown), which identity/
+                          lifecycle evidence is missing, and whether the
+                          evidence set is sufficient (ready_for_control).
+                          Pure function of recorded producer evidence;
+      * run_id cross-check when the producer recorded a run_id that
+                          disagrees with the run directory, the run
+                          directory remains the authoritative identity
+                          and the disagreement is surfaced as a warning
+                          (never silently absorbed).
+
 Usage:
     scripts/trajectory-pi-status [--run NAME|PATH] [--runs-root DIR]
                                  [--json] [--now 2026-01-01T00:00:00Z]
@@ -68,7 +87,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.69.0"
+VERSION = "1.72.0"
 MISSING = "unknown"
 UNAVAILABLE = "unavailable"
 DEFAULT_STALE_AFTER = 120
@@ -210,11 +229,12 @@ def parse_iso(value: str) -> datetime | None:
 def run_identity(run_dir: Path, meta: dict[str, str]) -> dict[str, str]:
     """Deterministic identity of the observed run, from artifacts only.
 
-    pid/workspace are pass-through: they are exposed only when the
+    pid/pi_pid/workspace are pass-through: they are exposed only when the
     producer recorded them. A malformed pid renders unknown; nothing is
     ever invented, and legacy runs stay valid (unknown).
     """
     pid = (meta.get("pid") or "").strip()
+    pi_pid = (meta.get("pi_pid") or "").strip()
     return {
         "run_id": run_dir.name,
         "run_dir": str(run_dir),
@@ -222,6 +242,7 @@ def run_identity(run_dir: Path, meta: dict[str, str]) -> dict[str, str]:
         "head_before": meta.get("head_before", MISSING),
         "workspace": meta.get("workspace", MISSING),
         "pid": pid if PID_RE.match(pid) else MISSING,
+        "pi_pid": pi_pid if PID_RE.match(pi_pid) else MISSING,
     }
 
 
@@ -286,6 +307,53 @@ def lifecycle_for(
         "updated_at": updated_at,
         "updated_source": updated_source,
         "elapsed": elapsed_text,
+    }
+
+
+# --------------------------------------------- V1.72: control-plane view
+
+def control_view(
+    state: str,
+    identity: dict[str, str],
+    started_at_raw: str | None,
+    ended_at_raw: str | None,
+) -> dict[str, Any]:
+    """Deterministic "safe to contemplate future control" view (V1.72).
+
+    Pure function of recorded producer evidence; it never invents
+    anything and never weakens the fail-closed rule that absence of
+    evidence is rendered unknown:
+      * state               the observed lifecycle state (running/stale/
+                            ended/unknown) — re-exposed so a control-plane
+                            caller gets one consistent object;
+      * missing_evidence    identity/lifecycle fields that are unknown
+                            (empty list when every producer-recorded field
+                            of the current producer format is present);
+      * ready_for_control   true only when the run state is observed
+                            (not unknown) AND the producer recorded a
+                            valid pid, i.e. the evidence refers to a
+                            concrete process. A stale run is still
+                            control-contemplable (its evidence is
+                            complete; liveness is re-verified at control
+                            time). An unknown-state run is never ready.
+    """
+    missing: list[str] = []
+    if identity["pid"] == MISSING:
+        missing.append("pid")
+    if identity["pi_pid"] == MISSING:
+        missing.append("pi_pid")
+    if identity["workspace"] == MISSING:
+        missing.append("workspace")
+    started_missing = started_at_raw is None or not started_at_raw
+    if started_missing or parse_iso(started_at_raw or "") is None:
+        missing.append("started_at")
+    if state == "ended" and not (ended_at_raw or ""):
+        missing.append("ended_at")
+    return {
+        "state": state,
+        "missing_evidence": missing,
+        "ready_for_control": state in {"running", "stale", "ended"}
+        and identity["pid"] != MISSING,
     }
 
 
@@ -470,6 +538,17 @@ def collect(
         warnings.append("missing meta.txt (metadata unavailable)")
     if meta_bad:
         warnings.append(f"meta.txt has {meta_bad} malformed line(s)")
+
+    # V1.72 — run_id cross-check: the run directory name is the
+    # authoritative identity (stable selection basis, V1.69). A
+    # producer-recorded run_id that disagrees means the artifacts and the
+    # directory diverge; surface it explicitly instead of absorbing it.
+    producer_run_id = (meta.get("run_id") or "").strip()
+    if producer_run_id and producer_run_id != run_dir.name:
+        warnings.append(
+            f"producer run_id ({producer_run_id}) disagrees with the run "
+            f"directory name ({run_dir.name}); run directory is authoritative"
+        )
 
     status_raw = read_lines(run_dir / "status.log")
     beats, status_bad = parse_status_log(status_raw)
@@ -700,6 +779,12 @@ def collect(
             ended, pi_state, pi_detail, started, meta, beats,
             elapsed_text, run_dir,
         ),
+        "control": control_view(
+            pi_state,
+            run_identity(run_dir, meta),
+            meta.get("started_at", "") or None,
+            meta.get("ended_at", "") or None,
+        ),
         "run_class": meta.get("run_class", MISSING),
         "branch": meta.get("branch", MISSING),
         "model": meta.get("model", MISSING),
@@ -752,8 +837,16 @@ def render_text(state: dict[str, Any]) -> str:
     row("run_id", identity["run_id"])
     row("workspace", identity["workspace"])
     row("pid", identity["pid"])
+    row("pi_pid", identity["pi_pid"])
     row("lifecycle", f"{lifecycle['state']} ({lifecycle['detail']})")
     row("updated_at", lifecycle["updated_at"])
+    control = state["control"]
+    if control["ready_for_control"]:
+        row("control", f"ready (state={control['state']}; evidence complete)")
+    else:
+        missing = control["missing_evidence"]
+        detail = f"; missing: {', '.join(missing)}" if missing else ";"
+        row("control", f"not ready (state={control['state']}{detail}")
 
     row("pi_state", f"{state['pi_state']} ({state['pi_state_detail']})")
     row("model", state["model"])
@@ -800,8 +893,9 @@ def render_text(state: dict[str, Any]) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trajectory-pi-status",
-        description="Read-only status reader for trajectory-pi runs (V1.69: "
-                    "run identity & lifecycle metadata).",
+        description="Read-only status reader for trajectory-pi runs (V1.72: "
+                    "run identity, lifecycle metadata & control-plane "
+                    "foundation).",
     )
     parser.add_argument("--run", default=None,
                         help="run name or directory (default: latest under runs root)")
