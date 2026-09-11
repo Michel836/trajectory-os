@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """trajectory-pi-status — read-only status reader for trajectory-pi runs.
 
-ISSUE #176 (V1.67 Complete live Pi observability).
+ISSUE #176 (V1.67 Complete live Pi observability); extended in V1.69 with
+deterministic run identity and lifecycle metadata (additive schema).
 
 Reads artifacts written by scripts/trajectory-pi (V1.64) under
 <cwd>/.trajectory-pi/runs/<timestamp>/ and renders a deterministic,
@@ -25,6 +26,24 @@ Guarantees:
     * Deterministic: with --now the output is a pure function of
       the artifacts, stable for testing and for Codex.
 
+V1.69 (run identity and lifecycle metadata, additive):
+    the machine-consumable state additionally exposes
+      * run_id            deterministic identity of the observed run
+                         (the run directory name), stable across any
+                         selection mode for the same run;
+      * identity          run_id, run_dir, branch, head_before, and,
+                         only when the producer recorded them, pid and
+                         workspace (never invented; unknown otherwise);
+      * lifecycle         state (running/stale/ended/unknown), detail,
+                         started_at, ended_at, elapsed, plus updated_at
+                         with its updated_source: the last-updated
+                         timestamp is only ever a measurement of
+                         recorded evidence (meta ended_at, last
+                         heartbeat, newest artifact mtime) and is
+                         unknown when no such evidence exists.
+
+    All pre-V1.69 fields and semantics (V1.68 baseline) are unchanged.
+
 Usage:
     scripts/trajectory-pi-status [--run NAME|PATH] [--runs-root DIR]
                                  [--json] [--now 2026-01-01T00:00:00Z]
@@ -45,11 +64,11 @@ import re
 import subprocess
 import sys
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.67.0"
+VERSION = "1.69.0"
 MISSING = "unknown"
 UNAVAILABLE = "unavailable"
 DEFAULT_STALE_AFTER = 120
@@ -68,6 +87,14 @@ GEN3S_RE = re.compile(r"gen_3s=([0-9]+(?:\.[0-9]+)?|unavailable)\s*tok/s")
 # native, monotonic measurement.  It is deliberately distinct from gen_3s:
 # the reader must never synthesize a total from rate and elapsed time.
 GEN_TOTAL_RE = re.compile(r"gen_total=(\d+)\s*tokens")
+# Process identity recorded by future producer versions: positive int only.
+PID_RE = re.compile(r"^[1-9][0-9]*$")
+# Artifact names consulted (in priority order) by the mtime fallback for
+# lifecycle.updated_at; only file mtime is observed, never content order.
+ARTIFACT_NAMES = (
+    "meta.txt", "status.log", "pi.log", "review.txt",
+    "worktree-files.txt", "worktree-status.txt", "worktree-metadata.txt",
+)
 
 
 def hhmmss(total: int) -> str:
@@ -176,6 +203,90 @@ def parse_iso(value: str) -> datetime | None:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt
+
+
+# ---------------------------------------------------------- V1.69: identity
+
+def run_identity(run_dir: Path, meta: dict[str, str]) -> dict[str, str]:
+    """Deterministic identity of the observed run, from artifacts only.
+
+    pid/workspace are pass-through: they are exposed only when the
+    producer recorded them. A malformed pid renders unknown; nothing is
+    ever invented, and legacy runs stay valid (unknown).
+    """
+    pid = (meta.get("pid") or "").strip()
+    return {
+        "run_id": run_dir.name,
+        "run_dir": str(run_dir),
+        "branch": meta.get("branch", MISSING),
+        "head_before": meta.get("head_before", MISSING),
+        "workspace": meta.get("workspace", MISSING),
+        "pid": pid if PID_RE.match(pid) else MISSING,
+    }
+
+
+def compute_updated_at(
+    run_dir: Path,
+    ended: bool,
+    started: datetime | None,
+    ended_at_raw: str | None,
+    beats: list[dict[str, Any]],
+) -> tuple[str, str]:
+    """Deterministic last-updated timestamp; never an invention.
+
+    Returns (value, source). Priority of measured evidence:
+      1. meta ended_at (ended runs with a parseable ended_at);
+      2. started_at + last measured heartbeat elapsed;
+      3. newest artifact mtime (filesystem observation);
+      4. unknown when no artifact evidence exists.
+    """
+    if ended and ended_at_raw and parse_iso(ended_at_raw) is not None:
+        return ended_at_raw, "meta ended_at"
+    if beats and started is not None:
+        stamp = started + timedelta(seconds=beats[-1]["elapsed_seconds"])
+        return stamp.isoformat(), "heartbeat (started_at + last elapsed)"
+    newest_mtime: float | None = None
+    newest_name: str | None = None
+    for name in ARTIFACT_NAMES:
+        try:
+            mtime = (run_dir / name).stat().st_mtime
+        except OSError:
+            continue
+        if newest_mtime is None or mtime > newest_mtime:
+            newest_mtime = mtime
+            newest_name = name
+    if newest_mtime is not None and newest_name is not None:
+        stamp = datetime.fromtimestamp(newest_mtime, tz=UTC)
+        return stamp.isoformat(), f"artifact mtime ({newest_name})"
+    return MISSING, MISSING
+
+
+# ---------------------------------------------------------- V1.69: lifecycle
+
+def lifecycle_for(
+    ended: bool,
+    pi_state: str,
+    pi_detail: str,
+    started: datetime | None,
+    meta: dict[str, str],
+    beats: list[dict[str, Any]],
+    elapsed_text: str,
+    run_dir: Path,
+) -> dict[str, Any]:
+    """Lifecycle view over the existing V1.68 semantics (additive)."""
+    ended_at_raw = meta.get("ended_at")
+    updated_at, updated_source = compute_updated_at(
+        run_dir, ended, started, ended_at_raw, beats,
+    )
+    return {
+        "state": pi_state,
+        "detail": pi_detail,
+        "started_at": meta.get("started_at", MISSING),
+        "ended_at": meta.get("ended_at", MISSING),
+        "updated_at": updated_at,
+        "updated_source": updated_source,
+        "elapsed": elapsed_text,
+    }
 
 
 def file_age_seconds(path: Path, now: datetime) -> int | None:
@@ -370,8 +481,9 @@ def collect(
     pi_log_raw = read_lines(run_dir / "pi.log")
 
     started = parse_iso(meta.get("started_at", "") or "")
-    ended = parse_iso(meta.get("ended_at", "") or "") is not None
-    ended_at = meta.get("ended_at")
+    ended_at_raw = (meta.get("ended_at") or "").strip() or None
+    ended = parse_iso(ended_at_raw or "") is not None
+    ended_at = ended_at_raw  # V1.68 naming kept for downstream keys
     pi_exit = clamp_int(meta.get("pi_exit_code"))
     classification = meta.get("agent_classification")
     readiness = meta.get("repository_readiness")
@@ -581,7 +693,13 @@ def collect(
         "schema": f"trajectory-pi-status/{VERSION}",
         "generated_at": now.isoformat(),
         "run": run_dir.name,
+        "run_id": run_dir.name,
         "run_dir": str(run_dir),
+        "identity": run_identity(run_dir, meta),
+        "lifecycle": lifecycle_for(
+            ended, pi_state, pi_detail, started, meta, beats,
+            elapsed_text, run_dir,
+        ),
         "run_class": meta.get("run_class", MISSING),
         "branch": meta.get("branch", MISSING),
         "model": meta.get("model", MISSING),
@@ -625,9 +743,17 @@ def render_text(state: dict[str, Any]) -> str:
         f"RUN: {state['run']}  "
         f"(class={state['run_class']}, branch={state['branch']})",
     ]
+    identity = state["identity"]
+    lifecycle = state["lifecycle"]
 
     def row(key: str, value: object) -> None:
         lines.append(f"{pad}{key:<12}: {MISSING if value in (None, '') else value}")
+
+    row("run_id", identity["run_id"])
+    row("workspace", identity["workspace"])
+    row("pid", identity["pid"])
+    row("lifecycle", f"{lifecycle['state']} ({lifecycle['detail']})")
+    row("updated_at", lifecycle["updated_at"])
 
     row("pi_state", f"{state['pi_state']} ({state['pi_state_detail']})")
     row("model", state["model"])
@@ -674,7 +800,8 @@ def render_text(state: dict[str, Any]) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trajectory-pi-status",
-        description="Read-only status reader for trajectory-pi runs (V1.67).",
+        description="Read-only status reader for trajectory-pi runs (V1.69: "
+                    "run identity & lifecycle metadata).",
     )
     parser.add_argument("--run", default=None,
                         help="run name or directory (default: latest under runs root)")

@@ -24,6 +24,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -442,6 +443,189 @@ def test_worktree_live_fallback_degrades_outside_a_work_tree(runs: Path) -> None
     data = json.loads(proc.stdout)
     assert data["worktree"]["state"].startswith("unavailable")
     assert "live" not in data["worktree"]["source"]
+
+
+# ------------------------------------------------------------ V1.69: run identity & lifecycle
+#
+# V1.69 contract (deterministic Pi run identity and lifecycle metadata):
+# - a live Pi execution is unambiguously associated with a run identity;
+# - consumers observing the same live run see the same identity, regardless
+#   of selection mode (latest vs explicit path/name);
+# - a stale/previous run never shares its identity with a new run;
+# - lifecycle state + started/updated timestamps are exposed without
+#   mutation; the updated timestamp is only ever a measurement of recorded
+#   artifacts, never invented.
+
+
+def _json(runs: Path, *extra: str) -> dict:
+    proc = run_reader(runs.parent, *extra, "--json")
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def test_run_identity_is_stable_across_selection_modes(runs: Path) -> None:
+    latest = _json(runs)                                  # latest = LIVE
+    explicit_path = _json(runs, "--run", str(runs / LIVE))
+    explicit_name = _json(runs, "--run", LIVE)
+    for data in (latest, explicit_path, explicit_name):
+        assert data["run_id"] == LIVE
+        assert data["identity"]["run_id"] == LIVE
+        assert data["identity"]["run_dir"] == str((runs / LIVE).resolve())
+    assert latest["identity"]["run_id"] == explicit_path["identity"]["run_id"]
+
+
+def test_different_runs_never_share_identity(runs: Path) -> None:
+    completed = _json(runs, "--run", str(runs / COMPLETED))
+    live = _json(runs, "--run", str(runs / LIVE))
+    assert completed["identity"]["run_id"] != live["identity"]["run_id"]
+    assert completed["identity"]["run_dir"] != live["identity"]["run_dir"]
+    # The completed run is the earlier/previous run; its identity must not
+    # bleed into the newer live run.
+    assert completed["run_id"] == COMPLETED
+    assert live["run_id"] == LIVE
+
+
+def test_identity_fields_follow_meta_or_unknown(runs: Path) -> None:
+    data = _json(runs)
+    idt = data["identity"]
+    assert idt["branch"] == "test/pi-status"
+    assert idt["head_before"] == "0123456789abcdef"
+    # Legacy runs (producer did not record these) must render unknown,
+    # never an invented value.
+    assert idt["workspace"] == "unknown"
+    assert idt["pid"] == "unknown"
+
+
+def test_identity_passthrough_when_recorded(tmp_path: Path) -> None:
+    run = tmp_path / RUN_ROOT / "20260104-000000"
+    (run / "meta.txt").parent.mkdir(parents=True, exist_ok=True)
+    _write(run / "meta.txt",
+           "started_at=2026-01-04T00:00:00+00:00\n"
+           "branch=test/pi-status\n"
+           "head_before=0123456789abcdef\n"
+           "workspace=/srv/trajectory-os\n"
+           "pid=4242\n")
+    data = _json(tmp_path / RUN_ROOT)
+    idt = data["identity"]
+    assert idt["run_id"] == "20260104-000000"
+    assert idt["workspace"] == "/srv/trajectory-os"
+    assert idt["pid"] == "4242"
+    assert idt["branch"] == "test/pi-status"
+
+
+def test_identity_rejects_malformed_pid(tmp_path: Path) -> None:
+    run = tmp_path / RUN_ROOT / "20260105-000000"
+    (run / "meta.txt").parent.mkdir(parents=True, exist_ok=True)
+    _write(run / "meta.txt",
+           "started_at=2026-01-05T00:00:00+00:00\npid=not-a-pid\n")
+    data = _json(tmp_path / RUN_ROOT)
+    assert data["identity"]["pid"] == "unknown"
+
+
+def test_lifecycle_state_tracks_pi_state(runs: Path) -> None:
+    completed = _json(runs, "--run", str(runs / COMPLETED))
+    assert completed["lifecycle"]["state"] == "ended"
+    assert completed["pi_state"] == "ended"         # backward compatible
+    assert completed["lifecycle"]["started_at"] == "2026-01-01T09:50:00+00:00"
+    assert completed["lifecycle"]["ended_at"] == "2026-01-01T09:58:00+00:00"
+
+    live = _json(runs)
+    assert live["lifecycle"]["state"] == "running"
+    assert live["lifecycle"]["ended_at"] == "unknown"
+
+    stale = subprocess.run(
+        [sys.executable, str(READER), "--runs-root", str(runs),
+         "--now", NOW_STALE, "--json"],
+        cwd=runs.parent, capture_output=True, text=True, timeout=60,
+    )
+    assert stale.returncode == 0, stale.stderr
+    stale_data = json.loads(stale.stdout)
+    assert stale_data["lifecycle"]["state"] == "stale"
+
+
+def test_lifecycle_updated_at_is_measured_not_invented(runs: Path) -> None:
+    live = _json(runs)
+    lc = live["lifecycle"]
+    # last heartbeat elapsed=00:00:20 + started_at 12:00:00Z
+    assert lc["updated_at"] == "2026-01-01T12:00:20+00:00"
+    assert "heartbeat" in lc["updated_source"]
+
+    completed = _json(runs, "--run", str(runs / COMPLETED))
+    assert completed["lifecycle"]["updated_at"] == "2026-01-01T09:58:00+00:00"
+    assert "ended_at" in completed["lifecycle"]["updated_source"]
+
+    # malformed run: started_at + last valid heartbeat elapsed
+    malformed = _json(runs, "--run", str(runs / MALFORMED))
+    assert malformed["lifecycle"]["updated_at"] == "2026-01-01T11:59:51+00:00"
+
+
+def _require_iso(value: str) -> None:
+    from datetime import datetime as _dt
+    assert value not in ("", "unknown")
+    _dt.fromisoformat(value)  # raises if not valid ISO-8601
+
+
+def test_lifecycle_updated_at_mtime_fallback(tmp_path: Path) -> None:
+    run = tmp_path / RUN_ROOT / "20260106-000000"
+    (run / "status.log").parent.mkdir(parents=True, exist_ok=True)
+    _write(run / "status.log", "no parseable heartbeat here\n")
+    # no meta, no started_at, no valid heartbeat: only artifact mtime knows
+    fixed = time.mktime(time.strptime("2026-01-06 00:00:00", "%Y-%m-%d %H:%M:%S"))
+    os.utime(run / "status.log", (fixed, fixed))
+    data = _json(tmp_path / RUN_ROOT)
+    lc = data["lifecycle"]
+    assert lc["state"] == "unknown"
+    assert lc["updated_at"] != "unknown"
+    assert "status.log" in lc["updated_source"]
+    # deterministic under pinned clock
+    again = _json(tmp_path / RUN_ROOT)
+    assert again["lifecycle"]["updated_at"] == lc["updated_at"]
+    # round-trips as parseable ISO-8601
+    _require_iso(again["lifecycle"]["updated_at"])
+
+
+def test_lifecycle_empty_run_is_unknown_without_crash(tmp_path: Path) -> None:
+    (tmp_path / RUN_ROOT / "20260107-000000").mkdir(parents=True)
+    data = _json(tmp_path / RUN_ROOT)
+    lc = data["lifecycle"]
+    assert lc["state"] == "unknown"
+    assert lc["started_at"] == "unknown"
+    assert lc["updated_at"] == "unknown"
+    assert data["identity"]["run_id"] == "20260107-000000"
+
+
+def test_end_of_run_requires_a_parseable_ended_at(runs: Path) -> None:
+    run = runs / COMPLETED
+    text = (run / "meta.txt").read_text(encoding="utf-8")
+    (run / "meta.txt").write_text(
+        text.replace("ended_at=2026-01-01T09:58:00+00:00",
+                     "ended_at=not-a-timestamp"),
+        encoding="utf-8")
+    data = _json(runs, "--run", str(run))
+    lc = data["lifecycle"]
+    # Without a parseable ended_at the run must NOT be claimed as ended,
+    # and the malformed value must never leak into the updated timestamp.
+    assert lc["state"] != "ended"
+    assert lc["updated_at"] != "not-a-timestamp"
+    # The heartbeat-derived measurement remains the only update evidence.
+    assert lc["updated_at"] == "2026-01-01T09:51:01+00:00"
+
+
+def test_v169_text_rendering_includes_identity_and_lifecycle(runs: Path) -> None:
+    proc = run_reader(runs.parent, "--run", str(runs / LIVE))
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    assert f"RUN: {LIVE}" in out
+    assert "run_id      : " + LIVE in out
+    assert 'updated_at  : 2026-01-01T12:00:20+00:00' in out
+    assert "workspace   : unknown" in out
+
+
+def test_v169_json_output_is_deterministic(runs: Path) -> None:
+    assert _json(runs) == _json(runs)          # byte-stable state object
+    p1 = run_reader(runs.parent)
+    p2 = run_reader(runs.parent)
+    assert p1.stdout == p2.stdout
 
 
 # ------------------------------------------------------------ V1.64 core intact
