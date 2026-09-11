@@ -172,7 +172,21 @@ def test_stop_rejects_dead_target_and_leaves_no_trace(tmp_path: Path) -> None:
     result = cli("--runs-root", str(runs), "stop", "--run", RUN_NAME)
     assert result.returncode == 2, text_of(result)
     assert "process-dead" in text_of(result)
-    assert fingerprint(runs) == before, "a rejected stop must not mutate the run"
+    # V1.79: a refused stop is a control action and is audited at the runs
+    # root — but the run directory itself must be untouched.
+    after = fingerprint(runs)
+    added = set(after) - set(before)
+    assert added <= {"control-audit.jsonl"}, f"unexpected mutations: {added}"
+    trail = {
+        str(key): after[key] for key in added
+    }
+    assert "control-audit.jsonl" in trail, "a refusal record must be audited"
+    record = json.loads(Path(runs / "control-audit.jsonl").read_text(encoding="utf-8"))
+    assert record["schema"] == "control-audit/1"
+    assert record["decision"] == "refused"
+    assert record["run_id"] == RUN_NAME
+    assert "process-dead" in list(record["reasons"])
+    assert record["action"] == "stop"
     assert not (d / "control-events.jsonl").exists()
     assert not (d / "control.lock").exists()
 
