@@ -63,6 +63,20 @@ V1.72 (runtime control-plane foundation, additive, read-only):
                           and the disagreement is surfaced as a warning
                           (never silently absorbed).
 
+V1.76 (runtime control foundation, additive, read-only):
+    the reader additionally exposes a derived surface (never inventing
+    facts) computed by the shared control core (src/trajectory_os/
+    runtime_control.py):
+      * runtime_control   fail-closed views for a recorded run: observed
+                          state (running/stale/ended/unknown), live
+                          process identity verification (liveness, working
+                          directory, start-time window) when the producer
+                          recorded a pid, safe-target / stoppability
+                          verdicts, and recovery readiness (V1.73-V1.76).
+                          The reader performs no control and never signals
+                          anything; use scripts/trajectory-pi-control for
+                          the stop surface.
+
 Usage:
     scripts/trajectory-pi-status [--run NAME|PATH] [--runs-root DIR]
                                  [--json] [--now 2026-01-01T00:00:00Z]
@@ -82,12 +96,12 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.72.0"
+VERSION = "1.76.0"
 MISSING = "unknown"
 UNAVAILABLE = "unavailable"
 DEFAULT_STALE_AFTER = 120
@@ -108,6 +122,26 @@ GEN3S_RE = re.compile(r"gen_3s=([0-9]+(?:\.[0-9]+)?|unavailable)\s*tok/s")
 GEN_TOTAL_RE = re.compile(r"gen_total=(\d+)\s*tokens")
 # Process identity recorded by future producer versions: positive int only.
 PID_RE = re.compile(r"^[1-9][0-9]*$")
+
+
+def _load_core():
+    """Load the shared control core, degrading gracefully when absent."""
+    try:
+        from trajectory_os import runtime_control as core
+    except ModuleNotFoundError:
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        if src not in sys.path:
+            sys.path.insert(0, src)
+        try:
+            import importlib
+
+            return importlib.import_module("trajectory_os.runtime_control")
+        except ModuleNotFoundError:
+            return None
+    return core
+
+
+_CORE = _load_core()
 # Artifact names consulted (in priority order) by the mtime fallback for
 # lifecycle.updated_at; only file mtime is observed, never content order.
 ARTIFACT_NAMES = (
@@ -355,6 +389,21 @@ def control_view(
         "ready_for_control": state in {"running", "stale", "ended"}
         and identity["pid"] != MISSING,
     }
+
+
+def collect_runtime_control(run_dir: Path) -> Mapping[str, object] | None:
+    """V1.76: the shared control-core surface for this run (read-only).
+
+    Degrades to ``None`` when the core module is unavailable so that the
+    reader's historical output is preserved byte-for-byte in that case.
+    """
+    if _CORE is None:
+        return None
+    try:
+        own = (os.getpid(), *_CORE.ancestor_chain(os.getpid()))
+        return _CORE.evaluate_run(run_dir, own_pids=own).to_dict()
+    except (OSError, ValueError):
+        return None
 
 
 def file_age_seconds(path: Path, now: datetime) -> int | None:
@@ -785,6 +834,7 @@ def collect(
             meta.get("started_at", "") or None,
             meta.get("ended_at", "") or None,
         ),
+        "runtime_control": collect_runtime_control(run_dir),
         "run_class": meta.get("run_class", MISSING),
         "branch": meta.get("branch", MISSING),
         "model": meta.get("model", MISSING),
@@ -847,6 +897,16 @@ def render_text(state: dict[str, Any]) -> str:
         missing = control["missing_evidence"]
         detail = f"; missing: {', '.join(missing)}" if missing else ";"
         row("control", f"not ready (state={control['state']}{detail}")
+    runtime = state.get("runtime_control")
+    if isinstance(runtime, Mapping):
+        recovery = runtime["recovery"] if isinstance(runtime["recovery"], Mapping) else ""
+        row(
+            "runtime_control",
+            "state=" + str(runtime["state"])
+            + "; targetable=" + ("yes" if runtime["targetable_safe"] else "no")
+            + "; stoppable=" + ("yes" if runtime["stoppable"] else "no")
+            + "; recovery=" + ("ready" if recovery and recovery["ready"] else "not-ready"),
+        )
 
     row("pi_state", f"{state['pi_state']} ({state['pi_state_detail']})")
     row("model", state["model"])
