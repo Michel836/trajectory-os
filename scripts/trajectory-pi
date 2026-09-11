@@ -481,6 +481,22 @@ fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 RUN_DIR="$REPO/.trajectory-pi/runs/$STAMP"
+
+# V1.70 — run identity invariant (producer side):
+# the run directory name IS the run_id; one run_id must identify exactly
+# one run directory, and two different runs never share a run_id. A
+# run directory already existing under the second-resolution identity
+# (previous same-second run or leftover from an interrupted one) means a
+# new run would MERGE its evidence into another run. Fail closed with a
+# clear, retry-able error instead; the existing directory is never
+# rewritten or deleted, so it stays inspectable.
+if [[ -e "$RUN_DIR" || -L "$RUN_DIR" ]]; then
+    echo "ERROR: run directory already exists: $RUN_DIR" >&2
+    echo "Run identity must be unique (one run_id = exactly one run " >&2
+    echo "directory). Wait for the next second and retry." >&2
+    exit 5
+fi
+
 mkdir -p "$RUN_DIR"
 
 LOG="$RUN_DIR/pi.log"
@@ -506,10 +522,25 @@ trap cleanup EXIT
 
 START_EPOCH="$(date +%s)"
 START_TEXT="$(date --iso-8601=seconds)"
+# V1.70 — producer-native run identity (recorded here, at run start,
+# once; never re-derived by readers). All values are deterministic or
+# producer-observed; none may carry secrets/credentials/trust state:
+#   run_id    second-resolution run identity; identical to the run
+#             directory name (stable for the whole run, unique per run);
+#   pid       THIS wrapper process (the lifecycle owner that writes meta,
+#             heartbeats, and forwards signals) — producer-observed;
+#             $$ is the immutable PID of the live (bootstrap-exec'd)
+#             wrapper process, not the entry script's;
+#   workspace physical, absolute repository root (pwd -P: canonical,
+#             symlink-resolved), recorded after the mandatory `cd "$REPO"`.
+WORKSPACE="$(pwd -P)"
 
 cat > "$META" <<EOF
 trajectory_pi_version=$VERSION
+run_id=$STAMP
 started_at=$START_TEXT
+pid=$$
+workspace=$WORKSPACE
 run_class=$RUN_CLASS
 eta=$ETA
 model=$MODEL
@@ -1616,8 +1647,15 @@ PI_ARGS+=("$FINAL_QUERY")
 # non-interactive bash sets SIGINT to SIG_IGN in background children,
 # making signal forwarding impossible) and gives Pi its own process group
 # so the whole agent process tree can be signalled cleanly.
+# Issue #152: the caller-vs-internal bookkeeping names are WRAPPER-INTERNAL
+# state and must never leak into the agent environment. If they did, any
+# fresh wrapper started from inside the agent process tree would skip its
+# own caller-capture block (guarded by -z TPBS_CALLER_SET) and misclassify
+# its caller's explicit bootstrap values as wrapper-internal state.
+TP_INTERNAL_UNSET=( -u TPBS_CALLER_SET -u TPBS_CALLER_VAL
+                     -u TPBC_CALLER_SET -u TPBC_CALLER_VAL )
 set -m
-pi "${PI_ARGS[@]}" >"$LOG" 2>&1 &
+env "${TP_INTERNAL_UNSET[@]}" pi "${PI_ARGS[@]}" >"$LOG" 2>&1 &
 PI_PID=$!
 set +m
 
@@ -1627,6 +1665,12 @@ trap 'handle_signal TERM' TERM
 
 echo "Pi PID         $PI_PID"
 echo
+
+# V1.70/V1.71 — process-exit evidence: the executed Pi process identity
+# is recorded ONLY after the spawn event happened (V1.71 invariant 3:
+# evidence never appears before the event it describes). The wrapper
+# `pid` above is the lifecycle owner; `pi_pid` is the agent process.
+echo "pi_pid=$PI_PID" >> "$META"
 
 # ------------------------------------------------------------
 # Heartbeat
@@ -1997,6 +2041,7 @@ echo
 echo "============================================================"
 echo " TRAJECTORY-PI FINISHED"
 echo "============================================================"
+printf "RUN ID                  %s\n" "$STAMP"
 printf "Runtime                 %s\n" "$ELAPSED_H"
 printf "Pi exit code            %s\n" "$PI_RC"
 printf "Agent classification: %s\n" "$CLASSIFICATION"

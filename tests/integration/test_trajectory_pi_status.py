@@ -11,7 +11,10 @@ Covered:
 - stale artifacts (flagged, without mutation)
 - no-mutation inspection (byte-identical runs root before/after)
 - no forbidden commands (no mutating git, no network, no daemon/loop)
-- V1.64 Pi wrappers and canonical gate remain untouched vs HEAD
+- V1.69 run identity & lifecycle fields
+- V1.70+ producer-recorded identity (pi_pid passthrough, never invented)
+- V1.72 control-surface readiness view (fail-closed, evidence-gated)
+- milestone scope guards (producer contract pinned; co-scripts untouched)
 
 Stdlib + pytest only. No network, no real Pi, no credentials.
 """
@@ -628,26 +631,37 @@ def test_v169_json_output_is_deterministic(runs: Path) -> None:
     assert p1.stdout == p2.stdout
 
 
-# ------------------------------------------------------------ V1.64 core intact
-
-V164_SCRIPTS = (
-    "scripts/trajectory-pi",
-    "scripts/trajectory-codex-pi",
-    "scripts/trajectory_gate.py",
-)
+# ------------------------------------------------------------ milestone guards
 
 
-def test_v164_core_scripts_untouched_vs_head() -> None:
+def test_milestone_scope_guard() -> None:
+    """Scope guard for the V1.70–V1.72 increment.
+
+    V1.70 *intentionally* hardens ``scripts/trajectory-pi`` (producer-native
+    run identity + fail-closed collision guard), so the old "byte-identical
+    vs HEAD" assertion for that file no longer expresses a valid invariant
+    (after merge, HEAD == disk would fail it). The invariant is now positive:
+    the producer's identity contract must be pinned in source, and the
+    milestone's non-goals (co-scripts untouched) stay byte-guarded.
+    """
     env = dict(os.environ)
     env["GIT_OPTIONAL_LOCKS"] = "0"
-    for rel in V164_SCRIPTS:
+    # non-goals: these scripts must remain byte-identical to HEAD
+    for rel in ("scripts/trajectory-codex-pi", "scripts/trajectory_gate.py"):
         disk = (REPO_ROOT / rel).read_bytes()
         proc = subprocess.run(
             ["git", "show", f"HEAD:{rel}"],
             cwd=REPO_ROOT, env=env, capture_output=True, timeout=60,
         )
         assert proc.returncode == 0, rel
-        assert disk == proc.stdout, f"V1.64 script modified: {rel}"
+        assert disk == proc.stdout, f"out-of-scope script modified: {rel}"
+    # in-scope: the producer contract is positive, structural, merge-stable
+    producer = (REPO_ROOT / "scripts" / "trajectory-pi").read_text()
+    assert "run_id=$STAMP" in producer
+    assert "pid=$$" in producer
+    assert "workspace=$WORKSPACE" in producer
+    assert "pi_pid=$PI_PID" in producer
+    assert "Run identity must be unique" in producer
 
 
 def test_reader_is_new_and_executable() -> None:
@@ -666,3 +680,143 @@ def test_reader_is_new_and_executable() -> None:
     }
     assert staged["scripts/trajectory-pi-status"] == "100755"
     assert staged["tests/integration/test_trajectory_pi_status.py"] == "100644"
+
+
+# ------------------------------------------------------------ V1.72: control-surface foundation
+
+# A run whose lifecycle evidence is complete: started_at recorded, a recent
+# heartbeat, and producer-recorded identity — the minimal state in which a
+# reader may say the run is ready for the control plane.
+FULL_EVIDENCE = "20260102-090000"
+
+
+def _full_evidence_meta(run_name: str, **overrides: str) -> str:
+    base = {
+        "trajectory_pi_version": "0.3.1",
+        "run_id": run_name,
+        "started_at": "2026-01-01T12:00:10+00:00",
+        "pid": "4242",
+        "pi_pid": "4243",
+        "workspace": "/home/op/projects/demo",
+        "run_class": "feature",
+        "model": "fake-model",
+        "branch": "test/pi-status",
+        "head_before": "0123456789abcdef",
+    }
+    base.update(overrides)
+    return "".join(f"{key}={value}\n" for key, value in base.items())
+
+
+def _full_evidence_heartbeat() -> str:
+    return (
+        "[12:00:11] elapsed=00:00:01 | within expected startup | "
+        "files=1 (+1) | ollama=active | GPU 10% | 100 W | "
+        "VRAM 1000/2000 MiB | gen_3s=10.5 tok/s\n"
+        "[12:00:20] elapsed=00:00:10 | within expected startup | "
+        "files=2 (+2) | ollama=active | GPU 20% | 100 W | "
+        "VRAM 1100/2000 MiB | gen_3s=11.1 tok/s\n"
+    )
+
+
+def test_control_ready_when_lifecycle_evidence_complete(tmp_path: Path) -> None:
+    d = tmp_path / RUN_ROOT / FULL_EVIDENCE
+    _write(d / "meta.txt", _full_evidence_meta(FULL_EVIDENCE))
+    _write(d / "status.log", _full_evidence_heartbeat())
+
+    data = _json(tmp_path / RUN_ROOT)
+    assert data["run_id"] == FULL_EVIDENCE
+    assert data["identity"]["pid"] == "4242"
+    assert data["identity"]["pi_pid"] == "4243"
+    assert data["lifecycle"]["state"] == "running"
+    assert data["control"] == {
+        "state": "running",
+        "missing_evidence": [],
+        "ready_for_control": True,
+    }
+
+
+def test_control_never_ready_for_weak_or_unknown_runs(tmp_path: Path) -> None:
+    # legacy live run (pre-V1.70: no pid/pi_pid/workspace recorded):
+    build_runs_root(tmp_path)
+    data = _json(tmp_path / RUN_ROOT, "--run", str(tmp_path / RUN_ROOT / LIVE))
+    assert data["lifecycle"]["state"] in ("running", "stale")
+    assert data["control"]["ready_for_control"] is False
+    for field in ("pid", "pi_pid", "workspace"):
+        assert field in data["control"]["missing_evidence"]
+
+    # evidence-less run: state unknown -> never ready
+    (tmp_path / RUN_ROOT / "20260102-095000").mkdir(parents=True)
+    data = _json(tmp_path / RUN_ROOT, "--run", "20260102-095000")
+    assert data["lifecycle"]["state"] == "unknown"
+    assert data["control"]["ready_for_control"] is False
+    assert "started_at" in data["control"]["missing_evidence"]
+
+
+def test_pi_pid_passthrough_is_recorded_or_unknown_never_invented(
+    tmp_path: Path,
+) -> None:
+    # unrecorded (legacy) run -> unknown, not an invented value
+    build_runs_root(tmp_path)
+    data = _json(tmp_path / RUN_ROOT, "--run", str(tmp_path / RUN_ROOT / LIVE))
+    assert data["identity"]["pi_pid"] == "unknown"
+    assert data["identity"]["pid"] == "unknown"
+
+    # malformed (non-numeric) values -> unknown, never "fixed"/derived
+    d = tmp_path / RUN_ROOT / FULL_EVIDENCE
+    _write(
+        d / "meta.txt",
+        "started_at=2026-01-01T12:00:10+00:00\n"
+        "pid=not-a-number\n"
+        "pi_pid=garbage-value\n",
+    )
+    _write(d / "status.log", _full_evidence_heartbeat())
+    data = _json(tmp_path / RUN_ROOT, "--run", FULL_EVIDENCE)
+    assert data["identity"]["pid"] == "unknown"
+    assert data["identity"]["pi_pid"] == "unknown"
+
+
+def test_run_id_crosscheck_surfaces_disagreement(tmp_path: Path) -> None:
+    d = tmp_path / RUN_ROOT / FULL_EVIDENCE
+    # producer-recorded run_id disagrees with the authoritative dir name:
+    # the dir stays authoritative, and the disagreement is surfaced
+    _write(d / "meta.txt", _full_evidence_meta("20990101-000000"))
+    _write(d / "status.log", _full_evidence_heartbeat())
+    data = _json(tmp_path / RUN_ROOT)
+    assert data["run_id"] == FULL_EVIDENCE
+    assert sum("disagrees" in w for w in data["warnings"]) >= 1
+
+    # when the producer records the correct identity, no disagreement warning
+    _write(d / "meta.txt", _full_evidence_meta(FULL_EVIDENCE))
+    data = _json(tmp_path / RUN_ROOT)
+    assert sum("disagrees" in w for w in data["warnings"]) == 0
+
+
+def test_control_surface_appears_in_text_output(tmp_path: Path) -> None:
+    d = tmp_path / RUN_ROOT / FULL_EVIDENCE
+    _write(d / "meta.txt", _full_evidence_meta(FULL_EVIDENCE))
+    _write(d / "status.log", _full_evidence_heartbeat())
+
+    proc = run_reader(tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    assert "pi_pid      : 4243" in out
+    assert "control     : ready (state=running; evidence complete)" in out
+
+
+def test_v169_contract_fields_stable_under_v172(runs: Path) -> None:
+    # backward compatibility: every V1.69 reader field the existing consumer
+    # surface relies on is still present and unchanged in shape under V1.72
+    data = _json(runs)
+    assert set(data) >= {
+        "run_id", "run_dir", "identity", "lifecycle", "started_at", "ended_at",
+        "run_class", "branch", "model", "elapsed", "warnings",
+    }
+    assert set(data["identity"]) >= {
+        "run_id", "run_dir", "branch", "head_before", "workspace",
+        "pid", "pi_pid",
+    }
+    assert set(data["lifecycle"]) >= {
+        "state", "detail", "started_at", "ended_at", "updated_at",
+        "updated_source", "elapsed",
+    }
+    assert "control" in data
