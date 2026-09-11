@@ -220,29 +220,28 @@ def test_whitespace_only_query_is_treated_as_missing(tp: TPContext) -> None:
     assert not tp.args_log.exists()
 
 
-# E. Nonzero Pi + exact provider phrase + agent-added work
-#    => RECOVERABLE_PROVIDER_FAILURE, preserving Pi's exit code.
+# E. Nonzero Pi + exact provider phrase => explicit upstream classification,
+# preserving Pi's exit code and any agent work.
 def test_recoverable_provider_failure(tp: TPContext) -> None:
     tp.scenario(rc=7, output=f"500 internal error: {PROVIDER_PHRASE}\n", touch="agent_work.txt")
 
     result = tp.run(*SMOKE_ARGS, "--", "Build the feature.")
     # Preserve Pi's actual non-zero exit code.
     assert result.returncode == 7
-    assert "RECOVERABLE_PROVIDER_FAILURE" in result.stdout
-    assert "RECOVERABLE PROVIDER FAILURE" in result.stdout
+    assert "UPSTREAM_PROVIDER_MISSING_QUERY" in result.stdout
+    assert "UPSTREAM PROVIDER MISSING-QUERY FAILURE" in result.stdout
     assert "inspected and resumed" in result.stdout
-    assert "classification=RECOVERABLE_PROVIDER_FAILURE" in tp.latest_meta()
+    assert "classification=UPSTREAM_PROVIDER_MISSING_QUERY" in tp.latest_meta()
 
 
-# F. Same provider phrase but no changed work => NOT recoverable.
+# F. Same provider phrase with no changed work remains explicitly upstream.
 def test_provider_phrase_without_work_is_agent_failed(tp: TPContext) -> None:
     tp.scenario(rc=5, output=f"500 internal error: {PROVIDER_PHRASE}\n")
 
     result = tp.run(*SMOKE_ARGS, "--", "Build the feature.")
     assert result.returncode == 5
-    assert "RECOVERABLE" not in result.stdout
-    assert "AGENT_FAILED" in result.stdout
-    assert "classification=AGENT_FAILED" in tp.latest_meta()
+    assert "UPSTREAM_PROVIDER_MISSING_QUERY" in result.stdout
+    assert "classification=UPSTREAM_PROVIDER_MISSING_QUERY" in tp.latest_meta()
 
 
 # G. RC=0 with handoff + explicit completion marker => AGENT_COMPLETED.
