@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """trajectory-pi-status — read-only status reader for trajectory-pi runs.
 
-ISSUE #172 (V1.65 Live Codex/Pi observability).
+ISSUE #176 (V1.67 Complete live Pi observability).
 
 Reads artifacts written by scripts/trajectory-pi (V1.64) under
 <cwd>/.trajectory-pi/runs/<timestamp>/ and renders a deterministic,
 read-only status for a live or finished Codex/Pi run:
 
-    model, elapsed, ETA, speed, counters, phase, Pi state,
+    model, elapsed, ETA, speed, cumulative tokens, counters, phase, Pi state,
     changed files (worktree), last event, blockers, readiness,
     next gate, warnings.
 
@@ -44,12 +44,12 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-VERSION = "1.65.0"
+VERSION = "1.67.0"
 MISSING = "unknown"
 UNAVAILABLE = "unavailable"
 DEFAULT_STALE_AFTER = 120
@@ -64,6 +64,10 @@ ETA_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*(?:-|~|en)\s*(\d+(?:\.\d+)?)\s*min$")
 FILES_RE = re.compile(r"files=(\d+)(?:\s*\(([-+]\d+)\))?")
 OLLAMA_RE = re.compile(r"ollama=([A-Za-z]+)")
 GEN3S_RE = re.compile(r"gen_3s=([0-9]+(?:\.[0-9]+)?|unavailable)\s*tok/s")
+# A cumulative counter is only valid when the producer has emitted this
+# native, monotonic measurement.  It is deliberately distinct from gen_3s:
+# the reader must never synthesize a total from rate and elapsed time.
+GEN_TOTAL_RE = re.compile(r"gen_total=(\d+)\s*tokens")
 
 
 def hhmmss(total: int) -> str:
@@ -127,6 +131,9 @@ def parse_heartbeat(line: str) -> dict[str, Any] | None:
     fm = GEN3S_RE.search(line)
     if fm:
         rec["gen_3s"] = fm.group(1)
+    fm = GEN_TOTAL_RE.search(line)
+    if fm:
+        rec["gen_total"] = int(fm.group(1))
     return rec
 
 
@@ -272,11 +279,29 @@ def compute_speed(beats: list[dict[str, Any]]) -> str:
     last_ts = beats[-1]["ts"]
     if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", str(beats[-1].get("gen_3s", ""))):
         return f"{beats[-1]['gen_3s']} tok/s (gen_3s @ {last_ts})"
-    prior = [b for b in reversed(beats) if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", str(b.get("gen_3s", "")))]
+    prior = [
+        beat for beat in reversed(beats)
+        if re.fullmatch(r"[0-9]+(?:\.[0-9]+)?", str(beat.get("gen_3s", "")))
+    ]
     if prior:
         return (f"{prior[0]['gen_3s']} tok/s (gen_3s @ {prior[0]['ts']}) — "
                 f"most recent sample unavailable")
     return UNAVAILABLE
+
+
+def compute_tokens(beats: list[dict[str, Any]]) -> tuple[str, str | None]:
+    """Render only a native cumulative measurement; never estimate one."""
+    samples = [beat for beat in beats if "gen_total" in beat]
+    if not samples:
+        return UNAVAILABLE, None
+    values = [int(beat["gen_total"]) for beat in samples]
+    if any(
+        after < before
+        for before, after in zip(values, values[1:], strict=False)
+    ):
+        return UNAVAILABLE, "cumulative token telemetry decreased (untrusted)"
+    latest = samples[-1]
+    return f"{latest['gen_total']} tokens (gen_total @ {latest['ts']})", None
 
 
 def compute_counters(beats: list[dict[str, Any]]) -> str:
@@ -364,8 +389,8 @@ def collect(
             bits.append(f"last pi.log: {pi_log_raw[-1][:120]}")
         last_event = " ".join(bits)
     else:
-        raw_lines = [l.strip() for l in (status_raw or []) if l.strip()]
-        raw_lines += [l.strip() for l in (pi_log_raw or []) if l.strip()]
+        raw_lines = [line.strip() for line in (status_raw or []) if line.strip()]
+        raw_lines += [line.strip() for line in (pi_log_raw or []) if line.strip()]
         last_event = raw_lines[-1][:200] if raw_lines else None
 
     # ---- elapsed / speed / counters / phase --------------------------
@@ -393,6 +418,9 @@ def collect(
         elapsed_text = MISSING
 
     speed = compute_speed(beats)
+    tokens, token_warning = compute_tokens(beats)
+    if token_warning:
+        warnings.append(token_warning)
     counters = compute_counters(beats)
     phase = beats[-1]["phase"] if beats else MISSING
 
@@ -421,22 +449,54 @@ def collect(
     changed: list[tuple[str, str]] = []
     source_name: str | None = None
 
-    files_lines = read_lines(run_dir / "worktree-files.txt")
-    if files_lines is not None and parse_porcelain(files_lines):
-        changed = parse_porcelain(files_lines)
-        source_name = "worktree-files.txt"
-    else:
-        status_txt = read_lines(run_dir / "worktree-status.txt")
-        if status_txt is not None and parse_porcelain(status_txt):
-            changed = parse_porcelain(status_txt)
-            source_name = "worktree-status.txt"
+    files_path = run_dir / "worktree-files.txt"
+    status_path = run_dir / "worktree-status.txt"
+    metadata_path = run_dir / "worktree-metadata.txt"
+    files_lines = read_lines(files_path)
+    status_txt = read_lines(status_path)
+    snapshot_meta_raw = read_lines(metadata_path)
+    snapshot_meta, snapshot_meta_bad = parse_meta(snapshot_meta_raw)
+    files_changed = parse_porcelain(files_lines)
+    status_changed = parse_porcelain(status_txt)
+    snapshot_total = clamp_int(snapshot_meta.get("total_files"))
+    snapshot_complete = snapshot_meta.get("snapshot_status") == "COMPLETE"
+
+    if snapshot_meta_raw is not None and snapshot_meta_bad:
+        warnings.append(
+            f"worktree-metadata.txt has {snapshot_meta_bad} malformed line(s)"
+        )
+
+    # A completed snapshot is authoritative even when its inventory is empty.
+    # Do not silently replace an incomplete/malformed snapshot with current Git
+    # state: that would turn missing evidence into an apparently clean run.
+    if files_lines is not None:
+        if not snapshot_complete or snapshot_total is None or snapshot_meta_bad:
+            worktree["state"] = f"{UNAVAILABLE} (worktree snapshot incomplete or malformed)"
+            worktree["source"] = "worktree snapshot"
+            warnings.append("worktree snapshot evidence is incomplete or malformed")
+        elif snapshot_total == 0 and not files_changed:
+            worktree["state"] = "clean / 0 changed"
+            worktree["source"] = "worktree-files.txt"
+            worktree["age_seconds"] = file_age_seconds(files_path, now)
+        elif snapshot_total > 0 and files_changed and len(files_changed) == snapshot_total:
+            changed = files_changed
+            source_name = "worktree-files.txt"
         else:
-            live = git_status_ro(Path.cwd()) if worktree_live else None
-            if live is not None:
-                changed = parse_porcelain(live)
-                source_name = "git status (read-only, live)"
-            else:
-                source_name = None
+            worktree["state"] = f"{UNAVAILABLE} (worktree snapshot malformed)"
+            worktree["source"] = "worktree-files.txt"
+            warnings.append("worktree snapshot inventory disagrees with total_files")
+    elif ended:
+        worktree["state"] = f"{UNAVAILABLE} (worktree snapshot artifact missing)"
+        worktree["source"] = "worktree snapshot"
+        warnings.append("worktree snapshot artifact missing after run ended")
+    elif status_changed:
+        changed = status_changed
+        source_name = "worktree-status.txt"
+    else:
+        live = git_status_ro(Path.cwd()) if worktree_live else None
+        if live is not None:
+            changed = parse_porcelain(live)
+            source_name = "git status (read-only, live)"
     if changed and source_name:
         truncated = changed[max_files:]
         kept = changed[:max_files]
@@ -449,7 +509,7 @@ def collect(
             if source_name in ("worktree-files.txt", "worktree-status.txt")
             else None
         )
-    if not changed:
+    if not changed and worktree["state"] == MISSING:
         worktree["state"] = (
             f"{UNAVAILABLE} (no worktree artifact)"
             if not worktree_live else UNAVAILABLE
@@ -530,6 +590,7 @@ def collect(
         "elapsed": elapsed_text,
         "eta": eta,
         "speed": speed,
+        "tokens": tokens,
         "counters": counters,
         "phase": phase,
         "pi_state": pi_state,
@@ -574,6 +635,7 @@ def render_text(state: dict[str, Any]) -> str:
     row("elapsed", state["elapsed"])
     row("eta", state["eta"])
     row("speed", state["speed"])
+    row("tokens", state["tokens"])
     row("counters", state["counters"])
     row("phase", state["phase"])
     row("last_event", state["last_event"])
@@ -612,7 +674,7 @@ def render_text(state: dict[str, Any]) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trajectory-pi-status",
-        description="Read-only status reader for trajectory-pi runs (V1.65).",
+        description="Read-only status reader for trajectory-pi runs (V1.67).",
     )
     parser.add_argument("--run", default=None,
                         help="run name or directory (default: latest under runs root)")
