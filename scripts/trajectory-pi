@@ -261,6 +261,14 @@ REVIEWER_TIMEOUT=300
 # the environment ONLY so isolated tests can point at a local fake Ollama
 # server; production behavior is the fixed loopback endpoint.
 REVIEWER_URL="${TP_REVIEWER_URL:-http://127.0.0.1:11434}"
+# Ollama does NOT inherit the model's full context: its default window
+# (~16k tokens) silently truncates large worktree patches (keeping only
+# the TAIL), so the reviewer judges incomplete evidence, drifts off the
+# strict response protocol, and valid work is fail-closed REJECTED. The
+# reviewer therefore requests an explicit context large enough to hold
+# the ENTIRE reviewed patch. Environment-overridable ONLY so isolated
+# tests can pin a value (same pattern as TP_REVIEWER_URL).
+REVIEWER_NUM_CTX="${TP_REVIEWER_NUM_CTX:-131072}"
 VALIDATE_CMDS=()
 REPAIR_ATTEMPTS=""   # V1.84: bounded autonomous convergence attempts (0..3)
 
@@ -1879,14 +1887,25 @@ def _err(msg, code):
 
 def main():
     args = sys.argv[1:]
-    if len(args) != 6:
+    if len(args) != 7:
         _err("bad argument count", 2)
-    prompt_file, patch_file, patch_sha, model, base_url, timeout_s = args
+    prompt_file, patch_file, patch_sha, model, base_url, timeout_s, num_ctx_s = args
 
     try:
         timeout_value = float(timeout_s)
     except (TypeError, ValueError):
         timeout_value = 300.0
+
+    # Explicit context reservation: without num_ctx, Ollama truncates the
+    # request to its default window (~16k tokens) and the reviewer would
+    # judge only a fragment of the patch (typically the tail). Never
+    # silently shrink: a non-positive value fails closed.
+    try:
+        num_ctx = int(num_ctx_s)
+    except (TypeError, ValueError):
+        _err("invalid num_ctx: %r" % (num_ctx_s,), 2)
+    if num_ctx <= 0:
+        _err("num_ctx must be positive, got %d" % num_ctx, 2)
 
     try:
         with open(prompt_file, "r", encoding="utf-8", errors="replace") as fh:
@@ -1924,6 +1943,7 @@ def main():
         "think": False,
         "options": {
             "temperature": 0,
+            "num_ctx": num_ctx,
         },
     }
 
@@ -1979,6 +1999,7 @@ PY
             "$REVIEWER_MODEL" \
             "$REVIEWER_URL" \
             "$REVIEWER_TIMEOUT" \
+            "$REVIEWER_NUM_CTX" \
             </dev/null > "$review_out" 2>"$RUN_DIR/review-runner.stderr"
     local rc=$?
     REVIEW_RC="$rc"
@@ -2038,6 +2059,7 @@ PY
         echo "reviewer_mode=direct-ollama"
         echo "reviewer_endpoint=$REVIEWER_URL"
         echo "reviewer_model=$REVIEWER_MODEL"
+        echo "reviewer_num_ctx=$REVIEWER_NUM_CTX"
         echo "review_rc=$REVIEW_RC"
         echo "review_status=$REVIEW_STATUS"
         echo "review_verdict=${REVIEW_VERDICT:-n/a}"

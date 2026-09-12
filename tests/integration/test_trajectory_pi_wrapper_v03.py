@@ -1612,6 +1612,12 @@ def test_reviewer_traffic_goes_to_direct_ollama_not_second_pi(repo: Path) -> Non
     # NOT at the top level of the request body.
     assert "temperature" not in payload, "no root-level temperature"
     assert payload["options"]["temperature"] == 0
+    # Context must be reserved EXPLICITLY: without num_ctx, Ollama
+    # truncates the request to its default (~16k token) window and the
+    # reviewer can only see a fragment (the tail) of the patch. The
+    # default reservation must be large enough to hold a full worktree
+    # patch, and it must be honored as-is in the request.
+    assert payload["options"]["num_ctx"] == 131072
     assert payload["model"] == "qwen3.6:27b"
     assert len(payload["messages"]) == 1
     assert payload["messages"][0]["role"] == "user"
@@ -1630,6 +1636,36 @@ def test_reviewer_traffic_goes_to_direct_ollama_not_second_pi(repo: Path) -> Non
     # 4) fake pi was launched EXACTLY once (agent only). The reviewer was NOT
     # executed as a second Pi process.
     assert _agent_invocations(repo) == 1, _agent_invocations(repo)
+
+
+def test_reviewer_num_ctx_is_env_overridable(repo: Path) -> None:
+    """The reviewer context reservation is pinned by default but remains
+    overridable via the TP_REVIEWER_NUM_CTX environment (isolated tests /
+    special hardware). An override must travel VERBATIM in the request's
+    options — including a value smaller than the default, which proves the
+    value is not being silently clamped or replaced.
+    """
+    server = FakeOllama(repo, mode="pass")
+    _fresh_invocation_log(repo)
+    try:
+        proc = run(
+            repo, review_env(repo, server, TP_REVIEWER_NUM_CTX="8192"),
+            "--class", "smoke", "--review", "--interval", "1", "--no-notify",
+            "--", "edit tracked.py",
+        )
+    finally:
+        server.close()
+    assert proc.returncode == 0, proc.stdout
+    rd = run_dir(repo, proc)
+
+    bodies = server.request_bodies()
+    assert len(bodies) == 1
+    payload = json.loads(bodies[0])
+    assert payload["options"]["num_ctx"] == 8192
+
+    # The chosen reservation is part of the review evidence.
+    review_meta = (rd / "review-meta.txt").read_text()
+    assert "reviewer_num_ctx=8192" in review_meta
 
 
 def test_review_disabled_ready_for_review(repo: Path) -> None:
