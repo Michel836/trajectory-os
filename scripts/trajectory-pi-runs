@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# trajectory-pi-runs — deterministic multi-run foundation (V1.85-V1.90).
+#
+# Thin, stable shim over src/trajectory_os/runs.  It only resolves the
+# repository root, prepends the src layout to PYTHONPATH and execs the
+# CLI: `python3 -m trajectory_os.runs.cli "$@"`.
+#
+# Subcommands:
+#   list      V1.85  read-only deterministic run registry
+#   status    V1.86  unified state query for one run
+#   admit     V1.87  bounded admission control decision (fail closed)
+#   queue     V1.89  FIFO queue listing (read-only)
+#   enqueue   V1.89  enqueue a job (bounded identity-checked FIFO)
+#   start     V1.88  one explicit admitted start (isolated process group)
+#   cancel    V1.88  graceful ownership-proven cancellation
+#   recover   V1.90  rebuild orchestration state after wrapper restart
+#   orchestrate V1.90 bounded multi-run progress
+#   version
+#
+# Exit codes: 0 ok, 2 usage, 3 fail-closed rejection, 4 unknown run/job.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+SRC="${ROOT}/src"
+
+if [[ ! -d "${SRC}/trajectory_os/runs" ]]; then
+  printf 'trajectory-pi-runs: internal error: missing trajectory_os/runs package (expected %s)\n' "${SRC}/trajectory_os/runs" >&2
+  exit 2
+fi
+
+export PYTHONPATH="${SRC}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m trajectory_os.runs.cli "$@"
