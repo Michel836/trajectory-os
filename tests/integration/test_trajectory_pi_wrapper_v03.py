@@ -2131,7 +2131,7 @@ def test_recursion_guard_env_runs_without_rebootstrap(repo: Path) -> None:
         text=True,
     )
     assert p.returncode == 0
-    assert p.stdout.strip() == "trajectory-pi 0.3.1"
+    assert p.stdout.strip() == "trajectory-pi 0.4.0"
     assert bootstrap_copies() - copies_before == set()
 
 

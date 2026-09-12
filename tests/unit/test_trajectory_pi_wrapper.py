@@ -407,7 +407,7 @@ cat <<'EOF'
 def test_wrapper_version_is_v031(tp: TPContext) -> None:
     result = tp.run("--version")
     assert result.returncode == 0
-    assert result.stdout.strip() == "trajectory-pi 0.3.1"
+    assert result.stdout.strip() == "trajectory-pi 0.4.0"
 
 
 def test_heartbeat_reports_recent_native_generation_rate(tp: TPContext) -> None:
