@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from trajectory_os.runs import model
+from trajectory_os.runs.spec import JobSpec, SpecValidationError
 
 JOB_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
@@ -166,6 +167,10 @@ class QueueEntry:
     command: list[str] = field(default_factory=list)
     max_attempts: int = model.DEFAULT_MAX_ATTEMPTS
     query_file: str | None = None
+    # V1.95: bounded fair-retry backoff counter (persisted; 0 = eligible).
+    retry_wait: int = 0
+    # V1.91: canonical job specification (new entries; legacy = None).
+    spec: JobSpec | None = None
 
     def to_dict(self) -> dict[str, Any]:
         doc: dict[str, Any] = {
@@ -175,9 +180,12 @@ class QueueEntry:
             "attempts": self.attempts,
             "command": list(self.command),
             "max_attempts": self.max_attempts,
+            "retry_wait": self.retry_wait,
         }
         if self.query_file is not None:
             doc["query_file"] = self.query_file
+        if self.spec is not None:
+            doc["spec"] = self.spec.to_dict()
         return doc
 
     @classmethod
@@ -203,6 +211,7 @@ class QueueEntry:
                 raise MalformedStoreError(model.ERR_QUEUE_MALFORMED, path)
         attempts = doc.get("attempts", 0)
         max_attempts = doc.get("max_attempts", model.DEFAULT_MAX_ATTEMPTS)
+        retry_wait = doc.get("retry_wait", 0)
         if (
             isinstance(attempts, bool)
             or not isinstance(attempts, int)
@@ -211,11 +220,20 @@ class QueueEntry:
             or not isinstance(max_attempts, int)
             or max_attempts < 1
             or max_attempts > model.MAX_ATTEMPTS_LIMIT
+            or isinstance(retry_wait, bool)
+            or not isinstance(retry_wait, int)
+            or retry_wait < 0
         ):
             raise MalformedStoreError(model.ERR_QUEUE_MALFORMED, path)
         query_file = doc.get("query_file")
         if query_file is not None and not isinstance(query_file, str):
             raise MalformedStoreError(model.ERR_QUEUE_MALFORMED, path)
+        parsed_spec: JobSpec | None = None
+        if "spec" in doc and doc["spec"] is not None:
+            try:
+                parsed_spec = JobSpec.from_dict(doc["spec"])
+            except SpecValidationError as exc:
+                raise MalformedStoreError(model.ERR_QUEUE_MALFORMED, path) from exc
         return cls(
             seq=seq,
             job_id=job_id,
@@ -224,6 +242,8 @@ class QueueEntry:
             command=list(command),
             max_attempts=max_attempts,
             query_file=query_file,
+            retry_wait=retry_wait,
+            spec=parsed_spec,
         )
 
 
@@ -297,6 +317,8 @@ class QueueDoc:
             max_attempts=max_attempts,
             query_file=query_file,
             attempts=attempts,
+            retry_wait=0,
+            spec=None,
         )
         self.entries.append(entry)
         self.seq = self.seq + 1
@@ -310,6 +332,62 @@ class QueueDoc:
             ):
                 return self.entries.pop(index)
         raise QueueEmptyError()
+
+    def reinsert(self, entry: QueueEntry) -> None:
+        """Restore a dequeued entry after a failed launch (same seq/position).
+
+        Fails closed BEFORE any mutation: identity overlap (a queued entry
+        with the same job id) and queue fullness are both rejected while the
+        document is still untouched, so a failed reinsert never leaves a
+        partial or duplicate state.
+        """
+        if any(e.job_id == entry.job_id for e in self.entries):
+            raise DuplicateIdentityError(entry.job_id)
+        if len(self.entries) + 1 > model.MAX_QUEUE_ENTRIES:
+            raise QueueFullError(model.MAX_QUEUE_ENTRIES)
+        self.entries.append(entry)
+        self.entries.sort(key=lambda e: e.seq)
+
+    def enqueue_spec(
+        self,
+        spec_obj: JobSpec,
+        *,
+        reserved_ids: frozenset[str] | None = None,
+        attempts: int = 0,
+    ) -> QueueEntry:
+        """Canonical V1.91 enqueue path: the spec is the source of truth.
+
+        Uniqueness is enforced against BOTH of:
+
+        * the job ids already present in this queue document
+          (``self.active_ids()``), and
+        * the caller-supplied ``reserved_ids`` (active/reserved identities
+          that live outside the queue document, e.g. live active records);
+
+        and the check happens strictly BEFORE any mutation — a rejected
+        enqueue leaves entries, seq and ordering exactly as they were.
+        """
+        spec_obj.validate()
+        reserved = self.active_ids() | (reserved_ids or frozenset())
+        if spec_obj.job_id in reserved:
+            raise DuplicateIdentityError(spec_obj.job_id)
+        if len(self.entries) >= model.MAX_QUEUE_ENTRIES:
+            raise QueueFullError(model.MAX_QUEUE_ENTRIES)
+        entry = QueueEntry(
+            seq=self.seq + 1,
+            job_id=spec_obj.job_id,
+            enqueued_at=utc_now_iso(),
+            command=list(spec_obj.command),
+            max_attempts=spec_obj.max_attempts,
+            query_file=spec_obj.query,
+            attempts=attempts,
+            retry_wait=0,
+            spec=spec_obj,
+        )
+        self.entries.append(entry)
+        self.seq = self.seq + 1
+        self.entries.sort(key=lambda e: e.seq)
+        return entry
 
 
 # ---------------------------------------------------------------------------
@@ -334,9 +412,10 @@ class ActiveRecord:
     log_stderr: str
     query_file: str | None = None
     live_proven: bool = False  # set by the ownership prover at observation time
+    execution_class: str | None = None  # V1.92: ad_hoc/read_only/mutating (None=legacy)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        doc: dict[str, Any] = {
             "job_id": self.job_id,
             "slot": self.slot,
             "pgid": self.pgid,
@@ -352,6 +431,9 @@ class ActiveRecord:
             "log_stderr": self.log_stderr,
             "query_file": self.query_file,
         }
+        if self.execution_class is not None:
+            doc["execution_class"] = self.execution_class
+        return doc
 
     @classmethod
     def from_dict(cls, doc: Any, path: Path) -> ActiveRecord:
@@ -379,6 +461,11 @@ class ActiveRecord:
         attempts = doc.get("attempts", 1)
         if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 1:
             raise MalformedStoreError(model.ERR_QUEUE_MALFORMED, path)
+        exec_class = doc.get("execution_class")
+        if exec_class is not None and (
+            not isinstance(exec_class, str) or exec_class not in _EXEC_CLASSES
+        ):
+            raise MalformedStoreError(model.ERR_QUEUE_MALFORMED, path)
         return cls(
             job_id=str(doc["job_id"]),
             slot=str(doc["slot"]),
@@ -394,7 +481,11 @@ class ActiveRecord:
             log_stdout=str(doc.get("log_stdout", "")),
             log_stderr=str(doc.get("log_stderr", "")),
             query_file=query_file,
+            execution_class=exec_class,
         )
+
+
+_EXEC_CLASSES = frozenset({"ad_hoc", "read_only", "mutating"})
 
 
 def load_active_records(path: Path) -> list[ActiveRecord]:
@@ -432,6 +523,7 @@ class ClosedRecord:
     attempts: int
     exit_code: int | None = None
     signal: int | None = None
+    evidence: str = ""  # V1.94: authoritative evidence label (never empty for new records)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -442,6 +534,7 @@ class ClosedRecord:
             "attempts": self.attempts,
             "exit_code": self.exit_code,
             "signal": self.signal,
+            "evidence": self.evidence,
         }
 
     @classmethod
@@ -455,15 +548,18 @@ class ClosedRecord:
         attempts = doc.get("attempts")
         exit_code = doc.get("exit_code")
         signal = doc.get("signal")
+        evidence = doc.get("evidence", "")
         if (
             not isinstance(job_id, str)
             or isinstance(seq, bool)
             or not isinstance(seq, int)
             or not isinstance(observed_at, str)
             or not isinstance(terminal, str)
+            or terminal not in model.TERMINALS
             or isinstance(attempts, bool)
             or not isinstance(attempts, int)
             or attempts < 0
+            or not isinstance(evidence, str)
         ):
             raise MalformedStoreError(model.ERR_QUEUE_MALFORMED, path)
         if (
@@ -481,6 +577,7 @@ class ClosedRecord:
             attempts=attempts,
             exit_code=exit_code,
             signal=signal,
+            evidence=evidence,
         )
 
 

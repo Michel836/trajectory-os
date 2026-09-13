@@ -2701,7 +2701,7 @@ if (( REPAIR_ATTEMPTS > 0 )) && [[ "$READINESS" == "NEEDS_REVIEW" && -z "$FORWAR
         # The RUN_DIR root always ends with the FINAL pass's evidence.
         pre_dir="$attempt_dir/pre-repair"
         mkdir -p -- "$pre_dir"
-        local pf
+        pf=""
         for pf in worktree.patch worktree.patch.sha256 worktree-files.txt \
                   worktree-stat.txt worktree-numstat.txt worktree-metadata.txt \
                   validation.txt validation.json \
