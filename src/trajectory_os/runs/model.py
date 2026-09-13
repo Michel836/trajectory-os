@@ -126,6 +126,25 @@ REASON_DUPLICATE_IDENTITY = "DUPLICATE_IDENTITY"
 DECISION_ALLOWED = "allowed"
 DECISION_REJECTED = "rejected"
 
+# V1.94: additional terminal outcome (unknown = unproven, never invented).
+TERMINAL_UNKNOWN = "unknown"
+
+# V1.92 workspace / materialization codes (fail-closed).
+ERR_WORKSPACE_SOURCE_MISSING = "WORKSPACE_SOURCE_MISSING"
+ERR_WORKSPACE_BAD_PROVENANCE = "WORKSPACE_BAD_PROVENANCE"
+ERR_WORKSPACE_COPY_FAILED = "WORKSPACE_COPY_FAILED"
+ERR_WORKSPACE_TOO_DEEP = "WORKSPACE_TOO_DEEP"
+ERR_WORKSPACE_VERIFY_FAILED = "WORKSPACE_VERIFY_FAILED"
+ERR_SAME_WORKTREE_CONFLICT = "SAME_WORKTREE_CONFLICT"
+
+# V1.93 inter-process locking codes (fail closed).
+ERR_LOCK_TIMEOUT = "STATE_LOCK_TIMEOUT"
+ERR_LOCK_MALFORMED = "STATE_LOCK_MALFORMED"
+
+# V1.95 bounded fair retry-selection codes (deterministic, fail closed).
+ERR_RETRY_WAIT = "RETRY_WAIT"
+ERR_TERMINAL_CONFLICT = "TERMINAL_CONFLICT"
+
 # ---------------------------------------------------------------------------
 # Queue / orchestration error and terminal codes (V1.89-V1.90).
 # ---------------------------------------------------------------------------
@@ -140,6 +159,18 @@ TERMINAL_FAILED = "failed"
 TERMINAL_CRASHED = "crashed"
 TERMINAL_CANCELLED = "cancelled"
 TERMINAL_CANCEL_PENDING = "cancel_pending"
+
+# Canonical set of all valid terminal outcomes (V1.94 taxonomy).
+TERMINALS = frozenset(
+    {
+        TERMINAL_DONE,
+        TERMINAL_FAILED,
+        TERMINAL_CRASHED,
+        TERMINAL_CANCELLED,
+        TERMINAL_CANCEL_PENDING,
+        TERMINAL_UNKNOWN,
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Bounded limits (no unbounded growth / retry / requeue).
