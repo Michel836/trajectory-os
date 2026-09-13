@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from trajectory_os.runs import model
+from trajectory_os.runs.resources import ResourceRequirement
 
 SPEC_SCHEMA_VERSION = 1
 
@@ -74,6 +75,7 @@ MAX_REVISION_LEN = 256
 MAX_RUNNER_LEN = 64
 MAX_QUERY_LEN = 262_144
 MAX_MAX_ATTEMPTS = model.MAX_ATTEMPTS_LIMIT  # canonical bounded retry cap
+MAX_DEPENDENCIES_ON = model.MAX_DEPENDENCIES  # V2.03: bounded prerequisite list
 
 # Provenance marker files (V1.92).
 SOURCE_REVISION_MARKER_REL = ".trajectory/source.json"
@@ -142,6 +144,11 @@ class JobSpec:
     source_checkout: Path | None = None
     query: str | None = None
     query_source: str | None = None  # provenance: where the query content came from
+    # V2.03: simple bounded prerequisite dependencies (fail closed).
+    depends_on: tuple[str, ...] = ()
+    permit_failed_prereqs: bool = False
+    # V2.04: explicit local resource requirements (all optional).
+    resources: ResourceRequirement | None = None
 
     # -- validation (deterministic, strict, fail-closed) -------------------
     def validate(self) -> JobSpec:
@@ -228,6 +235,42 @@ class JobSpec:
             raise SpecValidationError(
                 "SPEC_AD_HOC_SHARED_INVALID", "ad_hoc jobs never share a read-only checkout"
             )
+        # V2.03: prerequisite dependencies (simple, bounded, fail closed).
+        if isinstance(self.depends_on, bool) or not isinstance(
+            self.depends_on, (tuple, list)
+        ):
+            raise SpecValidationError(
+                "SPEC_DEPENDENCY_MALFORMED", f"malformed depends_on: {repr(self.depends_on)[:160]}"
+            )
+        deps = tuple(self.depends_on)
+        if len(deps) > MAX_DEPENDENCIES_ON:
+            raise SpecValidationError(
+                "SPEC_DEPENDENCY_MALFORMED", f"more than {MAX_DEPENDENCIES_ON} prerequisites"
+            )
+        seen: set[str] = set()
+        for dep in deps:
+            if (
+                not isinstance(dep, str)
+                or not (1 <= len(dep) <= MAX_JOB_ID_SPEC_LEN)
+                or JOB_ID_SPEC_RE.fullmatch(dep) is None
+            ):
+                raise SpecValidationError(
+                    "SPEC_DEPENDENCY_MALFORMED", f"invalid prerequisite: {repr(dep)[:160]}"
+                )
+            if dep == self.job_id:
+                raise SpecValidationError("SPEC_DEPENDENCY_SELF", dep)
+            if dep in seen:
+                raise SpecValidationError("SPEC_DEPENDENCY_MALFORMED", f"duplicate: {dep}")
+            seen.add(dep)
+        if not isinstance(self.permit_failed_prereqs, bool):
+            raise SpecValidationError(
+                "SPEC_PREREQ_POLICY_INVALID", repr(self.permit_failed_prereqs)
+            )
+        # V2.04: explicit resource requirements (validated by the resource layer).
+        if self.resources is not None:
+            if not isinstance(self.resources, ResourceRequirement):
+                raise SpecValidationError("SPEC_RESOURCES_INVALID", repr(self.resources)[:80])
+            self.resources.validate()
         return self
 
     # -- deterministic serialization ---------------------------------------
@@ -247,6 +290,9 @@ class JobSpec:
             ),
             "query": self.query,
             "query_source": self.query_source,
+            "depends_on": list(self.depends_on),
+            "permit_failed_prereqs": self.permit_failed_prereqs,
+            "resources": self.resources.to_dict() if self.resources is not None else None,
         }
 
     @classmethod
@@ -258,6 +304,7 @@ class JobSpec:
             "schema_version", "job_id", "execution_class", "command",
             "workspace_policy", "runner", "max_attempts", "repo_root",
             "source_revision", "source_checkout", "query", "query_source",
+            "depends_on", "permit_failed_prereqs", "resources",
         }
         extra = set(data) - known
         if extra:
@@ -308,6 +355,27 @@ class JobSpec:
                 raise SpecValidationError("SPEC_QUERY_SOURCE_INVALID", repr(type(query_source)))
         except KeyError as exc:
             raise SpecValidationError("SPEC_FIELD_MISSING", str(exc)) from exc
+
+        # V2.03/V2.04 optional canonical fields (strict; default to absence).
+        depends_on_raw = data.get("depends_on", ())
+        if depends_on_raw is None:
+            depends_on_raw = ()
+        if (
+            isinstance(depends_on_raw, bool)
+            or not isinstance(depends_on_raw, (list, tuple))
+            or any(not isinstance(dep, str) for dep in depends_on_raw)
+        ):
+            raise SpecValidationError("SPEC_DEPENDENCY_MALFORMED", repr(depends_on_raw)[:80])
+        permit = data.get("permit_failed_prereqs", False)
+        if not isinstance(permit, bool):
+            raise SpecValidationError("SPEC_PREREQ_POLICY_INVALID", repr(permit))
+        resources_raw = data.get("resources")
+        parsed_resources: ResourceRequirement | None = None
+        if resources_raw is not None:
+            try:
+                parsed_resources = ResourceRequirement.from_dict(resources_raw)
+            except Exception as exc:
+                raise SpecValidationError("SPEC_RESOURCES_INVALID", str(exc)[:80]) from exc
         spec = cls(
             schema_version=schema,
             job_id=job_id,
@@ -321,6 +389,9 @@ class JobSpec:
             source_checkout=_path("source_checkout"),
             query=query,
             query_source=query_source,
+            depends_on=tuple(depends_on_raw),
+            permit_failed_prereqs=permit,
+            resources=parsed_resources,
         )
         return spec.validate()
 
@@ -373,6 +444,9 @@ def build_spec(
     query: str | None = None,
     query_file: Path | str | None = None,
     query_source: str | None = None,
+    depends_on: tuple[str, ...] | list[str] | None = None,
+    permit_failed_prereqs: bool = False,
+    resources: ResourceRequirement | None = None,
 ) -> JobSpec:
     """Build and validate one canonical spec from validated inputs (fail-closed).
 
@@ -401,6 +475,9 @@ def build_spec(
         source_checkout=Path(source_checkout) if source_checkout is not None else None,
         query=query,
         query_source=query_source,
+        depends_on=tuple(depends_on or ()),
+        permit_failed_prereqs=permit_failed_prereqs,
+        resources=resources,
     )
     return spec.validate()
 

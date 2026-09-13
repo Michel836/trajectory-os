@@ -39,6 +39,13 @@ from trajectory_os.runs import admission, model, ownership, registry, store
 # ---------------------------------------------------------------------------
 
 
+# Canonical record/document types (single source of truth stays in ``store``;
+# these aliases keep orchestration callers from re-importing the store layer).
+ActiveRecord = store.ActiveRecord
+ClosedRecord = store.ClosedRecord
+QueueEntry = store.QueueEntry
+
+
 @dataclass
 class StateBundle:
     base: Path
@@ -55,13 +62,38 @@ class StateBundle:
     def active_ids(self) -> set[str]:
         return {record.job_id for record in self.active}
 
+    @property
+    def terminal_map(self) -> dict[str, str]:
+        """job_id -> latest authoritative terminal outcome (deterministic).
+
+        The latest record per job id is the one with the highest sequence
+        number; ties are impossible (seq is unique).  Read-only derivation
+        over the already-loaded bundle.
+        """
+        latest: dict[str, tuple[int, str]] = {}
+        for record in self.closed:
+            current = latest.get(record.job_id)
+            if current is None or record.seq > current[0]:
+                latest[record.job_id] = (record.seq, record.terminal)
+        return {
+            job_id: terminal for job_id, (_, terminal) in latest.items()
+        }
+
 
 def rebuild_state(state_root: Path) -> StateBundle:
-    """Strictly load durable orchestration state and prove live ownership."""
+    """Strictly load durable orchestration state and prove live ownership.
+
+    Malformed persisted state (queue/active/closed documents) fails closed
+    with ``store.MalformedStateError`` — it is never silently repaired or
+    partially applied.
+    """
     paths = store.state_paths(state_root)
-    queue = store.QueueDoc.load(paths["queue"])
-    active = store.load_active_records(paths["active"])
-    closed = store.load_closed_records(paths["closed"])
+    try:
+        queue = store.QueueDoc.load(paths["queue"])
+        active = store.load_active_records(paths["active"])
+        closed = store.load_closed_records(paths["closed"])
+    except store.MalformedStoreError as exc:
+        raise store.MalformedStateError(exc.code, exc.path) from exc
     proven: dict[str, ownership.OwnershipProof] = {}
     for record in active:
         proof = ownership.prove_active_record(record)
@@ -118,6 +150,45 @@ def _queue_view(paths: dict[str, Path]) -> tuple[store.QueueDoc, bool, str | Non
 # ---------------------------------------------------------------------------
 # Reap (observe finished jobs; bounded re-queue)
 # ---------------------------------------------------------------------------
+
+
+def started_by_jobs(state: StateBundle) -> dict[str, tuple[str, ...]]:
+    """Read-only transitive prerequisite closure (job_id -> prerequisite ids).
+
+    Derived strictly from canonical persisted state (queued entry specs and
+    closed-record specs); deterministic sorted output, no I/O, no mutation.
+    The closure is computed iteratively (explicit stack), so even deep but
+    narrow dependency chains cannot exhaust the interpreter recursion limit,
+    and each job is visited at most once, so the walk is O(nodes + edges).
+    """
+    ids = state.active_ids | {record.job_id for record in state.closed}
+    graph: dict[str, set[str]] = {}
+    for entry in state.queue.entries:
+        if entry.spec is not None and entry.spec.depends_on:
+            graph.setdefault(entry.job_id, set()).update(entry.spec.depends_on)
+    for record in state.closed:
+        js = getattr(record, "spec", None)
+        if js is not None and getattr(js, "depends_on", None):
+            graph.setdefault(record.job_id, set()).update(js.depends_on)
+
+    def closure(root: str) -> set[str]:
+        """Iterative reachability within known jobs (set-equivalent to the
+        cycle-guarded DFS, but with no recursion and O(nodes + edges) work).
+        """
+        out: set[str] = set()
+        seed = [dep for dep in graph.get(root, ()) if dep in ids]
+        seen: set[str] = set(seed)
+        stack = list(seed)
+        while stack:
+            node = stack.pop()
+            out.add(node)
+            for dep in graph.get(node, ()):
+                if dep in ids and dep not in seen:
+                    seen.add(dep)
+                    stack.append(dep)
+        return out
+
+    return {job: tuple(sorted(closure(job))) for job in sorted(graph)}
 
 
 def reap(state: StateBundle, *, observe: dict[str, str] | None = None) -> dict[str, Any]:
@@ -200,6 +271,21 @@ def reap(state: StateBundle, *, observe: dict[str, str] | None = None) -> dict[s
 # ---------------------------------------------------------------------------
 # Start (explicit authorized transition)
 # ---------------------------------------------------------------------------
+
+
+class StateConflictError(RuntimeError):
+    """State ambiguity a bounded mutation cannot resolve (fail closed).
+
+    Raised by state-transition helpers when an active record's liveness
+    cannot be proven AND no authoritative evidence was supplied — the
+    caller must stop instead of guessing (records are preserved, never
+    silently killed, dropped, or assumed).
+    """
+
+    def __init__(self, code: str, job_id: str | None = None) -> None:
+        super().__init__(f"{code}:{job_id}" if job_id else code)
+        self.code = code
+        self.job_id = job_id
 
 
 class AdmissionRejectedError(RuntimeError):

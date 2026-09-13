@@ -145,6 +145,70 @@ ERR_LOCK_MALFORMED = "STATE_LOCK_MALFORMED"
 ERR_RETRY_WAIT = "RETRY_WAIT"
 ERR_TERMINAL_CONFLICT = "TERMINAL_CONFLICT"
 
+# V1.97-V2.06: autonomous multi-run operations reason codes (stable, fail closed).
+# V1.99 reconstruction (never invent, never silently repair).
+ERR_RECONSTRUCTION_MALFORMED = "RECONSTRUCTION_MALFORMED"
+
+# V2.03 simple bounded prerequisite dependencies.
+MAX_DEPENDENCIES = 8
+ERR_DEPENDENCY_MALFORMED = "DEPENDENCY_MALFORMED"
+ERR_DEPENDENCY_SELF = "DEPENDENCY_SELF"
+ERR_DEPENDENCY_CYCLE = "DEPENDENCY_CYCLE"
+ERR_DEPENDENCY_UNKNOWN = "DEPENDENCY_UNKNOWN"  # prerequisite never reached terminal: block
+ERR_DEPENDENCY_BLOCKED = "DEPENDENCY_BLOCKED"  # prerequisite failed/cancelled: block
+DEP_STATUS_SATISFIED = "satisfied"
+DEP_STATUS_BLOCKED_FAILED = "blocked_failed"
+DEP_STATUS_BLOCKED_UNKNOWN = "blocked_unknown"
+
+# V2.04 explicit resource / capacity policy (deterministic; never overcommit).
+RES_DECISION_ALLOWED = "allowed"
+RES_DECISION_DEFERRED = "deferred"
+REASON_RESOURCE_UNKNOWN = "RESOURCE_UNKNOWN"  # unknown evidence -> defer (no overcommit)
+REASON_RESOURCE_EXHAUSTED = "RESOURCE_EXHAUSTED"
+REASON_RESOURCE_POLICY_MALFORMED = "RESOURCE_POLICY_MALFORMED"
+RESOURCE_DIMENSIONS = ("cpu_slots", "ram_bytes", "gpu_slots", "gpu_mem_bytes")
+
+# V2.00 bounded autonomous supervisor (deterministic hard bound).
+MAX_SUPERVISOR_CYCLES = 64
+SUPERVISOR_SUMMARY_FILE = "supervisor-summary.json"
+STOP_WORK_SETTLED = "WORK_SETTLED"  # deterministic quiescence (all work terminal/none left)
+STOP_CYCLE_BOUND_EXHAUSTED = "CYCLE_BOUND_EXHAUSTED"
+STOP_STATE_MALFORMED = "STATE_MALFORMED"
+STOP_ADMISSION_BLOCKED = "ADMISSION_BLOCKED"
+STOP_NO_ELIGIBLE_WORK = "NO_ELIGIBLE_WORK"
+STOP_LOCK_CONTENTION = "LOCK_CONTENTION"
+STOPS = (
+    STOP_WORK_SETTLED,
+    STOP_CYCLE_BOUND_EXHAUSTED,
+    STOP_STATE_MALFORMED,
+    STOP_ADMISSION_BLOCKED,
+    STOP_NO_ELIGIBLE_WORK,
+    STOP_LOCK_CONTENTION,
+)
+
+# V1.98 consolidated observability (stable ops-view schema version).
+OPS_SCHEMA_VERSION = 2
+RESOURCE_EVIDENCE_STATUS_AVAILABLE = "available"
+RESOURCE_EVIDENCE_STATUS_UNAVAILABLE = "unavailable"
+
+# V1.97 CLI capabilities (superset of V1.85-V1.96 surface).
+CLI_COMMANDS = (
+    "list",
+    "status",
+    "admit",
+    "queue",
+    "enqueue",
+    "start",
+    "observe",
+    "reap",
+    "cancel",
+    "recover",
+    "orchestrate",
+    "ops",
+    "supervisor",
+    "version",
+)
+
 # ---------------------------------------------------------------------------
 # Queue / orchestration error and terminal codes (V1.89-V1.90).
 # ---------------------------------------------------------------------------
@@ -184,4 +248,4 @@ MIN_CAPACITY = 1
 MAX_CAPACITY = 16
 
 CLI_NAME = "trajectory-pi-runs"
-CLI_TOOL_VERSION = "1.85"
+CLI_TOOL_VERSION = "2.06"
