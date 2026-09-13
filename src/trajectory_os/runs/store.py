@@ -51,6 +51,15 @@ class MalformedStoreError(Exception):
         self.path = path
 
 
+class MalformedStateError(MalformedStoreError):
+    """Strict rebuild of the whole orchestration state failed (fail closed).
+
+    A strict subtype of ``MalformedStoreError``: existing handlers that
+    catch the base class keep working, while state-rebuild callers can
+    distinguish a whole-state failure from a single-document one.
+    """
+
+
 class DuplicateIdentityError(Exception):
     def __init__(self, job_id: str) -> None:
         super().__init__(f"DUPLICATE_IDENTITY: {job_id}")
@@ -347,6 +356,23 @@ class QueueDoc:
             raise QueueFullError(model.MAX_QUEUE_ENTRIES)
         self.entries.append(entry)
         self.entries.sort(key=lambda e: e.seq)
+
+    def update_retry_wait(self, job_id: str, new_wait: int) -> bool:
+        """Set the backoff counter of one queued entry (in-memory until save).
+
+        Strict and fail closed: an invalid counter value raises before any
+        mutation; a missing identity is reported (``False``) without
+        touching the document.  Persistence is the caller's responsibility
+        (``save``), so the update is atomic with whatever else the caller
+        does inside its bounded mutation window.
+        """
+        if isinstance(new_wait, bool) or not isinstance(new_wait, int) or new_wait < 0:
+            raise ValueError(f"INVALID_RETRY_WAIT: {new_wait!r}")
+        for entry in self.entries:
+            if entry.job_id == job_id:
+                entry.retry_wait = new_wait
+                return True
+        return False
 
     def enqueue_spec(
         self,
