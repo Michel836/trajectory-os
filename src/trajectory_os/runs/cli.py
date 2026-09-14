@@ -141,7 +141,13 @@ def _parse_resources(raw: str | None) -> resources.ResourceRequirement | None:
             raise CliError(EXIT_USAGE, f"duplicate resource dimension: {key!r}")
         try:
             if known[key] is bool:
-                dims[key] = value.lower() in ("true", "1", "yes")
+                normalized = value.lower()
+                if normalized not in ("true", "false", "1", "0", "yes", "no"):
+                    raise CliError(
+                        EXIT_USAGE,
+                        f"invalid value for resource {key!r}: {value!r}",
+                    )
+                dims[key] = normalized in ("true", "1", "yes")
             else:
                 dims[key] = int(value)
         except ValueError:
@@ -153,6 +159,16 @@ def _parse_resources(raw: str | None) -> resources.ResourceRequirement | None:
     except resources.ResourcePolicyError as exc:
         raise CliError(EXIT_USAGE, f"invalid resources: {exc.code}: {exc.message}") from None
 
+
+
+def _malformed_store_document(exc: store.MalformedStoreError) -> dict[str, Any]:
+    """Return the canonical deterministic malformed-store response."""
+    return {
+        "schema_version": model.SCHEMA_VERSION,
+        "tool": model.CLI_NAME,
+        "malformed": True,
+        "code": exc.code,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -432,15 +448,21 @@ def cmd_ops(args: argparse.Namespace) -> tuple[int, str]:
 
 def cmd_observe(args: argparse.Namespace) -> tuple[int, str]:
     """Strict read-only observation snapshot (no mutations, fail closed)."""
-    state = orchestration.rebuild_state(Path(args.state_root))
-    document = observability.snapshot(state)
+    try:
+        state = orchestration.rebuild_state(Path(args.state_root))
+        document = observability.snapshot(state)
+    except store.MalformedStoreError as exc:
+        return EXIT_REJECTED, _render_json(_malformed_store_document(exc))
     return EXIT_OK, (_render_json(document) if args.json else observability.render_human(document))
 
 
 def cmd_reap(args: argparse.Namespace) -> tuple[int, str]:
     """Rebuild persisted state and reap provably-dead work (fail closed)."""
-    state = orchestration.rebuild_state(Path(args.state_root))
-    report = orchestration.reap(state, observe=None)
+    try:
+        state = orchestration.rebuild_state(Path(args.state_root))
+        report = orchestration.reap(state, observe=None)
+    except store.MalformedStoreError as exc:
+        return EXIT_REJECTED, _render_json(_malformed_store_document(exc))
     document = {"schema_version": model.SCHEMA_VERSION, "tool": model.CLI_NAME, **report,
                 "queue_count": len(state.queue.entries), "active_count": len(state.active)}
     return EXIT_OK, (_render_json(document) if args.json else _render_report_human(document))
@@ -448,9 +470,12 @@ def cmd_reap(args: argparse.Namespace) -> tuple[int, str]:
 
 def cmd_reconstruct(args: argparse.Namespace) -> tuple[int, str]:
     """Explicit, deterministic reconstruction into canonical buckets (V1.99)."""
-    outcome = reconstruction.reconstruct(
-        Path(args.state_root), Path(args.runs_root), observe=None
-    )
+    try:
+        outcome = reconstruction.reconstruct(
+            Path(args.state_root), Path(args.runs_root), observe=None
+        )
+    except store.MalformedStoreError as exc:
+        return EXIT_REJECTED, _render_json(_malformed_store_document(exc))
     document = outcome.to_dict()
     rendered = (
         _render_json(document)
@@ -486,12 +511,19 @@ def cmd_supervisor(args: argparse.Namespace) -> tuple[int, str]:
             observe=args.observe,
             resource_evidence=resource_evidence,
         )
+    except store.MalformedStoreError as exc:
+        return EXIT_REJECTED, _render_json(_malformed_store_document(exc))
     except supervisor.SupervisorConfigError as exc:
         return EXIT_REJECTED, f"rejected: {exc.code} — {exc.detail}\n"
     document = summary
-    if args.json:
-        return EXIT_OK, _render_json(document)
     stop = document.get("stop", {})
+    exit_code = (
+        EXIT_REJECTED
+        if stop.get("reason") == model.STOP_STATE_MALFORMED
+        else EXIT_OK
+    )
+    if args.json:
+        return exit_code, _render_json(document)
     totals = document.get("totals", {})
     lines = [
         f"stop={stop.get('reason')} "
@@ -508,7 +540,7 @@ def cmd_supervisor(args: argparse.Namespace) -> tuple[int, str]:
     codes = stop.get("codes") or []
     if codes:
         lines.append(f"codes: {'; '.join(codes)}")
-    return EXIT_OK, "\n".join(lines) + "\n"
+    return exit_code, "\n".join(lines) + "\n"
 
 
 def cmd_version(args: argparse.Namespace) -> tuple[int, str]:

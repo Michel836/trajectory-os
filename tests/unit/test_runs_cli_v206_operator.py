@@ -244,6 +244,7 @@ def test_malformed_resources_fail_closed_without_mutation(tmp_path: Path, capsys
         "unknown_dim=1",    # unknown dimension
         "cpu_slots=oops",   # non-integer
         "cpu_slots=2,cpu_slots=3",  # duplicate dimension
+        "gpu=garbage",      # malformed boolean must fail closed
     ):
         code, _ = _run(
             [
@@ -258,6 +259,52 @@ def test_malformed_resources_fail_closed_without_mutation(tmp_path: Path, capsys
     queue_path = store.state_paths(state_root)["queue"]
     if queue_path.exists():
         assert _queue_doc(state_root)["entries"] == []  # nothing persisted
+
+
+def test_malformed_store_fails_closed_across_operator_commands(
+    tmp_path: Path,
+    capsys: object,
+) -> None:
+    state_root, runs_root = _roots(tmp_path, "malformed-operators")
+    paths = store.state_paths(state_root)
+    paths["queue"].parent.mkdir(parents=True, exist_ok=True)
+    paths["queue"].write_text("{not-json", encoding="utf-8")
+
+    commands = (
+        ["observe", "--state-root", str(state_root), "--json"],
+        ["reap", "--state-root", str(state_root), "--json"],
+        [
+            "reconstruct",
+            "--state-root", str(state_root),
+            "--runs-root", str(runs_root),
+            "--json",
+        ],
+        [
+            "supervisor",
+            "--state-root", str(state_root),
+            "--runs-root", str(runs_root),
+            "--cycles", "1",
+            "--json",
+        ],
+    )
+
+    for argv in commands:
+        code, doc = _run(argv, capsys)
+        assert code == cli.EXIT_REJECTED, (argv, doc)
+
+        if argv[0] == "reconstruct":
+            # Reconstruction has its own deterministic fail-closed schema.
+            assert doc["code"] == "RECONSTRUCTION_MALFORMED", (argv, doc)
+        elif argv[0] == "supervisor":
+            # Supervisor preserves its structured session summary while
+            # surfacing malformed durable state as a rejected CLI outcome.
+            assert doc["stop"]["reason"] == model.STOP_STATE_MALFORMED, (argv, doc)
+            assert doc["any_unproven_residual"] is True, (argv, doc)
+        else:
+            assert doc.get("malformed") is True, (argv, doc)
+            assert "code" in doc, (argv, doc)
+
+    assert paths["queue"].read_text(encoding="utf-8") == "{not-json"
 
 
 def test_self_dependency_fails_closed(tmp_path: Path, capsys: object) -> None:
