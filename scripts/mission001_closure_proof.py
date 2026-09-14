@@ -68,6 +68,45 @@ def _live_count(state: orchestration.StateBundle) -> int:
     return alive
 
 
+def _write_evidence_tree(raw_dir: pathlib.Path, root: pathlib.Path) -> None:
+    """Snapshot the evidence tree.
+
+    Must be called only after all final evidence artifacts exist, because the
+    reports reference the tree and the tree must list the final reports
+    (internally consistent evidence references).
+    """
+    with open(raw_dir / "evidence-tree.txt", "w", encoding="utf-8") as fh:
+        for p in sorted(root.rglob("*")):
+            kind = "dir " if p.is_dir() else "file"
+            fh.write(f"{kind} {p.relative_to(root)}\n")
+
+
+def _reap_harness_children(budget_secs: float = 2.0) -> None:
+    """Best-effort reap of this process's children — bounded, never busy-spins.
+
+    ``os.waitpid(-1, WNOHANG)`` returns immediately both when no child has
+    changed and when a child is still alive but not yet exited, so an
+    unbounded loop busy-spins forever in the latter case. This version is
+    bounded by a wall-clock budget with a short sleep between probes: a
+    still-alive child can only delay us for at most ``budget_secs``. Safety is
+    not weakened: the harness already terminated its own process groups with
+    graceful termination before this final pass, and this pass never signals
+    anything — it only reaps this process's own children.
+    """
+    deadline = time.monotonic() + max(0.0, float(budget_secs))
+    while time.monotonic() < deadline:
+        try:
+            pid, _status = os.waitpid(-1, os.WNOHANG)
+        except (ChildProcessError, OSError):
+            # No reapable child remains — done.
+            break
+        if pid <= 0:
+            # No child exited right now (still alive, or none left). Give a
+            # short bounded grace before retrying instead of busy-spinning.
+            time.sleep(0.05)
+    return None
+
+
 def run_production_path(
     state_root: pathlib.Path,
     runs_root: pathlib.Path,
@@ -405,10 +444,6 @@ def main(argv: list[str] | None = None) -> int:
             json.dump(conflict, fh, indent=2, sort_keys=True)
         with open(raw_dir / "reconstruction.json", "w", encoding="utf-8") as fh:
             json.dump(reconstruction, fh, indent=2, sort_keys=True)
-        with open(raw_dir / "evidence-tree.txt", "w", encoding="utf-8") as fh:
-            for p in sorted(root.rglob("*")):
-                kind = "dir " if p.is_dir() else "file"
-                fh.write(f"{kind} {p.relative_to(root)}\n")
 
         report = build_report(
             baseline_commit=args.baseline_commit,
@@ -434,6 +469,9 @@ def main(argv: list[str] | None = None) -> int:
         (out_dir / "mission-001-closure-report.md").write_text(
             cr.render_markdown(report), encoding="utf-8"
         )
+        # The evidence tree is generated only after all final artifacts exist,
+        # so it lists the reports that reference it (consistent references).
+        _write_evidence_tree(raw_dir, root)
 
         summary = {
             "ok": True,
@@ -452,14 +490,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"PROOF BLOCKED: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
     finally:
-        # Best-effort: reap any leftover children belonging to this harness.
-        try:
-            while True:
-                _, _ = os.waitpid(-1, os.WNOHANG)
-        except ChildProcessError:
-            pass
-        except OSError:
-            pass
+        # Best-effort: reap any leftover children belonging to this harness
+        # (bounded, non-busy-looping).
+        _reap_harness_children(budget_secs=2.0)
 
 
 if __name__ == "__main__":

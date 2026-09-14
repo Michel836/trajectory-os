@@ -258,32 +258,12 @@ def cmd_enqueue(args: argparse.Namespace) -> tuple[int, str]:
         command.pop(0)
     if not command:
         raise CliError(EXIT_USAGE, "enqueue requires a command after '--'")
-    # Fail closed on flag leakage (REMAINDER swallows trailing options):
-    # flags must PRECEDE the job id and command.
-    _known_flags = (
-        "--state-root",
-        "--runs-root",
-        "--query-file",
-        "--max-attempts",
-        "--json",
-        "--capacity",
-        "--depends-on",
-        "--resources",
-        "--execution-class",
-        "--workspace-policy",
-        "--runner",
-        "--repo-root",
-        "--source-revision",
-        "--source-checkout",
-        "--permit-failed-prereqs",
-    )
-    leaked = [flag for flag in _known_flags if flag in command]
-    if leaked:
-        raise CliError(
-            EXIT_USAGE,
-            f"flags {leaked} after the job id are ignored by the parser; "
-            "usage: enqueue [flags...] JOB_ID -- CMD [ARGS...]",
-        )
+    # Note: the command payload after the job id is user data and is never
+    # scanned for option-looking arguments: a command argument that equals an
+    # enqueue option name (e.g. `echo --json`) is legitimate and preserved
+    # verbatim. Actual enqueue options are parsed and validated by the parser
+    # when they precede the job id and command (see usage), and their values
+    # are validated further below (fail closed where applicable).
     if args.max_attempts is not None:
         if not str(args.max_attempts).strip().isdigit() or not (
             1 <= int(args.max_attempts) <= model.MAX_ATTEMPTS_LIMIT

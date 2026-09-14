@@ -408,6 +408,58 @@ def test_enqueue_defaults_remain_backward_compatible(
     spec.JobSpec.from_dict(s).validate()
 
 
+def test_enqueue_preserves_command_args_matching_option_names(
+    tmp_path: Path, capsys: object
+) -> None:
+    """PR #193 finding: a command argument after `--` that equals an enqueue
+    option name is a legitimate user argument — it must be accepted AND
+    preserved verbatim (no option-leak false rejection)."""
+    state_root, _ = _roots(tmp_path, "payload-flags")
+    code, _ = _run(
+        [
+            "enqueue",
+            "--state-root", str(state_root),
+            "--max-attempts", "2",
+            "job1",
+            "--",
+            "echo", "--max-attempts", "3", "--json", "--capacity", "4",
+        ],
+        capsys,
+    )
+    assert code == 0
+    entry = _queue_doc(state_root)["entries"][0]
+    assert entry["command"] == ["echo", "--max-attempts", "3", "--json", "--capacity", "4"]
+    s = entry["spec"]
+    # The real option (before the job id) was parsed and validated, not lost.
+    assert s["command"] == ["echo", "--max-attempts", "3", "--json", "--capacity", "4"]
+    spec.JobSpec.from_dict(s).validate()
+
+
+def test_enqueue_actual_options_before_job_id_still_validated(
+    tmp_path: Path, capsys: object
+) -> None:
+    """The payload after the job id is data (never re-scanned for options);
+    actual enqueue options before the job id are still parsed and the
+    canonical validation (e.g. max_attempts bounds) still applies."""
+    state_root, _ = _roots(tmp_path, "option-validation")
+    # Out-of-range max_attempts is still rejected even with a payload after `--`.
+    code, _ = _run(
+        [
+            "enqueue",
+            "--state-root", str(state_root),
+            "--max-attempts", "999",
+            "job1",
+            "--",
+            "echo", "--max-attempts", "3",
+        ],
+        capsys,
+    )
+    assert code in (cli.EXIT_USAGE, cli.EXIT_REJECTED)
+    queue_path = store.state_paths(state_root)["queue"]
+    if queue_path.exists():
+        assert _queue_doc(state_root)["entries"] == []  # nothing persisted
+
+
 def test_malformed_canonical_flags_fail_closed_without_mutation(
     tmp_path: Path, capsys: object
 ) -> None:
@@ -532,6 +584,41 @@ def test_closure_report_blocked_requires_reason() -> None:
     ok, violations = closure_report.validate_report(doc)
     assert ok is False
     assert any("blocking_reason" in v for v in violations)
+
+
+def test_closure_report_proven_requires_measured_job_counters() -> None:
+    """PR #193 finding: a PROOF_PROVEN production proof must carry the
+    measured jobs_created/jobs_started/jobs_completed counters — omitting
+    them is a fabricated positive proof and must be rejected."""
+    for field in ("jobs_created", "jobs_started", "jobs_completed"):
+        doc = _valid_closure_report()
+        del doc["production_path_proof"][field]
+        ok, violations = closure_report.validate_report(doc)
+        assert ok is False, field
+        assert any(field in v for v in violations), violations
+
+
+def test_closure_report_proven_conflict_requires_canonical_reason_code() -> None:
+    """PR #193 finding: a PROOF_PROVEN conflict proof must cite exactly the
+    canonical SAME_WORKTREE_CONFLICT code; unrelated reason codes are
+    rejected."""
+    for bogus in ("SOME_OTHER_CODE", "WORKTREE", "UNEXPECTED_ERROR", ""):
+        doc = _valid_closure_report()
+        doc["conflict_proof"]["reason_code"] = bogus
+        ok, violations = closure_report.validate_report(doc)
+        assert ok is False, bogus
+        assert any(model.ERR_SAME_WORKTREE_CONFLICT in v for v in violations), violations
+
+
+def test_closure_report_blocked_conflict_allows_unrelated_reason_code() -> None:
+    """The canonical-code rule applies only to proven claims: a blocked proof
+    with a non-canonical reason code is not rejected on that ground."""
+    doc = _valid_closure_report()
+    conflict = doc["conflict_proof"]
+    conflict["status"] = closure_report.PROOF_BLOCKED
+    conflict["reason_code"] = "UNEXPECTED_ERROR"
+    ok, violations = closure_report.validate_report(doc)
+    assert ok is True, violations
 
 
 def test_closure_report_render_is_deterministic_and_derived() -> None:

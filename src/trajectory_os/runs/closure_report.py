@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from trajectory_os.runs import model as _model
 from trajectory_os.runs import spec as _spec
 
 CLOSURE_REPORT_SCHEMA_VERSION = 1
@@ -143,8 +144,24 @@ def validate_report(doc: Any) -> tuple[bool, list[str]]:
 
     status = proof.get("status")
     if status == PROOF_PROVEN:
-        # A proven production path needs measured support (no fabrication).
-        if created is not None and started is not None and completed is not None:
+        # A proven production path needs its measured job counters present
+        # (real integers) and internally consistent: a `proven` claim with
+        # no measured numbers behind it is a fabricated positive proof.
+        if created is None or started is None or completed is None:
+            missing = [
+                key
+                for key, value in (
+                    ("jobs_created", created),
+                    ("jobs_started", started),
+                    ("jobs_completed", completed),
+                )
+                if value is None
+            ]
+            violations.append(
+                "proven production path requires integer fields: "
+                + ", ".join(missing)
+            )
+        else:
             if started < MIN_PROVEN_JOBS:
                 violations.append(
                     f"proven production path requires jobs_started >= {MIN_PROVEN_JOBS}"
@@ -154,15 +171,14 @@ def validate_report(doc: Any) -> tuple[bool, list[str]]:
                     "proven production path requires jobs_created >= jobs_started "
                     "and jobs_completed >= jobs_started"
                 )
-        if max_conc is not None:
-            if max_conc < 1:
-                violations.append(
-                    "proven production path requires max_concurrent_observed >= 1"
-                )
-            if started is not None and max_conc > started:
-                violations.append(
-                    "max_concurrent_observed cannot exceed jobs_started"
-                )
+        if max_conc is None or max_conc < 1:
+            violations.append(
+                "proven production path requires max_concurrent_observed >= 1"
+            )
+        if max_conc is not None and started is not None and max_conc > started:
+            violations.append(
+                "max_concurrent_observed cannot exceed jobs_started"
+            )
         if proof.get("concurrency_claim") in (PROOF_PROVEN, "concurrent") and (
             max_conc is None or max_conc < 2
         ):
@@ -202,6 +218,14 @@ def validate_report(doc: Any) -> tuple[bool, list[str]]:
                 conflict.get(key)
             ).strip():
                 violations.append(f"conflict_proof.{key} is required for a proven proof")
+        # A proven conflict proof must cite the canonical deterministic rule,
+        # not some arbitrary (or fabricated) reason code.
+        if conflict.get("reason_code") != _model.ERR_SAME_WORKTREE_CONFLICT:
+            violations.append(
+                "proven conflict proof requires the canonical reason code "
+                f"{_model.ERR_SAME_WORKTREE_CONFLICT!r}, "
+                f"got {conflict.get('reason_code')!r}"
+            )
         for key in ("candidate_execution_class", "active_execution_class"):
             if conflict.get(key) not in _EXEC_CLASSES:
                 violations.append(
