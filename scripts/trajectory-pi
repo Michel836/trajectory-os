@@ -35,6 +35,28 @@ set -u
 #   copy that the agent (or any external act) can no longer corrupt
 #   under the live process.
 # ============================================================
+#
+# Mission 002 — explicit operator modes:
+# - canonical execution mode (IMPLEMENT / REPAIR / VERIFY / REVIEW /
+#   RECOVERY / SMOKE) is separate from --class (coarse workload/ETA
+#   profile; existing --class usage stays backward compatible);
+#   default mode is DERIVED from the class: smoke->SMOKE, repair->REPAIR,
+#   recovery->RECOVERY, feature/complex->IMPLEMENT;
+# - VERIFY / REVIEW are first-class READ-ONLY verification modes: the
+#   wrapper validates and/or independently reviews the CURRENT worktree
+#   (same exact temp-index snapshot patch, same identity guarantees)
+#   WITHOUT invoking the Pi agent at all — no completion marker required,
+#   no repository change required or permitted, real git index never
+#   written; the run reaches PASS/COMPLETE on a clean verification;
+# - deterministic lifecycle states (RUNNING, VALIDATING, REVIEWING,
+#   REPAIRING, BLOCKED, READY_FOR_COMMIT, FAILED, COMPLETE) are derived
+#   from wrapper state only (never from model prose) and persisted as
+#   machine-readable evidence (lifecycle.jsonl + lifecycle.json);
+# - unsafe combinations (read-only mode + --require-changes, read-only
+#   mode + --repair-attempts > 0) fail closed at parse time (exit 2);
+# - mode-aware final semantics: writable modes reach READY_FOR_COMMIT
+#   exactly as before; read-only modes reach PASS/COMPLETE without any
+#   agent completion marker and are never classified INCOMPLETE_AGENT_RUN.
 
 VERSION="0.4.0"
 
@@ -156,6 +178,27 @@ Usage:
 
 Options:
   --class CLASS        smoke|repair|recovery|feature|complex
+  --mode MODE          IMPLEMENT|REPAIR|VERIFY|REVIEW|RECOVERY|SMOKE
+                       (case-insensitive; Mission 002). Canonical
+                       execution mode, separate from --class (which stays
+                       the coarse workload/ETA profile). Default:
+                       derived from --class (smoke->SMOKE,
+                       repair->REPAIR, recovery->RECOVERY,
+                       feature/complex->IMPLEMENT), so existing
+                       --class-only invocations keep their behavior.
+                       VERIFY and REVIEW are READ-ONLY verification
+                       modes: the Pi agent is NOT invoked, no completion
+                       marker is required, no repository change is
+                       required or permitted, the real git index is never
+                       written; the exact temp-index snapshot patch,
+                       validation, independent review and identity
+                       verification still apply. VERIFY runs bounded
+                       validation; REVIEW additionally enables the
+                       independent read-only review (still overridable
+                       with --no-review / --review).
+                       UNSAFE combinations FAIL CLOSED (exit 2):
+                       --mode verify/review with --require-changes, and
+                       --mode verify/review with --repair-attempts > 0.
   --model MODEL        Pi/Ollama model (default: qwen3.8-dev3090)
   --thinking LEVEL     default: medium
   --prompt-file FILE   use @FILE plus a short user message
@@ -249,6 +292,10 @@ EOF
 }
 
 RUN_CLASS="feature"
+# Mission 002: canonical execution mode. Empty = derive from class
+# (backward compatible). Valid values: IMPLEMENT REPAIR VERIFY REVIEW
+# RECOVERY SMOKE (resolved after class validation).
+RUN_MODE=""
 MODEL="qwen3.8-dev3090"
 THINKING="medium"
 PROMPT_FILE=""
@@ -287,6 +334,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --class)
             RUN_CLASS="${2:?missing class}"
+            shift 2
+            ;;
+        --mode)
+            RUN_MODE="${2:?missing mode}"
             shift 2
             ;;
         --model)
@@ -445,10 +496,115 @@ case "$RUN_CLASS" in
         ;;
 esac
 
-# Resolve the independent-review default by run class (documented
-# deterministic default). An explicit --review / --no-review flag (which
-# sets REVIEW to 1/0) always wins; only an undetermined ("=") REVIEW is
-# filled in here.
+# ------------------------------------------------------------
+# Mission 002 — canonical execution mode (separate from --class).
+#
+# --class remains the coarse workload/ETA profile. The canonical mode
+# carries the ACTUAL execution semantics and mutation policy:
+#
+#   IMPLEMENT / REPAIR / RECOVERY / SMOKE  -> WRITABLE: the Pi agent is
+#     invoked and may change the worktree (completion marker required
+#     for readiness, --require-changes may gate the run);
+#
+#   VERIFY / REVIEW                        -> READ-ONLY: the Pi agent is
+#     NEVER invoked; the wrapper validates the CURRENT worktree via the
+#     same deterministic pipeline (exact temp-index snapshot, diff check,
+#     bounded validation). REVIEW additionally runs the independent
+#     read-only review of the exact patch. No completion marker is
+#     required, no repository change is required or permitted, and the
+#     real git index is never written.
+#
+# Resolution is deterministic: an explicit --mode always wins; without
+# one the mode is derived from the class (backward compatible with all
+# existing --class-only invocations).
+# ------------------------------------------------------------
+RUN_MODE="${RUN_MODE^^}"
+
+if [[ -n "$RUN_MODE" ]] \
+   && ! [[ "$RUN_MODE" =~ ^(IMPLEMENT|REPAIR|VERIFY|REVIEW|RECOVERY|SMOKE)$ ]]; then
+    echo "ERROR: invalid mode: $RUN_MODE" >&2
+    echo "Valid modes: IMPLEMENT, REPAIR, VERIFY, REVIEW, RECOVERY, SMOKE" >&2
+    exit 2
+fi
+
+if [[ -n "$RUN_MODE" ]]; then
+    RUN_MODE_SOURCE="explicit (--mode)"
+else
+    case "$RUN_CLASS" in
+        smoke) RUN_MODE="SMOKE" ;;
+        repair) RUN_MODE="REPAIR" ;;
+        recovery) RUN_MODE="RECOVERY" ;;
+        feature|complex) RUN_MODE="IMPLEMENT" ;;
+    esac
+    RUN_MODE_SOURCE="derived (from --class $RUN_CLASS)"
+fi
+
+READ_ONLY_MODE=0
+if [[ "$RUN_MODE" == "VERIFY" || "$RUN_MODE" == "REVIEW" ]]; then
+    READ_ONLY_MODE=1
+fi
+
+# Mission 002: deterministic mutation policy + changes contract for the
+# adaptive startup display and evidence. Writable modes may change the
+# worktree (required only under the --require-changes operator
+# contract); read-only modes never invoke the agent, so changes are
+# categorically FORBIDDEN.
+if (( READ_ONLY_MODE == 1 )); then
+    MUTATION_POLICY="read-only"
+    CHANGES_POLICY="forbidden"
+else
+    MUTATION_POLICY="writable"
+    if (( REQUIRE_CHANGES == 1 )); then
+        CHANGES_POLICY="required"
+    else
+        CHANGES_POLICY="permitted"
+    fi
+fi
+
+# Mission 002: unsafe combinations fail CLOSED at parse time, before any
+# run directory, agent invocation or git observation beyond the
+# mandatory repository check. Read-only verification contradicts an
+# operator contract that demands new changes, and bounded repair
+# attempts are by definition a WRITABLE loop — neither is expressible
+# in VERIFY/REVIEW, so both are rejected deterministically.
+if (( READ_ONLY_MODE == 1 )); then
+    if (( REQUIRE_CHANGES == 1 )); then
+        echo "ERROR: unsafe combination: read-only mode $RUN_MODE with --require-changes" >&2
+        echo "Read-only verification never mutates the worktree, so it can" >&2
+        echo "never satisfy (nor contradict) a --require-changes contract." >&2
+        echo "Use a writable mode (implement/repair/recovery/smoke) with --require-changes." >&2
+        exit 2
+    fi
+    if (( REPAIR_ATTEMPTS > 0 )); then
+        echo "ERROR: unsafe combination: read-only mode $RUN_MODE with --repair-attempts $REPAIR_ATTEMPTS" >&2
+        echo "Read-only verification invokes no agent and may not repair;" >&2
+        echo "pass --repair-attempts 0 (or omit it)." >&2
+        exit 2
+    fi
+fi
+
+# Resolve the independent-review default. REVIEW begins as the empty
+# string (meaning "no explicit operator flag"); the --review / --no-review
+# flags set it to 1 / 0 and always win. Only when REVIEW is still empty do
+# we fill in the default, mode-based first (Mission 002: the mode carries
+# the review semantics of a read-only run), then class-based defaults for
+# writable modes (unchanged legacy behavior: smoke -> disabled;
+# feature/complex/repair/recovery -> enabled).
+if [[ -z "$REVIEW" ]]; then
+    case "$RUN_MODE" in
+        VERIFY)
+            # VERIFY = bounded, fully local verification: no model
+            # reviewer by default (still forceable with --review).
+            REVIEW=0
+            ;;
+        REVIEW)
+            # REVIEW mode exists to obtain the independent read-only
+            # review of the exact patch (still disable-able with
+            # --no-review).
+            REVIEW=1
+            ;;
+    esac
+fi
 if [[ -z "$REVIEW" ]]; then
     case "$RUN_CLASS" in
         smoke)
@@ -477,7 +633,11 @@ HEAD_BEFORE="$(git rev-parse HEAD)"
 # Safety
 # ------------------------------------------------------------
 
-if [[ "$BRANCH" == "main" || "$BRANCH" == "master" ]]; then
+# Mission 002: the main/master protection guards WRITABLE agent work.
+# READ-ONLY verification (VERIFY/REVIEW) invokes no agent and mutates
+# nothing, so it is permitted on any branch (the wrapper still only
+# ever uses temporary index files and GIT_OPTIONAL_LOCKS=0).
+if (( READ_ONLY_MODE == 0 )) && [[ "$BRANCH" == "main" || "$BRANCH" == "master" ]]; then
     echo
     echo "SAFETY STOP"
     echo "trajectory-pi refuses writable agent work on branch: $BRANCH"
@@ -501,7 +661,10 @@ git_observe() {
 
 DIRTY_BEFORE="$(git_observe status --porcelain)"
 
-if [[ -n "$DIRTY_BEFORE" && "$DIRTY_OK" -ne 1 ]]; then
+# Mission 002: VERIFY/REVIEW exist to inspect an EXISTING dirty
+# worktree/patch, so the dirty-baseline safety stop (which guards
+# WRITABLE runs) does not apply to read-only modes.
+if (( READ_ONLY_MODE == 0 )) && [[ -n "$DIRTY_BEFORE" && "$DIRTY_OK" -ne 1 ]]; then
     echo
     echo "SAFETY STOP"
     echo "Working tree is already dirty."
@@ -534,7 +697,13 @@ fi
 FINAL_QUERY=""
 FINAL_QUERY_SOURCE="none"
 
-if ! is_blank "$PROMPT"; then
+# Mission 002: read-only verification never invokes the Pi agent, so
+# there is no final user query to satisfy. Writable modes keep the
+# original non-empty final-query guarantee unchanged.
+if (( READ_ONLY_MODE == 1 )); then
+    FINAL_QUERY=""
+    FINAL_QUERY_SOURCE="not_required (read-only mode: no agent invocation)"
+elif ! is_blank "$PROMPT"; then
     FINAL_QUERY="$PROMPT"
     FINAL_QUERY_SOURCE="explicit"
 elif [[ -n "$PROMPT_FILE" ]]; then
@@ -580,6 +749,30 @@ VERIFY_INDEX_FILE="$RUN_DIR/.snapshot-index-verify"
 FINAL_INDEX_FILE="$RUN_DIR/.snapshot-index-final"
 CLEANED_UP=0
 
+# Mission 002 — deterministic lifecycle evidence (wrapper-derived only;
+# NEVER derived from model prose). States are emitted at fixed wrapper
+# checkpoints and persisted as an append-only JSONL stream plus a final
+# JSON summary (lifecycle.json).
+LIFECYCLE_FILE="$RUN_DIR/lifecycle.jsonl"
+: > "$LIFECYCLE_FILE"
+emit_lifecycle() {
+    local st="$1"
+    printf '{"ts":"%s","state":"%s","class":"%s","mode":"%s"}\n' \
+        "$(date --iso-8601=seconds 2>/dev/null || date)" \
+        "$st" "$RUN_CLASS" "$RUN_MODE" >> "$LIFECYCLE_FILE" 2>/dev/null || true
+    return 0
+}
+# Deterministic lifecycle state for the current repository readiness.
+lifecycle_state_for_readiness() {
+    case "$1" in
+        READY_FOR_COMMIT|READY_FOR_REVIEW) echo "READY_FOR_COMMIT" ;;
+        BLOCKED) echo "BLOCKED" ;;
+        NEEDS_REVIEW) echo "BLOCKED" ;;
+        *) echo "BLOCKED" ;;
+    esac
+}
+emit_lifecycle "RUNNING"
+
 cleanup() {
     [[ "${CLEANED_UP:-0}" -eq 1 ]] && return 0
     CLEANED_UP=1
@@ -613,6 +806,10 @@ started_at=$START_TEXT
 pid=$$
 workspace=$WORKSPACE
 run_class=$RUN_CLASS
+run_mode=$RUN_MODE
+run_mode_source=$RUN_MODE_SOURCE
+mutation_policy=$MUTATION_POLICY
+changes_policy=$CHANGES_POLICY
 eta=$ETA
 model=$MODEL
 thinking=$THINKING
@@ -2141,12 +2338,17 @@ echo "============================================================"
 echo " TRAJECTORY-PI V$VERSION"
 echo "============================================================"
 printf "Run class      %s\n" "$RUN_CLASS"
+printf "Canonical mode %s (%s)\n" "$RUN_MODE" "$RUN_MODE_SOURCE"
+printf "Mutation policy %s\n" "$MUTATION_POLICY"
+printf "Changes        %s\n" "$CHANGES_POLICY"
 printf "ETA            %s\n" "$ETA"
 printf "Model          %s\n" "$MODEL"
 printf "Thinking       %s\n" "$THINKING"
+printf "Validation     %s\n" "$( [[ "${#VALIDATE_CMDS[@]}" -gt 0 ]] && echo enabled || echo not configured )"
 printf "Review         %s (%s)\n" \
     "$([[ "$REVIEW" -eq 1 ]] && echo enabled || echo disabled)" \
     "$REVIEWER_MODEL"
+printf "Repair attempts %s\n" "$( [[ "$REPAIR_ATTEMPTS" -gt 0 ]] && echo "enabled ($REPAIR_ATTEMPTS max)" || echo disabled )"
 printf "Branch         %s\n" "$BRANCH"
 printf "HEAD           %.12s\n" "$HEAD_BEFORE"
 printf "Baseline files %s\n" "$BASELINE_COUNT"
@@ -2243,12 +2445,33 @@ invoke_pi_agent() {
 # query; repair attempts replace PI_FINAL_QUERY with their evidence
 # prompt before re-invoking.
 PI_FINAL_QUERY="$FINAL_QUERY"
-invoke_pi_agent "$LOG"
+if (( READ_ONLY_MODE == 1 )); then
+    # Mission 002: read-only verification (VERIFY/REVIEW) NEVER invokes
+    # the Pi implementation agent. There is no agent process to wait for;
+    # the wrapper proceeds straight to the deterministic verification /
+    # independent-review pipeline, which gates on the CURRENT worktree
+    # alone. By construction the implementation-agent exit code is 0
+    # (nothing was run) and no implementation completion marker is
+    # required; the log records why the agent was not invoked.
+    {
+        echo "mode=${RUN_MODE} (read-only)"
+        echo "The Pi implementation agent was NOT invoked: this mode does"
+        echo "validation and optional independent review of the CURRENT"
+        echo "worktree only. No implementation completion marker is"
+        echo "required or expected for a read-only verification run."
+        echo "read-only verification invoked no implementation agent."
+    } > "$LOG"
+    PI_RC=0
+    PI_PID=""
+else
+    invoke_pi_agent "$LOG"
+fi
 # (INT/TERM forwarding traps were installed inside invoke_pi_agent, per
 # invocation, now that the Pi child exists.)
 
 # ------------------------------------------------------------
-# Heartbeat
+# Heartbeat (writable modes only; read-only verification has no live
+# agent process to observe — PI_PID is empty and the loop below is a no-op).
 # ------------------------------------------------------------
 
 while kill -0 "$PI_PID" 2>/dev/null; do
@@ -2301,8 +2524,10 @@ while kill -0 "$PI_PID" 2>/dev/null; do
     sleep "$INTERVAL"
 done
 
-wait "$PI_PID"
-PI_RC=$?
+if [[ -n "${PI_PID:-}" ]]; then
+    wait "$PI_PID"
+    PI_RC=$?
+fi
 
 # Do not leave signal traps active during snapshot/review/reporting.
 trap - INT TERM
@@ -2374,7 +2599,18 @@ fi
 CURRENT_STATUS_AFTER="$(status_fingerprint)"
 AGENT_CHANGED_AFTER="$(count_added_since_baseline "$CURRENT_STATUS_AFTER")"
 
-if [[ "$PI_RC" -ne 0 && "$PROVIDER_MISSING_QUERY" -eq 1 ]]; then
+if (( READ_ONLY_MODE == 1 )); then
+    # Mission 002: the Pi implementation agent was never invoked, so an
+    # implementation completion marker is categorically not required
+    # (a read-only run is never INCOMPLETE_AGENT_RUN just because no
+    # implementation marker exists). A non-zero exit here would mean the
+    # deterministic verification pipeline itself failed.
+    if [[ "$PI_RC" -eq 0 ]]; then
+        CLASSIFICATION="READ_ONLY_VERIFIED"
+    else
+        CLASSIFICATION="READ_ONLY_FAILED"
+    fi
+elif [[ "$PI_RC" -ne 0 && "$PROVIDER_MISSING_QUERY" -eq 1 ]]; then
     CLASSIFICATION="UPSTREAM_PROVIDER_MISSING_QUERY"
 elif [[ "$PI_RC" -eq 0 ]]; then
     if completion_evidence_present "$LOG"; then
@@ -2469,8 +2705,10 @@ echo "===== SNAPSHOT ====="
 run_worktree_snapshot
 SNOT="${SNAPSHOT_STATUS}"
 
+emit_lifecycle "VALIDATING"
 run_validations
 
+emit_lifecycle "REVIEWING"
 run_review
 
 # Final pre-readiness worktree-identity verification: as late as
@@ -2529,7 +2767,7 @@ elif [[ "$DIFF_CHECK" == "FAIL" ]]; then
 elif [[ "$PI_RC" -ne 0 ]]; then
     READINESS="NEEDS_REVIEW"
     READINESS_REASON="Pi EXITED NON-ZERO (exit $PI_RC)"
-elif [[ "$CLASSIFICATION" != "AGENT_COMPLETED" ]]; then
+elif [[ "$CLASSIFICATION" != "AGENT_COMPLETED" && "$CLASSIFICATION" != "READ_ONLY_VERIFIED" ]]; then
     READINESS="NEEDS_REVIEW"
     READINESS_REASON="RUN NOT CONFIRMED COMPLETE ($CLASSIFICATION)"
 elif [[ "$SEMANTIC_INDEX_AFTER_AGENT_STATE" != "UNCHANGED" ]]; then
@@ -2605,6 +2843,10 @@ if (( REQUIRE_CHANGES == 1 )); then
     fi
 fi
 
+# Mission 002: persist the deterministic lifecycle state derived from
+# readiness (wrapper-only; never from agent prose).
+emit_lifecycle "$(lifecycle_state_for_readiness "$READINESS")"
+
 case "$READINESS" in
     READY_FOR_COMMIT)
         DECISION="GO COMMIT"
@@ -2655,7 +2897,8 @@ echo "decision_required=$DECISION" >> "$META"
                  worktree-stat.txt worktree-numstat.txt worktree-metadata.txt \
                  diff-check.txt validation.txt validation.json \
                  review-prompt.txt review.txt review-meta.txt \
-                 review-findings.txt review-findings.json; do
+                 review-findings.txt review-findings.json \
+                 lifecycle.jsonl lifecycle.json; do
             if [[ -e "$RUN_DIR/$f" ]]; then
                 cp -f -- "$RUN_DIR/$f" "$REPAIR_ATTEMPT_DIR/$f" 2>/dev/null || true
             fi
@@ -2686,6 +2929,7 @@ compute_readiness
 if (( REPAIR_ATTEMPTS > 0 )) && [[ "$READINESS" == "NEEDS_REVIEW" && -z "$FORWARDED_SIGNAL" ]]; then
     while (( REPAIR_USED < REPAIR_ATTEMPTS )) && [[ "$READINESS" == "NEEDS_REVIEW" && -z "$FORWARDED_SIGNAL" ]]; do
         REPAIR_USED=$((REPAIR_USED + 1))
+        emit_lifecycle "REPAIRING"
         attempt_dir="$RUN_DIR/repair/$REPAIR_USED"
         REPAIR_ATTEMPT_DIR="$attempt_dir"
         mkdir -p -- "$attempt_dir"
@@ -3018,4 +3262,28 @@ FINAL_EXIT="$PI_RC"
 if (( REPAIR_USED > 0 )) && [[ "$READINESS" == "READY_FOR_COMMIT" || "$READINESS" == "READY_FOR_REVIEW" ]]; then
     FINAL_EXIT=0
 fi
+
+# Mission 002: final deterministic lifecycle terminal state + JSON summary.
+if [[ "$FINAL_EXIT" -eq 0 ]]; then
+    LIFECYCLE_FINAL="COMPLETE"
+else
+    LIFECYCLE_FINAL="FAILED"
+fi
+emit_lifecycle "$LIFECYCLE_FINAL"
+LC_COUNT="$(wc -l < "$LIFECYCLE_FILE" 2>/dev/null | tr -d ' ' )"
+LC_COUNT="${LC_COUNT:-0}"
+{
+    printf '{\n'
+    printf '  "ts":"%s",\n' "$(date --iso-8601=seconds 2>/dev/null || date)"
+    printf '  "mode":"%s",\n' "$RUN_MODE"
+    printf '  "class":"%s",\n' "$RUN_CLASS"
+    printf '  "mutation_policy":"%s",\n' "$MUTATION_POLICY"
+    printf '  "final_state":"%s",\n' "$LIFECYCLE_FINAL"
+    printf '  "readiness":"%s",\n' "${READINESS:-UNKNOWN}"
+    printf '  "exit_code":%s,\n' "$FINAL_EXIT"
+    printf '  "transitions":%s,\n' "$LC_COUNT"
+    printf '  "evidence":"lifecycle.jsonl"\n'
+    printf '}\n'
+} > "$RUN_DIR/lifecycle.json" 2>/dev/null || true
+
 exit "$FINAL_EXIT"
