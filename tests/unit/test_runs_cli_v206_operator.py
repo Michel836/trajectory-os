@@ -8,7 +8,9 @@ of the existing V1.97–V2.06 core:
 * ``reconstruct`` is explicit and deterministic (idempotent no-op second run);
 * ``supervisor`` is bounded (cycle bound, no launch when not eligible);
 * dependency / resource metadata (V2.03/V2.04) survive operator submission;
-* malformed input fails closed (non-zero exit, state untouched).
+* malformed input fails closed (non-zero exit, state untouched);
+* canonical provenance/execution flags (Mission 001-D) round-trip through the
+  persisted spec, and the closure-report contract rejects fabricated proofs.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-from trajectory_os.runs import cli, model, spec, store
+from trajectory_os.runs import cli, closure_report, model, spec, store
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -345,3 +347,198 @@ def test_malformed_queue_fails_closed_in_ops_and_enqueue(tmp_path: Path, capsys:
     )
     assert code2 == cli.EXIT_REJECTED
     assert paths["queue"].read_text(encoding="utf-8") == "{not-json"  # untouched
+
+
+# ---------------------------------------------------------------------------
+# 7) Mission 001-D (A/G): canonical provenance/execution flags + closure
+#    report contract (fail-closed, no fabricated positive proof)
+# ---------------------------------------------------------------------------
+
+
+def test_enqueue_canonical_flags_round_trip_persisted_spec(
+    tmp_path: Path, capsys: object
+) -> None:
+    state_root, _ = _roots(tmp_path, "canon")
+    code, _ = _run(
+        [
+            "enqueue",
+            "--state-root", str(state_root),
+            "--execution-class", spec.EXEC_READ_ONLY,
+            "--workspace-policy", spec.WORKSPACE_SHARED_READ_ONLY,
+            "--runner", spec.RUNNER_TRAJECTORY_PI,
+            "--repo-root", "/srv/repo",
+            "--source-revision", "abc123",
+            "--source-checkout", "/srv/repo",
+            "--permit-failed-prereqs",
+            "job1", "--", "/bin/true",
+        ],
+        capsys,
+    )
+    assert code == 0
+    entry = _queue_doc(state_root)["entries"][0]
+    s = entry["spec"]
+    assert s["execution_class"] == spec.EXEC_READ_ONLY
+    assert s["workspace_policy"] == spec.WORKSPACE_SHARED_READ_ONLY
+    assert s["runner"] == spec.RUNNER_TRAJECTORY_PI
+    assert s["repo_root"] == "/srv/repo"
+    assert s["source_revision"] == "abc123"
+    assert s["source_checkout"] == "/srv/repo"
+    assert s["permit_failed_prereqs"] is True
+    # Re-validation from the persisted spec stays valid (canonical store path).
+    spec.JobSpec.from_dict(s).validate()
+
+
+def test_enqueue_defaults_remain_backward_compatible(
+    tmp_path: Path, capsys: object
+) -> None:
+    state_root, _ = _roots(tmp_path, "legacy")
+    code, _ = _run(
+        ["enqueue", "--state-root", str(state_root), "job1", "--", "/bin/true"],
+        capsys,
+    )
+    assert code == 0
+    s = _queue_doc(state_root)["entries"][0]["spec"]
+    assert s["execution_class"] == spec.EXEC_AD_HOC
+    assert s["workspace_policy"] == spec.WORKSPACE_ISOLATED
+    assert s["runner"] == spec.RUNNER_GENERIC
+    assert s["repo_root"] is None
+    assert s["source_revision"] is None
+    assert s["source_checkout"] is None
+    assert s["permit_failed_prereqs"] is False
+    spec.JobSpec.from_dict(s).validate()
+
+
+def test_malformed_canonical_flags_fail_closed_without_mutation(
+    tmp_path: Path, capsys: object
+) -> None:
+    state_root, _ = _roots(tmp_path, "badflags")
+    single_bad: list[tuple[str, str]] = [
+        ("execution-class", "turbo"),
+        ("workspace-policy", "wet"),
+        ("runner", "nope"),
+    ]
+    for flag, value in single_bad:
+        code, _ = _run(
+            [
+                "enqueue",
+                "--state-root", str(state_root),
+                f"--{flag}", value,
+                "job1", "--", "/bin/true",
+            ],
+            capsys,
+        )
+        assert code in (cli.EXIT_USAGE, cli.EXIT_REJECTED), flag
+
+    # Canonical safety rule: a mutating job must be isolated (and sourced).
+    code, _ = _run(
+        [
+            "enqueue",
+            "--state-root", str(state_root),
+            "--execution-class", spec.EXEC_MUTATING,
+            "--workspace-policy", spec.WORKSPACE_SHARED_READ_ONLY,
+            "--repo-root", "/srv/repo",
+            "--source-revision", "abc123",
+            "--source-checkout", "/srv/repo",
+            "job1", "--", "/bin/true",
+        ],
+        capsys,
+    )
+    assert code in (cli.EXIT_USAGE, cli.EXIT_REJECTED)
+
+    queue_path = store.state_paths(state_root)["queue"]
+    if queue_path.exists():
+        assert _queue_doc(state_root)["entries"] == []  # nothing persisted
+
+
+def _valid_closure_report() -> dict[str, Any]:
+    lifecycle = {
+        stage: {"status": closure_report.STATUS_MEASURED, "note": "unit"}
+        for stage in (
+            "enqueue", "start", "observe", "completion", "reap",
+            "reconstruction",
+        )
+    }
+    return {
+        "schema_version": closure_report.CLOSURE_REPORT_SCHEMA_VERSION,
+        "mission": "001-D",
+        "baseline_commit": "f67098e74a42454a71051e4665346f7cbc9b9e89",
+        "closure_branch": "mission/001-closure-evidence",
+        "production_path_proof": {
+            "status": closure_report.PROOF_PROVEN,
+            "jobs_created": 2,
+            "jobs_started": 2,
+            "jobs_completed": 2,
+            "max_concurrent_observed": 2,
+            "concurrency_claim": closure_report.PROOF_PROVEN,
+            "evidence": ["/tmp/proof/raw/production_path.json"],
+        },
+        "conflict_proof": {
+            "status": closure_report.PROOF_PROVEN,
+            "candidate_job": "job-b",
+            "active_job": "job-a",
+            "reason_code": model.ERR_SAME_WORKTREE_CONFLICT,
+            "candidate_execution_class": spec.EXEC_MUTATING,
+            "active_execution_class": spec.EXEC_MUTATING,
+            "source_checkout": "/tmp/proof/src",
+        },
+        "lifecycle": lifecycle,
+        "final_state": {"status": closure_report.PROOF_PROVEN, "note": "all terminal"},
+        "quality_state": {
+            "status": "PASS",
+            "command": "bash scripts/quality.sh",
+        },
+        "review_state": "pending",
+        "evidence": ["/tmp/proof/raw/production_path.json"],
+    }
+
+
+def test_closure_report_valid_report_passes() -> None:
+    ok, violations = closure_report.validate_report(_valid_closure_report())
+    assert violations == []
+    assert ok is True
+
+
+def test_closure_report_rejects_fabricated_proven_proof() -> None:
+    doc = _valid_closure_report()
+    # A "proven" claim whose numbers contradict its own evidence:
+    # two jobs created but none ever started, zero concurrency, no evidence.
+    doc["production_path_proof"] = {
+        "status": closure_report.PROOF_PROVEN,
+        "jobs_created": 2,
+        "jobs_started": 0,
+        "jobs_completed": 0,
+        "max_concurrent_observed": 0,
+    }
+    ok, violations = closure_report.validate_report(doc)
+    assert ok is False
+    assert any("jobs_started >=" in v for v in violations)
+    assert any("evidence list" in v for v in violations)
+
+
+def test_closure_report_concurrent_claim_requires_two_live_jobs() -> None:
+    doc = _valid_closure_report()
+    proof = doc["production_path_proof"]
+    proof["jobs_started"] = 1
+    proof["jobs_completed"] = 1
+    proof["max_concurrent_observed"] = 1
+    ok, violations = closure_report.validate_report(doc)
+    assert ok is False
+    assert any("concurrent" in v for v in violations)
+
+
+def test_closure_report_blocked_requires_reason() -> None:
+    doc = _valid_closure_report()
+    doc["production_path_proof"]["status"] = closure_report.PROOF_BLOCKED
+    ok, violations = closure_report.validate_report(doc)
+    assert ok is False
+    assert any("blocking_reason" in v for v in violations)
+
+
+def test_closure_report_render_is_deterministic_and_derived() -> None:
+    doc = _valid_closure_report()
+    first = closure_report.render_markdown(doc)
+    second = closure_report.render_markdown(doc)
+    assert first == second
+    assert "001-D" in first
+    assert model.ERR_SAME_WORKTREE_CONFLICT in first
+    assert "pending" in first

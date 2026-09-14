@@ -269,6 +269,13 @@ def cmd_enqueue(args: argparse.Namespace) -> tuple[int, str]:
         "--capacity",
         "--depends-on",
         "--resources",
+        "--execution-class",
+        "--workspace-policy",
+        "--runner",
+        "--repo-root",
+        "--source-revision",
+        "--source-checkout",
+        "--permit-failed-prereqs",
     )
     leaked = [flag for flag in _known_flags if flag in command]
     if leaked:
@@ -319,9 +326,16 @@ def cmd_enqueue(args: argparse.Namespace) -> tuple[int, str]:
         job_spec = spec.build_spec(
             job_id=args.job_id,
             command=command,
+            execution_class=args.execution_class,
+            workspace_policy=args.workspace_policy,
+            runner=args.runner,
             max_attempts=max_attempts,
+            repo_root=args.repo_root,
+            source_revision=args.source_revision,
+            source_checkout=args.source_checkout,
             query_file=qpath,
             depends_on=list(depends_on),
+            permit_failed_prereqs=args.permit_failed_prereqs,
             resources=req_resources,
         )
     except spec.SpecValidationError as exc:
@@ -756,6 +770,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--resources", default=None,
                    help="dim=value[,dim=value] resource requirements (V2.04); "
                         "dims: cpu_slots, ram_bytes, gpu, gpu_mem_bytes")
+    # Canonical provenance / execution fields (V1.97+): defaults match the
+    # canonical spec defaults. Enum members are NOT whitelisted here (no
+    # duplicate validation policy); malformed values are rejected fail-closed
+    # by the single canonical spec validation (spec.build_spec ->
+    # JobSpec.validate) with a deterministic canonical code.
+    p.add_argument("--execution-class", default=spec.EXEC_AD_HOC,
+                   help="canonical execution class (ad_hoc/read_only/mutating)")
+    p.add_argument("--workspace-policy", default=spec.WORKSPACE_ISOLATED,
+                   help="canonical workspace policy (isolated/shared_read_only)")
+    p.add_argument("--runner", default=spec.RUNNER_GENERIC,
+                   help="canonical runner identity (generic/trajectory-pi)")
+    p.add_argument("--repo-root", default=None,
+                   help="absolute repository root (canonical provenance)")
+    p.add_argument("--source-revision", default=None,
+                   help="explicit source revision (never guessed)")
+    p.add_argument("--source-checkout", default=None,
+                   help="absolute source checkout path (canonical provenance)")
+    p.add_argument("--permit-failed-prereqs", action="store_true", default=False,
+                   help="permit prerequisites that have failed (V2.03)")
     p.add_argument("command", nargs=argparse.REMAINDER)
     p.set_defaults(func=cmd_enqueue)
 
