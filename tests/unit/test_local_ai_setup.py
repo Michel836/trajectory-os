@@ -57,13 +57,14 @@ exit 2
 
 
 def valid_pi_model() -> dict:
+    """The tracked SAFE profile: contextWindow 32768 / maxTokens 8192."""
     return {
         "id": "qwen3.8-dev3090",
         "name": "Ollama - Qwen 3.8 27B TrajectoryOS 64K RTX3090 MTP",
         "reasoning": True,
         "input": ["text", "image"],
-        "contextWindow": 65536,
-        "maxTokens": 32768,
+        "contextWindow": 32768,
+        "maxTokens": 8192,
         "compat": {
             "supportsDeveloperRole": False,
             "supportsReasoningEffort": True,
@@ -98,8 +99,10 @@ def write_pi_registry(
         model = valid_pi_model()
 
         if malformed_target:
-            model["contextWindow"] = 32768
-            model["maxTokens"] = 8192
+            # the old UNSAFE profile that caused Ollama
+            # "no user query found in messages"
+            model["contextWindow"] = 65536
+            model["maxTokens"] = 32768
 
         models.append(model)
 
@@ -318,8 +321,8 @@ def test_setup_preserves_unknown_fields_in_target_entry(
         if model.get("id") == "qwen3.8-dev3090"
     )
 
-    assert repaired_target["contextWindow"] == 65536
-    assert repaired_target["maxTokens"] == 32768
+    assert repaired_target["contextWindow"] == 32768
+    assert repaired_target["maxTokens"] == 8192
     assert repaired_target["futureField"] == {"must": "survive"}
     assert (
         repaired_target["compat"]["futureCapability"]

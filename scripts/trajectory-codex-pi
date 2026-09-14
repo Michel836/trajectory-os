@@ -15,8 +15,17 @@
 #   git-ignored local state, not in the caller's HOME;
 # - synchronizes ONLY $HOME/.pi/agent/models.json (byte-for-byte
 #   copy of that single file) into that directory;
+# - installs the tracked runtime extension
+#   <repo>/pi-runtime/user-message-guard.ts byte-for-byte into
+#   <repo>/.trajectory-pi/pi-agent/extensions/
+#   (the guard that keeps Ollama from seeing requests with no
+#   user-role message); this copy comes ONLY from the tracked
+#   repository file — never from $HOME or any other untracked
+#   location — and is reinstalled on every run, so the repo-local
+#   runtime is deterministic and idempotent;
 # - fails clearly BEFORE delegation when the source models
-#   file is missing or unreadable;
+#   file is missing or unreadable, or the tracked guard is
+#   missing/unreadable (fail closed: no partial runtime);
 # - delegates every user argument byte-for-argument to
 #   <repo>/scripts/trajectory-pi and returns exactly that
 #   delegate's exit status (exec replaces this process).
@@ -102,6 +111,44 @@ if ! cp -f -- "$src_models" "$agent_dir/models.json" 2>/dev/null; then
 fi
 if [[ ! -r "$agent_dir/models.json" ]]; then
     fail "synchronized models.json is not readable: $agent_dir/models.json"
+fi
+
+# ------------------------------------------------------------
+# Tracked runtime extension: user-message guard
+#
+# The guard source is a TRACKED repository file, installed
+# byte-for-byte into the repo-local Pi agent extensions
+# directory on every run. Only the single tracked path above
+# is ever read; NOTHING is read or copied from $HOME (or any
+# other untracked location) for this extension. Missing or
+# unreadable tracked source fails BEFORE delegation — the
+# runtime is never left with a stale, tampered, or partial
+# guard.
+# ------------------------------------------------------------
+
+guard_src="$repo_root/pi-runtime/user-message-guard.ts"
+if [[ ! -e "$guard_src" ]]; then
+    fail "tracked user-message guard is missing (delegation refused): $guard_src"
+fi
+if [[ ! -f "$guard_src" ]]; then
+    fail "user-message guard path is not a regular file (delegation refused): $guard_src"
+fi
+if [[ ! -r "$guard_src" ]]; then
+    fail "user-message guard is not readable (delegation refused): $guard_src"
+fi
+
+extensions_dir="$agent_dir/extensions"
+guard_dst="$extensions_dir/user-message-guard.ts"
+if ! mkdir -p -- "$extensions_dir" 2>/dev/null; then
+    fail "cannot create Pi extensions directory: $extensions_dir"
+fi
+if ! cmp -s -- "$guard_src" "$guard_dst" 2>/dev/null; then
+    if ! cp -f -- "$guard_src" "$guard_dst" 2>/dev/null; then
+        fail "cannot install user-message guard into: $guard_dst"
+    fi
+fi
+if [[ ! -r "$guard_dst" ]]; then
+    fail "installed user-message guard is not readable: $guard_dst"
 fi
 
 # ------------------------------------------------------------

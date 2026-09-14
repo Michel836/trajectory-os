@@ -22,13 +22,20 @@ BASE_MODEL_ID = "qwen3.8:27b"
 EXPECTED_NUM_CTX = 65536
 EXPECTED_DRAFT_NUM_PREDICT = 1
 
+# Safe Pi context policy (Mission 001-B): 32768/8192.
+#
+# The legacy 65536/32768 (and 49152/16384) policies allowed long tool-heavy
+# sessions to reach ~67k effective tokens before compaction; a compaction
+# split-turn can then issue a request with no user-role message, which the
+# local Ollama core rejects with "no user query found in messages".
+# 32768/8192 is the durable safe profile enforced here and by check-local-ai.
 EXPECTED_PI_MODEL: dict[str, Any] = {
     "id": MODEL_ID,
     "name": "Ollama - Qwen 3.8 27B TrajectoryOS 64K RTX3090 MTP",
     "reasoning": True,
     "input": ["text", "image"],
-    "contextWindow": 65536,
-    "maxTokens": 32768,
+    "contextWindow": 32768,
+    "maxTokens": 8192,
     "compat": {
         "supportsDeveloperRole": False,
         "supportsReasoningEffort": True,

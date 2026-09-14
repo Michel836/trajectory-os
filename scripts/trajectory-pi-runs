@@ -15,7 +15,13 @@
 #   cancel    V1.88  graceful ownership-proven cancellation
 #   recover   V1.90  rebuild orchestration state after wrapper restart
 #   orchestrate V1.90 bounded multi-run progress
+#   ops       V1.98  consolidated read-only ops snapshot
+#   observe   V1.98  strict read-only observation snapshot
+#   reap      V1.98  rebuild state and reap provably-dead work (fail closed)
+#   reconstruct V1.99 explicit deterministic reconstruction (bounded)
+#   supervisor  V2.00  bounded autonomous supervisor session (fail closed)
 #   version
+#   enqueue accepts --depends-on and --resources (V2.03/V2.04 metadata)
 #
 # Exit codes: 0 ok, 2 usage, 3 fail-closed rejection, 4 unknown run/job.
 set -euo pipefail

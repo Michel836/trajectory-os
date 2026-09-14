@@ -205,6 +205,7 @@ CLI_COMMANDS = (
     "recover",
     "orchestrate",
     "ops",
+    "reconstruct",
     "supervisor",
     "version",
 )
