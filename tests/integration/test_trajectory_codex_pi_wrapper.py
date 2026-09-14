@@ -22,6 +22,11 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REAL_WRAPPER = REPO_ROOT / "scripts" / "trajectory-codex-pi"
+REAL_GUARD = REPO_ROOT / "pi-runtime" / "user-message-guard.ts"
+
+# A hostile guard standing in for a tampered runtime extension: the
+# bootstrap MUST overwrite it with the tracked source, byte-for-byte.
+TAMPERED_GUARD_CONTENT = b"// tampered - must be replaced by bootstrap\n"
 
 MODELS_CONTENT = b'{"providers": {"local-fake": {"models": {"fake-model": {}}}}}\n'
 
@@ -78,16 +83,20 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     (repo / "tracked.py").write_text("v = 1\n")
     (repo / ".gitignore").write_text(".trajectory-pi/\n")
 
-    # wrapper + mock delegate inside the temp repo (created BEFORE the
-    # initial commit so the tree is fully tracked and clean afterwards;
-    # the wrapper resolves the delegate relative to ITS OWN location, so
-    # it always delegates to the mock, never the production runner)
+    # wrapper + mock delegate + tracked guard source inside the temp
+    # repo (created BEFORE the initial commit so the tree is fully
+    # tracked and clean afterwards; the wrapper resolves its paths
+    # relative to ITS OWN location, so it always delegates to the mock
+    # and installs the in-repo guard, never production state)
     scripts = repo / "scripts"
     scripts.mkdir()
     shutil.copyfile(REAL_WRAPPER, scripts / "trajectory-codex-pi")
     (scripts / "trajectory-codex-pi").chmod(0o755)
     (scripts / "trajectory-pi").write_text(FAKE_DELEGATE)
     (scripts / "trajectory-pi").chmod(0o755)
+    guard_dir = repo / "pi-runtime"
+    guard_dir.mkdir()
+    shutil.copyfile(REAL_GUARD, guard_dir / "user-message-guard.ts")
 
     git(repo, "add", "-A")
     git(repo, "commit", "-m", "init", "--quiet")
@@ -149,15 +158,24 @@ def test_models_only_copied_byte_for_byte(sandbox: dict[str, Path]) -> None:
 
     agent_dir: Path = sandbox["agent_dir"]
     assert agent_dir.is_dir()
-    # the agent directory holds EXACTLY models.json and nothing else:
-    # no auth.json, no trust.json, no settings, no sessions, no other
-    # Pi state of any kind was copied in.
+    # the agent directory holds EXACTLY models.json plus the tracked
+    # guard extensions directory: no auth.json, no trust.json, no
+    # settings, no sessions, no other Pi state of any kind was copied
+    # in.
     contents = sorted(p.name for p in agent_dir.iterdir())
-    assert contents == ["models.json"], contents
+    assert contents == ["extensions", "models.json"], contents
 
     copied = (agent_dir / "models.json").read_bytes()
     assert copied == MODELS_CONTENT, "models.json must be byte-for-byte"
     assert SECRET_AUTH_CONTENT not in copied
+
+    # the extensions directory holds EXACTLY the tracked user-message
+    # guard, byte-identical to the tracked repository source:
+    installed = agent_dir / "extensions" / "user-message-guard.ts"
+    assert sorted(p.name for p in (agent_dir / "extensions").iterdir()) == [
+        "user-message-guard.ts"
+    ]
+    assert installed.read_bytes() == REAL_GUARD.read_bytes()
 
     delegate = delegate_log(log)
     assert f"PI_CODING_AGENT_DIR={agent_dir}" in delegate
@@ -189,7 +207,8 @@ def test_source_pi_state_never_read_or_mutated(sandbox: dict[str, Path]) -> None
     # and none of the secret state leaked into the repo
     repo_blob = str.encode(" ".join(
         p.read_bytes().decode("utf-8", "replace")
-        for p in sandbox["repo"].glob(".trajectory-pi/pi-agent/*")
+        for p in sandbox["repo"].glob(".trajectory-pi/pi-agent/**/*")
+        if p.is_file()
     ))
     assert b"SECRET-AUTH" not in repo_blob
     assert b"SECRET-TRUST" not in repo_blob
@@ -423,9 +442,10 @@ def test_no_network_or_sandbox_configuration_mutation(
     assert (seed / "trust.json").read_bytes() == trust_before
 
     # no configuration of ANY kind materialized in the Pi agent dir:
-    # only models.json, no settings/trust/auth/session files
+    # only models.json and the tracked extensions directory — no
+    # settings/trust/auth/session files
     agent_contents = sorted(p.name for p in sandbox["agent_dir"].iterdir())
-    assert agent_contents == ["models.json"], agent_contents
+    assert agent_contents == ["extensions", "models.json"], agent_contents
     forbidden = {"settings.json", "trust.json", "auth.json", "sessions",
                  "credentials.json"}
     assert not (forbidden & set(agent_contents))
@@ -434,3 +454,108 @@ def test_no_network_or_sandbox_configuration_mutation(
     output = proc.stdout + proc.stderr
     for token in ("http://", "https://", "Downloading", "ollama"):
         assert token not in output, f"unexpected network-ish output: {token!r}"
+
+
+# ---------------------------------------------------------------------------
+# Tracked user-message guard installation (Mission 001-B)
+# ---------------------------------------------------------------------------
+
+
+def snapshot_agent_dir(agent_dir: Path) -> dict[str, bytes]:
+    out: dict[str, bytes] = {}
+    for p in agent_dir.rglob("*"):
+        if p.is_file():
+            out[str(p.relative_to(agent_dir))] = p.read_bytes()
+    return out
+
+
+def test_user_message_guard_installed_byte_identical(sandbox: dict[str, Path]) -> None:
+    log = capture_path(sandbox, "guard")
+    proc = run_wrapper(
+        sandbox, ["--", "guarded task"], {"DELEGATE_CAPTURE": str(log)}
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    delegate_log(log)
+
+    extensions: Path = sandbox["agent_dir"] / "extensions"
+    installed = extensions / "user-message-guard.ts"
+    assert installed.is_file()
+    assert installed.read_bytes() == REAL_GUARD.read_bytes(), (
+        "installed guard must be byte-identical to the tracked source"
+    )
+    # EXACTLY the one tracked guard: nothing else in the extensions dir
+    assert sorted(p.name for p in extensions.iterdir()) == [
+        "user-message-guard.ts"
+    ]
+    assert b"SECRET-AUTH" not in installed.read_bytes()
+
+
+def test_guard_tamper_is_repaired_and_bootstrap_is_idempotent(
+    sandbox: dict[str, Path],
+) -> None:
+    """A tampered/stale runtime guard is overwritten with the tracked
+    source on every run, and repeat runs leave the repo-local agent
+    state byte-for-byte unchanged (idempotent)."""
+    extensions = sandbox["agent_dir"] / "extensions"
+    extensions.mkdir(parents=True)
+    (extensions / "user-message-guard.ts").write_bytes(TAMPERED_GUARD_CONTENT)
+    (extensions / "stray-extension.ts").write_bytes(b"module.exports = 1;")
+
+    for name in ("idem1", "idem2"):
+        log = capture_path(sandbox, name)
+        proc = run_wrapper(
+            sandbox, ["--", name], {"DELEGATE_CAPTURE": str(log)}
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        delegate_log(log)
+        installed = extensions / "user-message-guard.ts"
+        assert installed.read_bytes() == REAL_GUARD.read_bytes(), (
+            f"run {name}: tampered guard must be replaced by the tracked source"
+        )
+
+    # the run above established the exact tracked state; now tamper again
+    # and verify the next bootstrap restores that exact state
+    # (byte-for-byte idempotency)
+    state = snapshot_agent_dir(sandbox["agent_dir"])
+    (extensions / "user-message-guard.ts").write_bytes(b"tamper again")
+
+    log3 = capture_path(sandbox, "idem3")
+    proc = run_wrapper(sandbox, ["--", "three"], {"DELEGATE_CAPTURE": str(log3)})
+    assert proc.returncode == 0, proc.stderr
+    delegate_log(log3)
+    assert snapshot_agent_dir(sandbox["agent_dir"]) == state, (
+        "bootstrap must restore the exact tracked state on every run"
+    )
+
+
+def test_missing_tracked_guard_fails_before_delegation(
+    sandbox: dict[str, Path],
+) -> None:
+    (sandbox["repo"] / "pi-runtime" / "user-message-guard.ts").unlink()
+    log = capture_path(sandbox, "guardmissing")
+    log.unlink(missing_ok=True)
+
+    proc = run_wrapper(sandbox, ["--", "task"])
+    assert proc.returncode != 0, "wrapper must fail without the tracked guard"
+    assert "ERROR" in proc.stderr
+    assert "user-message guard" in proc.stderr
+    assert "refus" in proc.stderr, proc.stderr
+    assert not log.exists(), (
+        "delegate MUST not be invoked without the tracked guard"
+    )
+
+
+def test_non_regular_tracked_guard_fails_before_delegation(
+    sandbox: dict[str, Path],
+) -> None:
+    guard_path = sandbox["repo"] / "pi-runtime" / "user-message-guard.ts"
+    guard_path.unlink()
+    guard_path.mkdir()  # a directory where the tracked guard file must be
+    log = capture_path(sandbox, "guardnotaregular")
+    log.unlink(missing_ok=True)
+
+    proc = run_wrapper(sandbox, ["--", "task"])
+    assert proc.returncode != 0
+    assert "ERROR" in proc.stderr
+    assert "user-message guard" in proc.stderr
+    assert not log.exists(), "delegate MUST not be invoked for a bad guard"

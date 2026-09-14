@@ -646,8 +646,13 @@ def test_milestone_scope_guard() -> None:
     """
     env = dict(os.environ)
     env["GIT_OPTIONAL_LOCKS"] = "0"
-    # non-goals: these scripts must remain byte-identical to HEAD
-    for rel in ("scripts/trajectory-codex-pi", "scripts/trajectory_gate.py"):
+    # non-goals: these scripts must remain byte-identical to HEAD.
+    # NOTE (Mission 001-B): scripts/trajectory-codex-pi was intentionally
+    # re-scoped INTO the modification scope (runtime hardening bootstrap)
+    # and is therefore no longer pinned here; its behavior is fully
+    # covered by tests/integration/test_trajectory_codex_pi_wrapper.py,
+    # which remains its authoritative scope/invariant suite.
+    for rel in ("scripts/trajectory_gate.py",):
         disk = (REPO_ROOT / rel).read_bytes()
         proc = subprocess.run(
             ["git", "show", f"HEAD:{rel}"],

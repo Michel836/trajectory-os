@@ -161,6 +161,13 @@ Options:
   --prompt-file FILE   use @FILE plus a short user message
   --interval SEC       heartbeat interval (default: 10)
   --dirty-ok           permit pre-existing working-tree changes
+  --require-changes    operator contract: the run must land >=1 repository
+                       change NEW RELATIVE TO the pre-run baseline (a path
+                       whose state/content differs from baseline). Pre-existing
+                       dirty-baseline files do NOT count. Unsatisfied => the
+                       run NEVER reaches READY_FOR_COMMIT (fail closed,
+                       NEEDS_REVIEW, human review required). Deterministic
+                       wrapper check; never inferred from prompt wording.
   --no-notify          disable KDE notification
 
   Review (independent, strictly read-only, direct local Ollama call:
@@ -248,6 +255,10 @@ PROMPT_FILE=""
 INTERVAL=10
 DIRTY_OK=0
 NOTIFY=1
+# Mission 001-C: explicit operator contract. 0 = default (unchanged
+# read-only/smoke behavior); 1 = the run must produce at least one
+# repository change NEW RELATIVE TO ITS BASELINE (see compute_readiness).
+REQUIRE_CHANGES=0
 
 # REVIEW defaults to "" (undetermined) until resolved after the run class
 # is validated. Class-based default (see below): smoke -> disabled;
@@ -296,6 +307,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --dirty-ok)
             DIRTY_OK=1
+            shift
+            ;;
+        --require-changes)
+            REQUIRE_CHANGES=1
             shift
             ;;
         --no-notify)
@@ -2133,12 +2148,10 @@ printf "Review         %s (%s)\n" \
     "$([[ "$REVIEW" -eq 1 ]] && echo enabled || echo disabled)" \
     "$REVIEWER_MODEL"
 printf "Branch         %s\n" "$BRANCH"
-printf "HEAD           %.12s
-" "$HEAD_BEFORE"
-printf "Baseline files %s
-" "$BASELINE_COUNT"
-printf "Log            %s
-" "$LOG"
+printf "HEAD           %.12s\n" "$HEAD_BEFORE"
+printf "Baseline files %s\n" "$BASELINE_COUNT"
+printf "Require changes %s\n" "$( [[ "$REQUIRE_CHANGES" -eq 1 ]] && echo required || echo not required )"
+printf "Log            %s\n" "$LOG"
 echo "============================================================"
 echo
 
@@ -2557,6 +2570,41 @@ else
     READINESS_REASON="ALL DETERMINISTIC GATES PASS; NO INDEPENDENT REVIEW RUN"
 fi
 
+# ------------------------------------------------------------
+# Mission 001-C: explicit operator contract --require-changes.
+#
+# When enabled, the run is REQUIRED to have produced at least one
+# repository change NEW RELATIVE TO ITS BASELINE: i.e. at least one
+# working-tree path whose state/content differs from the pre-run
+# BASELINE_STATUS (AGENT_CHANGED_AFTER, via count_added_since_baseline).
+# Pre-existing dirty-baseline files therefore never satisfy the gate,
+# and an unchanged tracked file never does either. The decision uses
+# wrapper-derived state only — never prompt semantics — because this
+# is a deterministic operator-level contract, not an interpretation
+# of the mission wording.
+#
+# Fail-closed: an UNSATISFIED gate forbids READY_FOR_COMMIT and
+# READY_FOR_REVIEW (downgraded to NEEDS_REVIEW). A repair pass only
+# satisfies the gate if it actually lands new changes relative to the
+# baseline (AGENT_CHANGED_AFTER is recomputed after every pass); an
+# empty mission delta after repair remains NEEDS_REVIEW.
+# BLOCKED states (HEAD moved, snapshot failure) are more severe and
+# are preserved; the gate state is still recorded in metadata.
+# ------------------------------------------------------------
+REQUIRE_CHANGES_STATE="NOT_REQUIRED"
+REQUIRE_CHANGES_DELTA="${AGENT_CHANGED_AFTER:-0}"
+if (( REQUIRE_CHANGES == 1 )); then
+    if [[ "$REQUIRE_CHANGES_DELTA" =~ ^[0-9]+$ ]] && (( REQUIRE_CHANGES_DELTA > 0 )); then
+        REQUIRE_CHANGES_STATE="SATISFIED"
+    else
+        REQUIRE_CHANGES_STATE="UNSATISFIED"
+    fi
+    if [[ "$REQUIRE_CHANGES_STATE" == "UNSATISFIED" && "$READINESS" != "BLOCKED" ]]; then
+        READINESS="NEEDS_REVIEW"
+        READINESS_REASON="REQUIRE-CHANGES UNSATISFIED: operator contract --require-changes requires >=1 repository change NEW RELATIVE TO BASELINE; new-delta files=0 (pre-existing baseline changes never count). READY_FOR_COMMIT forbidden; HUMAN REVIEW REQUIRED."
+    fi
+fi
+
 case "$READINESS" in
     READY_FOR_COMMIT)
         DECISION="GO COMMIT"
@@ -2577,6 +2625,9 @@ esac
 
 echo "repository_readiness=$READINESS" >> "$META"
 echo "readiness_reason=$READINESS_REASON" >> "$META"
+echo "require_changes_gate=$((REQUIRE_CHANGES))" >> "$META"
+echo "require_changes_state=$REQUIRE_CHANGES_STATE" >> "$META"
+echo "require_changes_delta_files=$REQUIRE_CHANGES_DELTA" >> "$META"
 echo "validation=$VALIDATION" >> "$META"
 echo "snapshot_status=$SNOT" >> "$META"
 echo "diff_check=$DIFF_CHECK" >> "$META"
@@ -2906,6 +2957,10 @@ printf "FINAL PATCH SHA256: %s\n" \
 printf "REVIEW VERDICT: %s\n" \
     "$( [[ -n "$REVIEW_RECOMMENDATION" && "$REVIEW_RECOMMENDATION" != "n/a" ]] && echo "$REVIEW_RECOMMENDATION" || echo "n/a" )"
 printf "ARTIFACTS: %s\n" "$RUN_DIR"
+if (( REQUIRE_CHANGES == 1 )); then
+    printf "REQUIRE-CHANGES GATE: %s (new repository changes relative to baseline: %s)\n" \
+        "$REQUIRE_CHANGES_STATE" "$REQUIRE_CHANGES_DELTA"
+fi
 echo
 echo "Readiness reason: $READINESS_REASON"
 echo

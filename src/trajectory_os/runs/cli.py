@@ -11,6 +11,11 @@ Subcommands (see ``--help`` for each):
   runs cancel                  V1.88 graceful, ownership-proven cancellation
   runs recover                 V1.90 rebuild persisted state, reap finished jobs
   runs orchestrate             V1.90 bounded multi-run progress
+  runs ops                     V1.98 consolidated read-only ops snapshot
+  runs observe                 V1.98 strict read-only observation snapshot
+  runs reap                    V1.98 rebuild state and reap provably-dead work
+  runs reconstruct             V1.99 explicit deterministic reconstruction
+  runs supervisor              V2.00 bounded autonomous supervisor session
   runs version
 
 Exit codes: 0 ok; 2 usage; 3 fail-closed rejection (admission / malformed
@@ -30,10 +35,15 @@ from typing import Any, cast
 from trajectory_os.runs import (
     admission,
     model,
+    observability,
     orchestration,
     query,
+    reconstruction,
     registry,
+    resources,
+    spec,
     store,
+    supervisor,
 )
 
 # V1.85-V1.90 tool exit codes (stable, documented).
@@ -81,6 +91,84 @@ def _parse_json_arg(raw: str, label: str) -> Any:
         return json.loads(raw)
     except json.JSONDecodeError:
         raise CliError(EXIT_USAGE, f"invalid JSON for {label}") from None
+
+
+# -- V2.03/V2.04 operator metadata (strict, fail closed) -----------------
+
+_RESOURCE_DIMENSIONS = (
+    ("cpu_slots", int),
+    ("ram_bytes", int),
+    ("gpu", bool),
+    ("gpu_mem_bytes", int),
+)
+
+
+def _parse_depends_on(raw: str | None) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    parts = [part.strip() for part in raw.split(",")]
+    parts = [part for part in parts if part]
+    if any(not part.isidentifier() or part.startswith("_") for part in parts):
+        raise CliError(
+            EXIT_USAGE,
+            f"invalid --depends-on: {raw!r} (comma-separated job ids)",
+        )
+    return tuple(parts)
+
+
+def _parse_resources(raw: str | None) -> resources.ResourceRequirement | None:
+    """Parse ``dim=value,dim=value`` into a validated ResourceRequirement."""
+    if raw is None:
+        return None
+    known = dict(_RESOURCE_DIMENSIONS)
+    dims: dict[str, Any] = {}
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "=" not in chunk:
+            raise CliError(EXIT_USAGE, f"invalid --resources entry: {chunk!r} (dim=value)")
+        key, _, value = chunk.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if key not in known:
+            raise CliError(
+                EXIT_USAGE,
+                f"unknown resource dimension {key!r} "
+                f"(known: {', '.join(known)})",
+            )
+        if key in dims:
+            raise CliError(EXIT_USAGE, f"duplicate resource dimension: {key!r}")
+        try:
+            if known[key] is bool:
+                normalized = value.lower()
+                if normalized not in ("true", "false", "1", "0", "yes", "no"):
+                    raise CliError(
+                        EXIT_USAGE,
+                        f"invalid value for resource {key!r}: {value!r}",
+                    )
+                dims[key] = normalized in ("true", "1", "yes")
+            else:
+                dims[key] = int(value)
+        except ValueError:
+            raise CliError(
+                EXIT_USAGE, f"invalid value for resource {key!r}: {value!r}"
+            ) from None
+    try:
+        return resources.ResourceRequirement(**dims).validate()
+    except resources.ResourcePolicyError as exc:
+        raise CliError(EXIT_USAGE, f"invalid resources: {exc.code}: {exc.message}") from None
+
+
+
+def _malformed_store_document(exc: store.MalformedStoreError) -> dict[str, Any]:
+    """Return the canonical deterministic malformed-store response."""
+    return {
+        "schema_version": model.SCHEMA_VERSION,
+        "tool": model.CLI_NAME,
+        "malformed": True,
+        "code": exc.code,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +267,8 @@ def cmd_enqueue(args: argparse.Namespace) -> tuple[int, str]:
         "--max-attempts",
         "--json",
         "--capacity",
+        "--depends-on",
+        "--resources",
     )
     leaked = [flag for flag in _known_flags if flag in command]
     if leaked:
@@ -203,12 +293,14 @@ def cmd_enqueue(args: argparse.Namespace) -> tuple[int, str]:
         max_attempts = model.DEFAULT_MAX_ATTEMPTS
 
     paths = store.state_paths(Path(args.state_root))
-    query_file: str | None = None
+    qpath: Path | None = None
     if args.query_file is not None:
         qpath = Path(args.query_file)
         if not qpath.is_file():
             raise CliError(EXIT_USAGE, f"query file not found: {qpath}")
-        query_file = str(qpath)
+    # V2.03/V2.04: dependency + resource metadata (validated, fail closed).
+    depends_on = _parse_depends_on(args.depends_on)
+    req_resources = _parse_resources(args.resources)
     active_ids: frozenset[str]
     try:
         active = store.load_active_records(paths["active"])
@@ -224,14 +316,22 @@ def cmd_enqueue(args: argparse.Namespace) -> tuple[int, str]:
             }
         )
     try:
+        job_spec = spec.build_spec(
+            job_id=args.job_id,
+            command=command,
+            max_attempts=max_attempts,
+            query_file=qpath,
+            depends_on=list(depends_on),
+            resources=req_resources,
+        )
+    except spec.SpecValidationError as exc:
+        msg = getattr(exc, "message", "")
+        if msg:
+            return EXIT_REJECTED, f"rejected: {exc.code} — {msg}\n"
+        return EXIT_REJECTED, f"rejected: {exc.code}\n"
+    try:
         try:
-            entry = queue.enqueue(
-                job_id=args.job_id,
-                command=command,
-                max_attempts=max_attempts,
-                query_file=query_file,
-                reserved_ids=active_ids,
-            )
+            entry = queue.enqueue_spec(job_spec, reserved_ids=active_ids)
         except ValueError as exc:
             raise CliError(EXIT_REJECTED, str(exc)) from exc
         queue.save(paths["queue"])
@@ -329,6 +429,120 @@ def cmd_orchestrate(args: argparse.Namespace) -> tuple[int, str]:
     return EXIT_OK, (_render_json(report) if args.json else _render_orchestrate_human(report))
 
 
+def cmd_ops(args: argparse.Namespace) -> tuple[int, str]:
+    """Consolidated ops view (V1.98): strictly read-only, fail closed."""
+    try:
+        document = observability.build_ops_document(
+            Path(args.state_root), Path(args.runs_root)
+        )
+    except store.MalformedStoreError as exc:
+        document = {
+            "schema_version": model.SCHEMA_VERSION,
+            "tool": model.CLI_NAME,
+            "malformed": True,
+            "code": exc.code,
+        }
+        return EXIT_REJECTED, _render_json(document)
+    return EXIT_OK, (_render_json(document) if args.json else observability.render_human(document))
+
+
+def cmd_observe(args: argparse.Namespace) -> tuple[int, str]:
+    """Strict read-only observation snapshot (no mutations, fail closed)."""
+    try:
+        state = orchestration.rebuild_state(Path(args.state_root))
+        document = observability.snapshot(state)
+    except store.MalformedStoreError as exc:
+        return EXIT_REJECTED, _render_json(_malformed_store_document(exc))
+    return EXIT_OK, (_render_json(document) if args.json else observability.render_human(document))
+
+
+def cmd_reap(args: argparse.Namespace) -> tuple[int, str]:
+    """Rebuild persisted state and reap provably-dead work (fail closed)."""
+    try:
+        state = orchestration.rebuild_state(Path(args.state_root))
+        report = orchestration.reap(state, observe=None)
+    except store.MalformedStoreError as exc:
+        return EXIT_REJECTED, _render_json(_malformed_store_document(exc))
+    document = {"schema_version": model.SCHEMA_VERSION, "tool": model.CLI_NAME, **report,
+                "queue_count": len(state.queue.entries), "active_count": len(state.active)}
+    return EXIT_OK, (_render_json(document) if args.json else _render_report_human(document))
+
+
+def cmd_reconstruct(args: argparse.Namespace) -> tuple[int, str]:
+    """Explicit, deterministic reconstruction into canonical buckets (V1.99)."""
+    try:
+        outcome = reconstruction.reconstruct(
+            Path(args.state_root), Path(args.runs_root), observe=None
+        )
+    except store.MalformedStoreError as exc:
+        return EXIT_REJECTED, _render_json(_malformed_store_document(exc))
+    document = outcome.to_dict()
+    rendered = (
+        _render_json(document)
+        if args.json
+        else reconstruction.render_reconstruction_human(outcome)
+    )
+    return (EXIT_OK if outcome.reconstructed else EXIT_REJECTED), rendered
+
+
+def cmd_supervisor(args: argparse.Namespace) -> tuple[int, str]:
+    """One bounded autonomous supervisor session (deterministic, fail closed)."""
+    token = str(args.cycles).strip()
+    if not token.isdigit():
+        raise CliError(EXIT_USAGE, f"invalid cycles: {args.cycles!r}")
+    cycles = int(token)
+    if cycles < 1 or cycles > model.MAX_SUPERVISOR_CYCLES:
+        raise CliError(
+            EXIT_USAGE,
+            f"invalid cycles: {cycles} (allowed 1..{model.MAX_SUPERVISOR_CYCLES})",
+        )
+    capacity = _parse_capacity(args.capacity)
+    resource_evidence = (
+        _parse_json_arg(args.resource_evidence, "--resource-evidence")
+        if args.resource_evidence is not None
+        else None
+    )
+    try:
+        summary = supervisor.run(
+            Path(args.state_root),
+            Path(args.runs_root),
+            cycles=cycles,
+            capacity=capacity,
+            observe=args.observe,
+            resource_evidence=resource_evidence,
+        )
+    except store.MalformedStoreError as exc:
+        return EXIT_REJECTED, _render_json(_malformed_store_document(exc))
+    except supervisor.SupervisorConfigError as exc:
+        return EXIT_REJECTED, f"rejected: {exc.code} — {exc.detail}\n"
+    document = summary
+    stop = document.get("stop", {})
+    exit_code = (
+        EXIT_REJECTED
+        if stop.get("reason") == model.STOP_STATE_MALFORMED
+        else EXIT_OK
+    )
+    if args.json:
+        return exit_code, _render_json(document)
+    totals = document.get("totals", {})
+    lines = [
+        f"stop={stop.get('reason')} "
+        f"(cycles={document.get('cycles', {}).get('executed')}/"
+        f"{document.get('cycles', {}).get('configured')})",
+        (
+            f"totals: reaped={totals.get('reaped', 0)} "
+            f"launched={totals.get('launched', 0)} "
+            f"retry_discharged={totals.get('retry_discharged', 0)}"
+        ),
+    ]
+    for started in document.get("started", []):
+        lines.append(f"started {started.get('job_id')} (pid={started.get('pid')})")
+    codes = stop.get("codes") or []
+    if codes:
+        lines.append(f"codes: {'; '.join(codes)}")
+    return exit_code, "\n".join(lines) + "\n"
+
+
 def cmd_version(args: argparse.Namespace) -> tuple[int, str]:
     document = {
         "schema_version": model.SCHEMA_VERSION,
@@ -341,10 +555,16 @@ def cmd_version(args: argparse.Namespace) -> tuple[int, str]:
             "V1.88": "controlled concurrency with proven ownership",
             "V1.89": "durable FIFO queue",
             "V1.90": "bounded multi-run orchestration",
+            "V1.97": "canonical JobSpec + ops/observability",
+            "V1.98": "ops / observe / reap operator views",
+            "V1.99": "explicit deterministic reconstruction",
+            "V2.00": "bounded autonomous supervisor",
+            "V2.03": "bounded prerequisite dependencies",
+            "V2.04": "explicit resource requirements",
         },
     }
     rendered = _render_json(document) if args.json else (
-        f"{model.CLI_NAME} {model.CLI_TOOL_VERSION} (V1.85-V1.90)\n"
+        f"{model.CLI_NAME} {model.CLI_TOOL_VERSION} (V1.85-V2.06)\n"
     )
     return EXIT_OK, rendered
 
@@ -525,10 +745,17 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("queue", parents=[common], help="list queue/active/closed (read-only)")
     p.set_defaults(func=cmd_queue)
 
-    p = sub.add_parser("enqueue", parents=[common], help="enqueue one job (bounded FIFO)")
+    p = sub.add_parser(
+        "enqueue", parents=[common], help="enqueue one job (bounded FIFO, canonical spec)"
+    )
     p.add_argument("job_id")
     p.add_argument("--max-attempts", default=None)
     p.add_argument("--query-file", default=None, help="per-run PI_FINAL_QUERY content file")
+    p.add_argument("--depends-on", default=None,
+                   help="comma-separated prerequisite job ids (V2.03)")
+    p.add_argument("--resources", default=None,
+                   help="dim=value[,dim=value] resource requirements (V2.04); "
+                        "dims: cpu_slots, ram_bytes, gpu, gpu_mem_bytes")
     p.add_argument("command", nargs=argparse.REMAINDER)
     p.set_defaults(func=cmd_enqueue)
 
@@ -556,6 +783,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="rebuild orchestration state after wrapper restart",
     )
     p.set_defaults(func=cmd_recover)
+
+    p = sub.add_parser(
+        "ops",
+        parents=[common],
+        help="consolidated read-only ops snapshot (V1.98)",
+    )
+    p.set_defaults(func=cmd_ops)
+
+    p = sub.add_parser(
+        "observe",
+        parents=[common],
+        help="strict read-only observation snapshot (V1.98)",
+    )
+    p.set_defaults(func=cmd_observe)
+
+    p = sub.add_parser(
+        "reap",
+        parents=[common],
+        help="rebuild state and reap provably-dead work (fail closed, V1.98)",
+    )
+    p.set_defaults(func=cmd_reap)
+
+    p = sub.add_parser(
+        "reconstruct",
+        parents=[common],
+        help="explicit deterministic reconstruction into canonical buckets (V1.99)",
+    )
+    p.set_defaults(func=cmd_reconstruct)
+
+    p = sub.add_parser(
+        "supervisor",
+        parents=[common],
+        help="bounded autonomous supervisor session (deterministic, fail closed, V2.00)",
+    )
+    p.add_argument("--cycles", default=str(supervisor.DEFAULT_CYCLES))
+    p.add_argument("--capacity", default=str(model.DEFAULT_CAPACITY))
+    p.add_argument("--observe", action="store_true",
+                   help="use read-only liveness evidence during reaping")
+    p.add_argument("--resource-evidence", default=None,
+                   help="JSON resource evidence for admission (e.g. '{\"ram_bytes\": 1073741824}')")
+    p.set_defaults(func=cmd_supervisor)
 
     p = sub.add_parser(
         "orchestrate",

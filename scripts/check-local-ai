@@ -12,11 +12,19 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Safe operational profile for the local RTX 3090 workstation (Mission 001-B).
+#
+# Pi's contextWindow/maxTokens bound how large a session may grow before
+# auto-compaction. The legacy 65536/32768 (and 49152/16384) policies were
+# unsafe in practice: long tool-heavy sessions reached ~67k effective tokens
+# and, after a compaction split-turn, produced requests with no user-role
+# message that the local Ollama core rejects with
+# "no user query found in messages". The safe durable policy is 32768/8192.
 MODEL_ID = "qwen3.8-dev3090"
 EXPECTED_NUM_CTX = 65536
 EXPECTED_DRAFT_NUM_PREDICT = 1
-EXPECTED_PI_CONTEXT = 65536
-EXPECTED_PI_MAX_TOKENS = 32768
+EXPECTED_PI_CONTEXT = 32768
+EXPECTED_PI_MAX_TOKENS = 8192
 
 
 def report(ok: bool, label: str, detail: str = "") -> None:

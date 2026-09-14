@@ -44,12 +44,13 @@ exit 2
 
 
 def valid_pi_model() -> dict:
+    """The tracked SAFE profile: contextWindow 32768 / maxTokens 8192."""
     return {
         "id": "qwen3.8-dev3090",
         "reasoning": True,
         "input": ["text", "image"],
-        "contextWindow": 65536,
-        "maxTokens": 32768,
+        "contextWindow": 32768,
+        "maxTokens": 8192,
         "compat": {
             "supportsDeveloperRole": False,
             "supportsReasoningEffort": True,
@@ -152,11 +153,28 @@ def test_preflight_rejects_missing_pi_entry(tmp_path: Path) -> None:
     assert "FAIL  Pi model qwen3.8-dev3090" in result.stdout
 
 
-def test_preflight_rejects_wrong_pi_limits(tmp_path: Path) -> None:
+def test_preflight_rejects_unsafe_legacy_limit_profile(tmp_path: Path) -> None:
+    """The old unsafe 65536/32768 profile (which caused Ollama
+    'no user query found in messages' after a compaction split-turn)
+    must FAIL validation; only 32768/8192 is the durable safe policy."""
     ollama = write_fake_ollama(tmp_path)
     model = valid_pi_model()
-    model["contextWindow"] = 32768
-    model["maxTokens"] = 8192
+    model["contextWindow"] = 65536
+    model["maxTokens"] = 32768
+    pi_config = write_pi_config(tmp_path, model)
+
+    result = run_preflight(ollama, pi_config)
+
+    assert result.returncode == 1
+    assert "FAIL  Pi contextWindow" in result.stdout
+    assert "FAIL  Pi maxTokens" in result.stdout
+
+
+def test_preflight_rejects_partial_legacy_limits(tmp_path: Path) -> None:
+    ollama = write_fake_ollama(tmp_path)
+    model = valid_pi_model()
+    model["contextWindow"] = 49152
+    model["maxTokens"] = 16384
     pi_config = write_pi_config(tmp_path, model)
 
     result = run_preflight(ollama, pi_config)
