@@ -258,25 +258,12 @@ def cmd_enqueue(args: argparse.Namespace) -> tuple[int, str]:
         command.pop(0)
     if not command:
         raise CliError(EXIT_USAGE, "enqueue requires a command after '--'")
-    # Fail closed on flag leakage (REMAINDER swallows trailing options):
-    # flags must PRECEDE the job id and command.
-    _known_flags = (
-        "--state-root",
-        "--runs-root",
-        "--query-file",
-        "--max-attempts",
-        "--json",
-        "--capacity",
-        "--depends-on",
-        "--resources",
-    )
-    leaked = [flag for flag in _known_flags if flag in command]
-    if leaked:
-        raise CliError(
-            EXIT_USAGE,
-            f"flags {leaked} after the job id are ignored by the parser; "
-            "usage: enqueue [flags...] JOB_ID -- CMD [ARGS...]",
-        )
+    # Note: the command payload after the job id is user data and is never
+    # scanned for option-looking arguments: a command argument that equals an
+    # enqueue option name (e.g. `echo --json`) is legitimate and preserved
+    # verbatim. Actual enqueue options are parsed and validated by the parser
+    # when they precede the job id and command (see usage), and their values
+    # are validated further below (fail closed where applicable).
     if args.max_attempts is not None:
         if not str(args.max_attempts).strip().isdigit() or not (
             1 <= int(args.max_attempts) <= model.MAX_ATTEMPTS_LIMIT
@@ -319,9 +306,16 @@ def cmd_enqueue(args: argparse.Namespace) -> tuple[int, str]:
         job_spec = spec.build_spec(
             job_id=args.job_id,
             command=command,
+            execution_class=args.execution_class,
+            workspace_policy=args.workspace_policy,
+            runner=args.runner,
             max_attempts=max_attempts,
+            repo_root=args.repo_root,
+            source_revision=args.source_revision,
+            source_checkout=args.source_checkout,
             query_file=qpath,
             depends_on=list(depends_on),
+            permit_failed_prereqs=args.permit_failed_prereqs,
             resources=req_resources,
         )
     except spec.SpecValidationError as exc:
@@ -756,6 +750,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--resources", default=None,
                    help="dim=value[,dim=value] resource requirements (V2.04); "
                         "dims: cpu_slots, ram_bytes, gpu, gpu_mem_bytes")
+    # Canonical provenance / execution fields (V1.97+): defaults match the
+    # canonical spec defaults. Enum members are NOT whitelisted here (no
+    # duplicate validation policy); malformed values are rejected fail-closed
+    # by the single canonical spec validation (spec.build_spec ->
+    # JobSpec.validate) with a deterministic canonical code.
+    p.add_argument("--execution-class", default=spec.EXEC_AD_HOC,
+                   help="canonical execution class (ad_hoc/read_only/mutating)")
+    p.add_argument("--workspace-policy", default=spec.WORKSPACE_ISOLATED,
+                   help="canonical workspace policy (isolated/shared_read_only)")
+    p.add_argument("--runner", default=spec.RUNNER_GENERIC,
+                   help="canonical runner identity (generic/trajectory-pi)")
+    p.add_argument("--repo-root", default=None,
+                   help="absolute repository root (canonical provenance)")
+    p.add_argument("--source-revision", default=None,
+                   help="explicit source revision (never guessed)")
+    p.add_argument("--source-checkout", default=None,
+                   help="absolute source checkout path (canonical provenance)")
+    p.add_argument("--permit-failed-prereqs", action="store_true", default=False,
+                   help="permit prerequisites that have failed (V2.03)")
     p.add_argument("command", nargs=argparse.REMAINDER)
     p.set_defaults(func=cmd_enqueue)
 

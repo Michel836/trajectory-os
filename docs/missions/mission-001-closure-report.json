@@ -1,0 +1,83 @@
+{
+  "baseline_commit": "f67098e74a42454a71051e4665346f7cbc9b9e89",
+  "closure_branch": "mission/001-closure-evidence",
+  "conflict_proof": {
+    "active_execution_class": "mutating",
+    "active_job": "conflict-active",
+    "candidate_execution_class": "read_only",
+    "candidate_job": "conflict-candidate",
+    "detail": "worktree /tmp/mission001-proof-repair2/conflict/src is concurrently used by record 'conflict-active' (class='mutating'); same-worktree concurrent use is not permitted",
+    "read_only_control_clears": true,
+    "reason_code": "SAME_WORKTREE_CONFLICT",
+    "source_checkout": "/tmp/mission001-proof-repair2/conflict/src",
+    "status": "proven"
+  },
+  "evidence": [
+    "/tmp/mission001-proof-repair2/raw/production_path.json",
+    "/tmp/mission001-proof-repair2/raw/evidence-tree.txt",
+    "docs/missions/mission-001-closure-report.json",
+    "docs/missions/mission-001-closure-report.md"
+  ],
+  "final_state": {
+    "note": "all jobs terminal + conflict rule fail-closed",
+    "status": "proven"
+  },
+  "human_interventions": 0,
+  "issue": "#191",
+  "lifecycle": {
+    "completion": {
+      "note": "OS exit status captured via waitpid (authoritative)",
+      "status": "measured"
+    },
+    "enqueue": {
+      "note": "2 jobs created",
+      "status": "measured"
+    },
+    "observe": {
+      "note": "ownership-proven liveness sampled",
+      "status": "measured"
+    },
+    "reap": {
+      "note": "canonical reap with exit evidence",
+      "status": "measured"
+    },
+    "reconstruction": {
+      "note": "explicit deterministic reconstruction",
+      "status": "measured"
+    },
+    "start": {
+      "note": "2 jobs started (real process adapter)",
+      "status": "measured"
+    }
+  },
+  "mission": "001-D",
+  "production_path_proof": {
+    "automatic_recoveries": 0,
+    "automatic_retries": 0,
+    "concurrency_claim": "concurrent",
+    "evidence": [
+      "/tmp/mission001-proof-repair2/raw/production_path.json",
+      "/tmp/mission001-proof-repair2/raw/evidence-tree.txt",
+      "docs/missions/mission-001-closure-report.json"
+    ],
+    "jobs_completed": 2,
+    "jobs_created": 2,
+    "jobs_started": 2,
+    "max_concurrent_observed": 2,
+    "provider_failures_recovered": 0,
+    "provider_failures_surfaced": 0,
+    "status": "proven"
+  },
+  "quality_state": {
+    "command": "bash scripts/quality.sh",
+    "note": "recorded from the canonical gate; re-run independently outside this harness",
+    "status": "PASS"
+  },
+  "reconstruction": {
+    "detail": "{'schema_version': 2, 'tool': 'trajectory-pi-runs', 'kind': 'reconstruction', 'reconstructed': True, 'code': None, 'buckets': {'queued': 0, 'admitted_active': 0, 'uncertain': 0, 'retrying': 0, 'dependency_blocked': 0, 'terminal': 2}, 'jobs': {'m001job1': {'runner': None, 'execution_class': None, 'command_truncated': [], 'job_id': 'm001job1', 'terminal': 'done', 'attempts_used': 1, 'workspace_slot': 's1', 'observed_at': '2026-09-14T15:32:02Z'}, 'm001job2': {'runner': None, 'execution_class': None, 'command_truncated': [], 'job_id': 'm001job2', 'terminal': 'done', 'attempts_used': 1, 'workspace_slot': 's2', 'observed_at': '2026-09-14T15:32:02Z'}}, 'mutations': {'closed_appended': 0, 'requeued': 0, 'active_removed': 0, 'retry_discharged': 0}, 'stop_reason': 'WORK_SETTLED'}",
+    "reconstructed": true
+  },
+  "review_state": "pending",
+  "schema_version": 1,
+  "wall_clock_seconds": 1
+}
