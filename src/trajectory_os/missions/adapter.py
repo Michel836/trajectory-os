@@ -200,7 +200,7 @@ def phase_command(kind: str, *, pi_wrapper: str, prompt_file: str,
     """
     if kind not in model.MODEL_HEAVY_KINDS:
         raise AdapterError("COMMAND_KIND_INVALID", kind)
-    if not pi_wrapper or len(pi_wrapper) > model.MAX_COMMAND_PARTS:
+    if not pi_wrapper or len(pi_wrapper) > model.MAX_COMMAND_PART_LEN:
         raise AdapterError("PI_WRAPPER_INVALID", pi_wrapper)
     if not prompt_file or len(prompt_file) > model.MAX_COMMAND_PART_LEN:
         raise AdapterError("PROMPT_FILE_INVALID", prompt_file)
