@@ -115,8 +115,26 @@ for k in PLAN IMPLEMENT REPAIR REVIEW; do
 done
 mkdir -p "$MR/state"
 echo "pid=$$ kind=$kind" >> "$MR/state/invocations.log"
+
+emit_semantic_success() {
+  [[ -n "${TRAJECTORY_SUBRUN_RESULT_FILE:-}" &&
+     -n "${TRAJECTORY_SUBRUN_ID:-}" ]] || return 0
+
+  printf '%s%s%s%s%s%s%s\n' \
+    '{"schema_version":1,"subrun_id":"' \
+    "$TRAJECTORY_SUBRUN_ID" \
+    '","status":"SUCCESS","agent_classification":"AGENT_COMPLETED",' \
+    '"readiness":"READY_FOR_COMMIT",' \
+    '"reason":"proof harness semantic success"}' \
+    '' '' > "$TRAJECTORY_SUBRUN_RESULT_FILE"
+}
+
 case "$kind" in
-  PLAN) printf 'plan: artifact contract\n' > "$MR/state/plan.txt"; exit 0 ;;
+  PLAN)
+    printf 'plan: artifact contract\n' > "$MR/state/plan.txt"
+    emit_semantic_success
+    exit 0
+    ;;
   IMPLEMENT|REPAIR)
     b="$(cat "$MR/state/impl_behavior" 2>/dev/null || echo ok)"
     if [[ "$b" == kill_once && ! -e "$MR/state/kill_once_used" ]]; then
@@ -129,9 +147,19 @@ case "$kind" in
       echo "deterministic transient provider failure" >&2
       exit 7
     fi
-    printf 'implementation v1\n' > "$MR/state/artifact"; exit 0 ;;
-  REVIEW) printf 'review: ok\n' > "$MR/state/review.txt"; exit 0 ;;
-  *) echo "bad kind: $kind" >&2; exit 4 ;;
+    printf 'implementation v1\n' > "$MR/state/artifact"
+    emit_semantic_success
+    exit 0
+    ;;
+  REVIEW)
+    printf 'review: ok\n' > "$MR/state/review.txt"
+    emit_semantic_success
+    exit 0
+    ;;
+  *)
+    echo "bad kind: $kind" >&2
+    exit 4
+    ;;
 esac
 '''
     path.write_text(src, encoding="utf-8")

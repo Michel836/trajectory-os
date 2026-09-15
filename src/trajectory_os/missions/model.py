@@ -207,6 +207,10 @@ MAX_COMMAND_PARTS = 64
 MAX_COMMAND_PART_LEN = 4096
 MAX_EVENT_LOG = 512
 
+# Mission 007 — bounded persisted semantic-evidence fields (same bound the
+# semantic contract caps its bounded strings at: 512).
+SEMANTIC_FIELD_MAX_CHARS = 512
+
 MIN_TIME_BUDGET_S = 60
 MAX_TIME_BUDGET_S = 86400
 DEFAULT_TIME_BUDGET_S = 7200

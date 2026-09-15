@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from trajectory_os.missions import model
+from trajectory_os.missions import model, semantic
 from trajectory_os.runs.store import atomic_write_json
 
 
@@ -227,6 +227,10 @@ _SUBRUN_KEYS = (
     "subrun_id", "phase_id", "kind", "mode", "round", "attempt",
     "command", "cwd", "started_at", "finished_at", "exit_code",
     "classification", "stdout_file", "stderr_file", "resources",
+    # Mission 007. Absent on legacy records; semantic-aware records
+    # persist the complete bounded outcome/provenance shape explicitly.
+    "semantic_status", "semantic_error",
+    "semantic_agent_classification", "semantic_readiness", "semantic_reason",
 )
 
 
@@ -247,6 +251,24 @@ class SubrunDoc:
     stdout_file: str
     stderr_file: str
     resources: dict[str, Any] | None
+    # --- Mission 007: semantic sub-run outcome (optional legacy fields) ---
+    # ``semantic_status``: one of ``semantic.ALL_STATUSES`` or None (the
+    # evidence was absent / rejected). ``semantic_error``: bounded
+    # machine-readable reason for missing/failed evidence (e.g. the
+    # runner's ``MISSING`` / provider / incomplete codes) or None.
+    #
+    # ``semantic_aware`` is a WRITE-SHAPE flag that is never persisted:
+    # when True the record was written by the semantic-aware orchestrator
+    # and BOTH evidence fields are present explicitly (possibly null).
+    # Legacy records (pre-mission-007) have neither key and remain
+    # readable: their absence is never silently upgraded into a semantic
+    # success proof.
+    semantic_status: str | None = None
+    semantic_error: str | None = None
+    semantic_agent_classification: str | None = None
+    semantic_readiness: str | None = None
+    semantic_reason: str | None = None
+    semantic_aware: bool = False
 
     @property
     def provider_failure(self) -> bool:
@@ -258,7 +280,7 @@ class SubrunDoc:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        doc = {
             "subrun_id": self.subrun_id,
             "phase_id": self.phase_id,
             "kind": self.kind,
@@ -275,6 +297,17 @@ class SubrunDoc:
             "stderr_file": self.stderr_file,
             "resources": dict(self.resources) if self.resources is not None else None,
         }
+        if self.semantic_aware:
+            # New shape: the evidence fields are present explicitly (the
+            # values may be null = no evidence, which is itself persisted
+            # information and never re-derived at read time).
+            doc["semantic_status"] = self.semantic_status
+            doc["semantic_error"] = self.semantic_error
+            doc["semantic_agent_classification"] = (
+                self.semantic_agent_classification)
+            doc["semantic_readiness"] = self.semantic_readiness
+            doc["semantic_reason"] = self.semantic_reason
+        return doc
 
     @staticmethod
     def from_dict(doc: Mapping[str, Any], path: str) -> SubrunDoc:
@@ -286,6 +319,72 @@ class SubrunDoc:
         exit_code = doc["exit_code"]
         if exit_code is not None:
             exit_code = _int(exit_code, path, "exit_code", maximum=255)
+        # Mission 007: optional semantic evidence fields. Absent on legacy
+        # records (both keys missing) and readable as-is; present on
+        # semantic-aware records (both keys always written, possibly null).
+        semantic_status: str | None = None
+        semantic_error: str | None = None
+        semantic_agent_classification: str | None = None
+        semantic_readiness: str | None = None
+        semantic_reason: str | None = None
+        aware = False
+        semantic_keys = {
+            "semantic_status",
+            "semantic_error",
+            "semantic_agent_classification",
+            "semantic_readiness",
+            "semantic_reason",
+        }
+        present_semantic_keys = semantic_keys.intersection(doc)
+        if present_semantic_keys:
+            if present_semantic_keys != semantic_keys:
+                raise MalformedMissionError(
+                    model.R_MALFORMED_STATE,
+                    path,
+                    "partial semantic evidence shape")
+            aware = True
+            semantic_status = doc.get("semantic_status")
+            semantic_error = doc.get("semantic_error")
+            semantic_agent_classification = doc.get(
+                "semantic_agent_classification")
+            semantic_readiness = doc.get("semantic_readiness")
+            semantic_reason = doc.get("semantic_reason")
+            if semantic_status is not None:
+                _chk(
+                    isinstance(semantic_status, str)
+                    and semantic_status in semantic.ALL_STATUSES,
+                    model.R_MALFORMED_STATE, path,
+                    f"semantic_status={semantic_status!r}")
+            if semantic_error is not None:
+                _chk(
+                    isinstance(semantic_error, str)
+                    and 1 <= len(semantic_error)
+                    <= model.SEMANTIC_FIELD_MAX_CHARS,
+                    model.R_MALFORMED_STATE, path,
+                    f"semantic_error={semantic_error[:64]!r}")
+            for field_name, value in (
+                ("semantic_agent_classification",
+                 semantic_agent_classification),
+                ("semantic_readiness", semantic_readiness),
+                ("semantic_reason", semantic_reason),
+            ):
+                if value is not None:
+                    _chk(
+                        isinstance(value, str)
+                        and 1 <= len(value)
+                        <= model.SEMANTIC_FIELD_MAX_CHARS,
+                        model.R_MALFORMED_STATE,
+                        path,
+                        f"{field_name} invalid")
+            # Fail closed: an aware record may only claim COMPLETED when its
+            # persisted evidence is exactly SUCCESS. Missing, contradictory,
+            # malformed, or absent evidence never reads as a proven pass.
+            if (doc["classification"] == model.CR_COMPLETED
+                    and semantic_status != semantic.STATUS_SUCCESS):
+                raise MalformedMissionError(
+                    model.R_CONTRADICTION, path,
+                    "COMPLETED requires SUCCESS semantic evidence "
+                    rf"(persisted status={semantic_status!r})")
         return SubrunDoc(
             subrun_id=_str(doc["subrun_id"], path, "subrun_id"),
             phase_id=_str(doc["phase_id"], path, "phase_id"),
@@ -302,6 +401,12 @@ class SubrunDoc:
             stdout_file=_str(doc["stdout_file"], path, "stdout_file"),
             stderr_file=_str(doc["stderr_file"], path, "stderr_file"),
             resources=_opt_dict(doc["resources"], path, "resources"),
+            semantic_status=semantic_status,
+            semantic_error=semantic_error,
+            semantic_agent_classification=semantic_agent_classification,
+            semantic_readiness=semantic_readiness,
+            semantic_reason=semantic_reason,
+            semantic_aware=aware,
         )
 
 

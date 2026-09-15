@@ -771,6 +771,78 @@ lifecycle_state_for_readiness() {
         *) echo "BLOCKED" ;;
     esac
 }
+
+# ============================================================
+# Mission 007 — semantic subrun result contract (producer side).
+#
+# The runner (src/trajectory_os/missions/runner.py) sets, for one bounded
+# sub-run:
+#   TRAJECTORY_SUBRUN_RESULT_FILE — where the structured result is written;
+#   TRAJECTORY_SUBRUN_ID          — the exact sub-run the result is bound to.
+#
+# When BOTH are set, at terminal classification the wrapper emits ONE small
+# atomic JSON result derived ONLY from the wrapper's own deterministic
+# classification (never from agent prose), then exits. Fail-closed:
+# any emission problem is a no-op (the file is left unwritten and the
+# consumer's fail-closed semantics apply — bare exit 0 is NOT completion).
+# When the variables are absent the wrapper behavior is unchanged.
+# ============================================================
+# Minimal JSON string escaping (backslash, double-quote, CR/LF, TAB).
+tp_json_escape() {
+    local s="${1-}"
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    s=${s//$'\n'/ }
+    s=${s//$'\t'/ }
+    s=${s//$'\r'/ }
+    printf '%s' "$s"
+}
+
+# Wrapper terminal classification -> semantic status (closed mapping;
+# everything unrecognized maps to UNKNOWN, never to SUCCESS).
+semantic_status_for_classification() {
+    case "${1-}" in
+        AGENT_COMPLETED)                 echo "SUCCESS" ;;
+        INCOMPLETE_AGENT_RUN)            echo "INCOMPLETE" ;;
+        UPSTREAM_PROVIDER_MISSING_QUERY) echo "PROVIDER_FAILURE" ;;
+        AGENT_FAILED)                    echo "FAILED" ;;
+        *)                               echo "UNKNOWN" ;;
+    esac
+}
+
+emit_semantic_subrun_result() {
+    # Deliberately never fatal: an emission failure must not disturb the
+    # wrapper's exit code — absence of the file IS the fail-closed signal
+    # the consumer already handles.
+    local result_file="${TRAJECTORY_SUBRUN_RESULT_FILE:-}"
+    local subrun_id="${TRAJECTORY_SUBRUN_ID:-}"
+    if [[ -z "$result_file" || -z "$subrun_id" ]]; then
+        return 0
+    fi
+    local status; status="$(semantic_status_for_classification "${CLASSIFICATION:-}")"
+    local reason;   reason="$(tp_json_escape "${READINESS_REASON:-}")";   reason="${reason:0:512}"
+    local agent_cl; agent_cl="$(tp_json_escape "${CLASSIFICATION:-UNKNOWN}")"; agent_cl="${agent_cl:0:512}"
+    local readiness; readiness="$(tp_json_escape "${READINESS:-UNKNOWN}")"; readiness="${readiness:0:512}"
+    local tmp
+    tmp="$(mktemp "${result_file}.tmp.XXXXXX" 2>/dev/null)" || return 0
+    if ! {
+        printf '{'
+        printf ' "schema_version":1,'
+        printf ' "subrun_id":"%s",'   "$(tp_json_escape "$subrun_id")"
+        printf ' "status":"%s",'     "$status"
+        printf ' "agent_classification":"%s",' "$agent_cl"
+        printf ' "readiness":"%s",'   "$readiness"
+        printf ' "reason":"%s"'       "$reason"
+        printf '}\n'
+    } > "$tmp" 2>/dev/null; then
+        rm -f -- "$tmp" 2>/dev/null
+        return 0
+    fi
+    if ! mv -f -- "$tmp" "$result_file" 2>/dev/null; then
+        rm -f -- "$tmp" 2>/dev/null
+    fi
+    return 0
+}
 emit_lifecycle "RUNNING"
 
 cleanup() {
@@ -3285,5 +3357,11 @@ LC_COUNT="${LC_COUNT:-0}"
     printf '  "evidence":"lifecycle.jsonl"\n'
     printf '}\n'
 } > "$RUN_DIR/lifecycle.json" 2>/dev/null || true
+
+# Mission 007 — emit the EXACT structured result for this sub-run at
+# terminal classification (deterministic, atomic, opt-in via env):
+# absence of the file keeps the consumer fail closed (bare exit 0 is
+# never sufficient for COMPLETED).
+emit_semantic_subrun_result
 
 exit "$FINAL_EXIT"

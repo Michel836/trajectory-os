@@ -3,7 +3,7 @@
 Required-behavior coverage (from the mission):
 
 - full canonical run reaches COMPLETE with per-phase evidence;
-- real process runner (``echo``) succeeds with stdout evidence;
+- real process runner sub-runs (exit 0 + exact semantic result) succeed with stdout evidence;
 - strict durable state: unknown fields / malformed docs are rejected;
 - legal vs illegal transitions; absorbing terminal states;
 - repair loop converges (validate fails -> repair -> validate passes);
@@ -85,13 +85,30 @@ def repo(tmp_path: Path) -> tuple[str, str]:
     return str(d), head
 
 
+def _semantic_success_cmd(label: str) -> tuple[str, ...]:
+    """Deterministic producer satisfying the Mission 007 semantic contract:
+
+    exits 0 AND emits the EXACT structured result bound to the exact
+    sub-run (via the runner-set contract env vars), status SUCCESS —
+    the same shape the canonical trajectory-pi wrapper emits.
+    """
+    script = (
+        'echo "$1"; '
+        'printf '
+        '\'{"schema_version":1,"subrun_id":"%s","status":"SUCCESS",'
+        '"agent_classification":"TEST_PRODUCER","reason":"test"}\' '
+        '"$TRAJECTORY_SUBRUN_ID" > "$TRAJECTORY_SUBRUN_RESULT_FILE"'
+    )
+    return ("bash", "-c", script, "_", label)
+
+
 def make_commands() -> dict[str, tuple[str, ...]]:
     return {
-        model.PH_PLAN: ("echo", "plan"),
-        model.PH_IMPLEMENT: ("echo", "implement"),
-        model.PH_VALIDATE: ("test", "0"),
-        model.PH_REVIEW: ("python3", "--version"),
-        model.PH_CONSOLIDATE: ("echo", "consolidated"),
+        model.PH_PLAN: _semantic_success_cmd("plan"),
+        model.PH_IMPLEMENT: _semantic_success_cmd("implement"),
+        model.PH_VALIDATE: ("bash", "-c", 'echo "$1"', "_", "validate"),
+        model.PH_REVIEW: _semantic_success_cmd("review"),
+        model.PH_CONSOLIDATE: ("bash", "-c", 'echo "$1"', "_", "consolidate"),
     }
 
 
