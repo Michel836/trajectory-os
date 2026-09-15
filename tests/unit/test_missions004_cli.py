@@ -233,6 +233,82 @@ def test_main_returns_int_not_none(env: dict[str, str],
     capsys.readouterr()
 
 
+class TestSharedFlagPositions:
+    """--root / --json are accepted per-subcommand (after the command),
+    not only globally — the natural operator form the module docstring
+    implies.  Distinct dests keep the existing global flags byte-
+    compatible; per-subcommand value wins on collision."""
+
+    def test_json_after_subcommand(self, env: dict[str, str],
+                                   capsys: pytest.CaptureFixture[str]) -> None:
+        assert cli.main(_args(env, "m1")) == cli.EXIT_OK
+        capsys.readouterr()
+        # Per-subcommand --json -> machine-readable payload, exit 0.
+        code = cli.main(["--root", env["root"], "status", "m1", "--json"])
+        assert code == cli.EXIT_OK
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["summary"]["mission_state"] in (
+            "COMPLETE", "PLANNING", "RUNNING", "RESOURCE_DEFERRED")
+
+    def test_json_per_subcommand_unknown_id(self, env: dict[str, str],
+                                            capsys: pytest.CaptureFixture[str]) -> None:
+        # Canonical exit code is preserved when the flag is after the id.
+        code = cli.main(["--root", env["root"], "status", "nope", "--json"])
+        assert code == cli.EXIT_NOT_FOUND
+
+    def test_root_only_per_subcommand(self, env: dict[str, str],
+                                     capsys: pytest.CaptureFixture[str]) -> None:
+        # No global --root, only per-subcommand --root after the command.
+        assert cli.main(
+            ["create", "m1", "--root", env["root"],
+             "--objective", "test objective",
+             "--repo", env["repo"], "--head", env["head"],
+             "--pi-wrapper", env["provider"], "--model", "fake",
+             "--validate", "true"],) == cli.EXIT_OK
+        capsys.readouterr()
+        code = cli.main(["list", "--root", env["root"]])
+        assert code == cli.EXIT_OK
+        assert "m1" in capsys.readouterr().out
+
+    def test_collision_subcommand_root_wins(self, tmp_path: pathlib.Path,
+                                           capsys: pytest.CaptureFixture[str]) -> None:
+        real_root = tmp_path / "real"          # the mission actually lives here
+        decoy_root = tmp_path / "decoy"        # global position (loses)
+        real_root.mkdir()
+        decoy_root.mkdir()
+        (real_root / "missions").mkdir()
+        (decoy_root / "missions").mkdir()
+        repo = _git_setup(tmp_path)
+        assert cli.main(
+            ["--root", str(real_root), "create", "m1",
+             "--objective", "x", "--repo", repo,
+             "--pi-wrapper", str(_fake_provider(tmp_path)),
+             "--model", "fake", "--validate", "true",
+             "--root", str(real_root)]) == cli.EXIT_OK  # redundant, accepted
+        capsys.readouterr()
+        # Global root points at the EMPTY decoy; per-subcommand root must win
+        # so the mission is found in the real root (exit 0, not exit 4).
+        code = cli.main(["--root", str(decoy_root), "list",
+                         "--root", str(real_root)])
+        assert code == cli.EXIT_OK
+        assert "m1" in capsys.readouterr().out
+
+    def test_global_json_still_accepted(self, env: dict[str, str],
+                                        capsys: pytest.CaptureFixture[str]) -> None:
+        # Regression guard: the pre-existing global --json keeps working.
+        assert cli.main(_args(env, "m1")) == cli.EXIT_OK
+        capsys.readouterr()
+        code = cli.main(["--root", env["root"], "--json", "status", "m1"])
+        assert code == cli.EXIT_OK
+        json.loads(capsys.readouterr().out)
+
+    def test_version_has_no_shared_flags(self) -> None:
+        # version is excluded from the per-subcommand shared flags by design;
+        # the plain form still works and the global position stays compatible.
+        assert cli.main(["version"]) == cli.EXIT_OK
+        assert cli.main(["--json", "version"]) == cli.EXIT_OK
+
+
 def test_status_payload_shape(env: dict[str, str],
                               capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(_args(env, "m1")) == cli.EXIT_OK

@@ -32,6 +32,18 @@ Exit codes:
 
 Root resolution: ``--root PATH`` > ``$TRAJECTORY_MISSIONS_ROOT`` >
 ``<cwd>/.trajectory-pi``.
+
+``--root`` and ``--json`` are accepted both globally (before the
+subcommand) and per-subcommand (after the subcommand).  The per-subcommand
+form is the natural operator convention (e.g. ``status ID --json``) and is
+what ``scripts/mission004_proof.py``-style scripts and humans reach for first;
+without it the same flag rejected after the command was indistinguishable
+from a genuine usage error (same exit 2).  Precedence when both are given is
+deterministic: per-subcommand value > global value.  ``--json`` is an
+idempotent boolean, so giving it in either (or both) positions enables
+machine-readable output.  This is pure CLI ergonomics (no state-machine,
+resource, or git-safety change) and keeps every existing global-position
+invocation byte-compatible.
 """
 
 from __future__ import annotations
@@ -495,6 +507,24 @@ def _cmd_version() -> int:
 # --- parser --------------------------------------------------------------------
 
 
+def _add_shared_flags(subparser: argparse.ArgumentParser) -> None:
+    """Register per-subcommand ``--root`` / ``--json`` (distinct dests).
+
+    Separate dests (``sub_root`` / ``sub_json``) avoid the classic argparse
+    subparser-default-overwrite pitfall and keep the global ``--root`` /
+    ``--json`` flags byte-compatible; ``main()`` merges them with the per-
+    subcommand value winning.  ``version`` is intentionally excluded.
+    """
+    subparser.add_argument("--root", default=None, dest="sub_root",
+                           help="missions root for this command (overrides "
+                                "the global --root; default: "
+                                "$TRAJECTORY_MISSIONS_ROOT or <cwd>/.trajectory-pi)")
+    subparser.add_argument("--json", action="store_true", default=False,
+                           dest="sub_json",
+                           help="machine-readable output (same effect in the "
+                                "global or per-subcommand position)")
+
+
 def build_parser(prog: str = "trajectory-pi-missions") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog,
@@ -503,12 +533,16 @@ def build_parser(prog: str = "trajectory-pi-missions") -> argparse.ArgumentParse
                     "sub-runs).")
     parser.add_argument("--root", default=None,
                         help="missions root (default: $TRAJECTORY_MISSIONS_ROOT "
-                             "or <cwd>/.trajectory-pi)")
+                             "or <cwd>/.trajectory-pi); accepted globally "
+                             "(before the subcommand) or per-subcommand "
+                             "(after it, where it wins)")
     parser.add_argument("--json", action="store_true", default=False,
-                        help="machine-readable output")
+                        help="machine-readable output (accepted globally or "
+                             "per-subcommand)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("create", help="create a mission (no work launched)")
+    _add_shared_flags(p)
     p.add_argument("id")
     p.add_argument("--objective", required=True)
     p.add_argument("--repo", default=None,
@@ -540,6 +574,7 @@ def build_parser(prog: str = "trajectory-pi-missions") -> argparse.ArgumentParse
         ("resume", "reconstruct (never guesses) then run"),
     ):
         p = sub.add_parser(name, help=help_text)
+        _add_shared_flags(p)
         p.add_argument("id")
         p.add_argument("--policy", nargs="*", default=[],
                        help="capacity evidence KEY=INT (cpu_slots, ram_bytes, "
@@ -547,23 +582,29 @@ def build_parser(prog: str = "trajectory-pi-missions") -> argparse.ArgumentParse
         p.add_argument("--session-subruns", type=int, default=None)
 
     p = sub.add_parser("status", help="benchmark/status (same state)")
+    _add_shared_flags(p)
     p.add_argument("id")
 
     p = sub.add_parser("evidence", help="phase evidence (proven sub-run)")
+    _add_shared_flags(p)
     p.add_argument("id")
     p.add_argument("phase")
 
     p = sub.add_parser("summary", help="mission summary (bounded output)")
+    _add_shared_flags(p)
     p.add_argument("id")
 
     p = sub.add_parser("reconstruct", help="deterministic reconstruction")
+    _add_shared_flags(p)
     p.add_argument("id")
 
     p = sub.add_parser("note", help="record a bounded human intervention")
+    _add_shared_flags(p)
     p.add_argument("id")
     p.add_argument("--text", required=True)
 
-    sub.add_parser("list", help="all missions under the root")
+    p = sub.add_parser("list", help="all missions under the root")
+    _add_shared_flags(p)
     sub.add_parser("version", help="CLI version")
     return parser
 
@@ -579,6 +620,13 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_OK if code in (0, EXIT_OK) else EXIT_USAGE
     if args.command == "version":
         return _cmd_version()
+    # --root / --json are accepted after the subcommand too (the natural
+    # operator position).  Distinct dests keep the global flags intact; the
+    # per-subcommand value wins on collision, and --json is OR-combined.
+    if getattr(args, "sub_root", None) is not None:
+        args.root = args.sub_root
+        args.sub_root = None
+    args.json = bool(args.json or getattr(args, "sub_json", False))
     handler = {
         "create": _cmd_create,
         "run": _cmd_run,
