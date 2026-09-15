@@ -7,6 +7,9 @@
 #
 # Subcommands:
 #   create       canonical five-phase bounded plan (no work launched)
+#   start        one command: create (validate + persist) then run
+#                (Mission 006; create failure launches nothing; existing
+#                mission rejected — never silently resumed)
 #   run          run/resume (bounded session; fail-closed guards)
 #   continue     keep a non-terminal mission going
 #   resume       reconstruct (never guesses) then run

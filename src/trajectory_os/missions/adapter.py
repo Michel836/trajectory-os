@@ -197,6 +197,10 @@ def phase_command(kind: str, *, pi_wrapper: str, prompt_file: str,
     ``model.KIND_TO_MODE`` and the matching class.  ``--dirty-ok`` is set
     because sequential phases legitimately accumulate a dirty worktree in
     the single-owner design; ``--no-notify`` keeps the path non-interactive.
+    The canonical ``IMPLEMENT`` phase additionally carries the existing
+    wrapper operator contract ``--require-changes`` so an empty
+    implementation run cannot be treated as ready; PLAN, REVIEW and REPAIR
+    commands never carry it.
     """
     if kind not in model.MODEL_HEAVY_KINDS:
         raise AdapterError("COMMAND_KIND_INVALID", kind)
@@ -214,10 +218,13 @@ def phase_command(kind: str, *, pi_wrapper: str, prompt_file: str,
     tail = f"TrajectoryOS {phase_id}: {objective}"
     if len(tail) > model.MAX_COMMAND_PART_LEN:
         tail = tail[: model.MAX_COMMAND_PART_LEN]
+    contract_flags = (["--require-changes"]
+                      if kind == model.PH_IMPLEMENT else [])
     return [
         pi_wrapper,
         "--no-notify",
         "--dirty-ok",
+        *contract_flags,
         "--class", class_name,
         "--mode", mode,
         "--model", model_name,

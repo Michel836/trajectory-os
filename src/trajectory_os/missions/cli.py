@@ -5,6 +5,11 @@ deterministic, fail-closed, no hidden state):
 
     create      create a mission (canonical five-phase bounded plan, no
                 work is launched)
+    start       one command (Mission 006): the create path above, and
+                only if it fully validates and persists, followed by the
+                run path below.  A create failure exits before any sub-run
+                launches; an existing mission is rejected — start never
+                silently resumes it
     run         run / resume the mission (bounded session; explicit
                 workspace-conflict / resource / HEAD failures are
                 fail-closed and machine-readable)
@@ -43,7 +48,8 @@ deterministic: per-subcommand value > global value.  ``--json`` is an
 idempotent boolean, so giving it in either (or both) positions enables
 machine-readable output.  This is pure CLI ergonomics (no state-machine,
 resource, or git-safety change) and keeps every existing global-position
-invocation byte-compatible.
+invocation byte-compatible.  ``start --json`` emits the create payload
+followed by the run report (two JSON documents in sequence).
 """
 
 from __future__ import annotations
@@ -199,6 +205,113 @@ def _not_found(root: str, mission_id: str) -> int:
     return EXIT_NOT_FOUND
 
 
+# --- bounded declarative input (Mission 006 ``start``) ---------------------
+
+#: Hard byte cap checked *before* JSON parsing (fail closed on overflow).
+SPEC_MAX_BYTES = 65536
+#: Hard byte cap for ``--objective-file``: a file beyond
+#: ``MAX_OBJECTIVE_LEN`` characters cannot fit in more than 4 UTF-8 bytes
+#: per character, so anything larger is oversized by construction and is
+#: rejected at the byte level (no unbounded read).
+OBJECTIVE_FILE_MAX_BYTES = model.MAX_OBJECTIVE_LEN * 4
+#: The authoritative GPU-memory default (24 GiB), formerly the parser
+#: default.  It stays the single default — the parser now reports *unset*
+#: as ``None`` so a spec value can be merged in between CLI and default.
+_DEFAULT_GPU_MEM_BYTES = 25769803776
+
+#: Spec string fields (values flow into the existing create options).
+_SPEC_STRING_FIELDS = ("objective", "repo", "head", "pi_wrapper",
+                       "model", "validate", "consolidate")
+_SPEC_INT_FIELDS = ("gpu_mem", "time_budget", "subrun_budget",
+                    "repair_budget", "session_subruns")
+_ALLOWED_SPEC_KEYS = (frozenset(_SPEC_STRING_FIELDS)
+                      | frozenset(_SPEC_INT_FIELDS)
+                      | {"gpu", "policy"})
+
+
+def read_objective_file(path: str) -> str:
+    """Read a bounded objective text file (fail closed, UTF-8, stripped).
+
+    Missing / unreadable / non-regular / non-UTF-8 / oversized inputs are
+    ``UsageError`` rejections; the result is whitespace-stripped text whose
+    length is checked against the canonical objective bounds by the caller.
+    """
+    p = Path(path)
+    if not p.is_file():
+        raise UsageError("objective file missing or not a regular file: "
+                         f"{path}")
+    try:
+        with p.open("rb") as handle:
+            raw = handle.read(OBJECTIVE_FILE_MAX_BYTES + 1)
+    except OSError as exc:
+        raise UsageError(f"objective file unreadable: {exc}") from exc
+    if len(raw) > OBJECTIVE_FILE_MAX_BYTES:
+        raise UsageError(
+            f"objective file exceeds {OBJECTIVE_FILE_MAX_BYTES} bytes")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise UsageError("objective file must be UTF-8 text") from exc
+    return text.strip()
+
+
+def load_spec(path: str) -> dict[str, Any]:
+    """Parse and validate a bounded declarative launch spec (fail closed).
+
+    Strict JSON object only: a hard byte cap applies before parsing, and
+    malformed JSON, non-object JSON, unknown keys and wrong types are
+    ``UsageError`` rejections.  Only fields relevant to the existing
+    create/run options are accepted; their downstream validation (adapter,
+    mission config, session bound) stays authoritative.
+    """
+    p = Path(path)
+    try:
+        with p.open("rb") as handle:
+            raw = handle.read(SPEC_MAX_BYTES + 1)
+    except OSError as exc:
+        raise UsageError(f"spec unreadable: {exc}") from exc
+    if len(raw) > SPEC_MAX_BYTES:
+        raise UsageError(
+            f"spec exceeds the hard cap of {SPEC_MAX_BYTES} bytes (before "
+            "JSON parsing)")
+    try:
+        obj: Any = json.loads(raw.decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        raise UsageError("spec must be UTF-8 encoded JSON") from exc
+    except json.JSONDecodeError as exc:
+        raise UsageError(
+            f"spec is not valid JSON: {exc.msg} (line {exc.lineno}, "
+            f"column {exc.colno})") from exc
+    if not isinstance(obj, dict):
+        raise UsageError("spec must be a JSON object")
+    unknown = sorted(set(obj) - _ALLOWED_SPEC_KEYS)
+    if unknown:
+        raise UsageError(f"spec unknown key(s): {', '.join(unknown)}")
+    for field in _SPEC_STRING_FIELDS:
+        if field in obj and (not isinstance(obj[field], str)
+                             or not obj[field].strip()):
+            raise UsageError(f"spec {field} must be a non-empty string")
+    if "gpu" in obj and not isinstance(obj["gpu"], bool):
+        raise UsageError("spec gpu must be a boolean")
+    for field in _SPEC_INT_FIELDS:
+        if field in obj:
+            value = obj[field]
+            if isinstance(value, bool) or not isinstance(value, int) \
+                    or value < 0:
+                raise UsageError(f"spec {field} must be an integer >= 0")
+    if "session_subruns" in obj and not (
+            1 <= obj["session_subruns"] <= model.MAX_SESSION_SUBRUNS):
+        raise UsageError(
+            f"spec session_subruns must be 1..{model.MAX_SESSION_SUBRUNS}")
+    if "policy" in obj:
+        entries = obj["policy"]
+        if not isinstance(entries, list) or \
+                not all(isinstance(e, str) for e in entries):
+            raise UsageError("spec policy must be a list of KEY=INT strings")
+        parse_policy(entries)  # canonical policy validation (fail closed)
+    return obj
+
+
 # --- commands ------------------------------------------------------------------
 
 
@@ -208,6 +321,9 @@ def _cmd_create(args: argparse.Namespace) -> int:
     if not model.ID_RE.fullmatch(mission_id or ""):
         return _fail("invalid mission id (use 2..64 [a-z0-9._-], starting "
                      "[a-z0-9])")
+    if args.objective is None:
+        return _fail("objective is required (--objective, --objective-file "
+                     "or spec \"objective\")")
     objective = args.objective.strip()
     if not (1 <= len(objective) <= model.MAX_OBJECTIVE_LEN):
         return _fail(f"objective must be 1..{model.MAX_OBJECTIVE_LEN} chars "
@@ -237,7 +353,9 @@ def _cmd_create(args: argparse.Namespace) -> int:
                            if args.repair_budget is not None
                            else model.MAX_REPAIR_ROUNDS),
             gpu=args.gpu,
-            gpu_mem_bytes=args.gpu_mem,
+            gpu_mem_bytes=(args.gpu_mem
+                           if args.gpu_mem is not None
+                           else _DEFAULT_GPU_MEM_BYTES),
         )
     except adapter.AdapterError as exc:
         return _fail(f"adapter: {exc}")
@@ -297,6 +415,146 @@ def _cmd_create(args: argparse.Namespace) -> int:
     print(f"model    : {args.model or adapter.DEFAULT_MODEL} "
           f"via {args.pi_wrapper or adapter.DEFAULT_PI_WRAPPER}")
     return EXIT_OK
+
+
+def _cmd_start(args: argparse.Namespace) -> int:
+    """Mission 006 — one-command start: create followed by run.
+
+    Pure composition of the existing handlers — no second orchestration
+    path.  The create path must fully validate and persist (exit 0)
+    before the run path is entered, so any create failure exits before a
+    sub-run launches.  An already-existing mission is rejected by the
+    create path (fail closed) — start never silently resumes it.
+
+    Bounded declarative input: ``--objective-file`` and ``--spec`` supply
+    launch values; precedence is explicit CLI value > spec value > existing
+    parser/create defaults.  All file/spec *and* run-stage usage validation
+    (policy entries, session bounds) is a fail-closed usage rejection
+    *before* the create path, so a rejection writes no mission state and
+    launches no provider.
+    """
+    spec_file: str | None = args.spec
+    objective_file: str | None = args.objective_file
+    if spec_file is not None and objective_file is not None:
+        return _fail("--spec and --objective-file are contradictory; use "
+                     "one or the other")
+    if args.objective is not None and objective_file is not None:
+        return _fail("--objective and --objective-file are contradictory; "
+                     "use one or the other")
+
+    spec: dict[str, Any] | None = None
+    if spec_file is not None:
+        try:
+            spec = load_spec(spec_file)
+        except UsageError as exc:
+            return _fail(f"spec: {exc}")
+    if objective_file is not None:
+        try:
+            objective = read_objective_file(objective_file)
+        except UsageError as exc:
+            return _fail(f"objective-file: {exc}")
+        args.objective = objective  # bounds checked by the create path
+
+    objective_source = "cli"
+    if spec is not None:
+        if args.objective is not None:
+            objective_source = "cli"          # explicit CLI wins over spec
+        elif "objective" in spec:
+            objective_source = "spec"
+            args.objective = spec["objective"]
+        else:
+            return _fail("objective is required (CLI --objective or the "
+                         "spec \"objective\" field)")
+        for field in _SPEC_STRING_FIELDS:
+            if field == "objective" or getattr(args, field) is not None:
+                continue
+            if field in spec:
+                setattr(args, field, spec[field])
+        if not args.gpu and bool(spec.get("gpu")):
+            args.gpu = True
+        for field in _SPEC_INT_FIELDS:
+            if getattr(args, field) is None and field in spec:
+                setattr(args, field, spec[field])
+        if not args.policy and "policy" in spec:
+            args.policy = list(spec["policy"])
+    elif not args.objective:
+        return _fail("objective is required (CLI --objective or "
+                     "--objective-file)")
+    elif objective_file is not None:
+        objective_source = "objective_file"
+
+    # Fail closed on invalid run-stage usage *before* the create path:
+    # a rejected ``start`` must leave no mission state and launch no
+    # provider.  The canonical validators are reused (no parser logic
+    # duplication); the run path re-validates authoritatively later.
+    try:
+        parse_policy(args.policy)
+    except UsageError as exc:
+        return _fail(str(exc))
+    if args.session_subruns is not None and not (
+            1 <= args.session_subruns <= model.MAX_SESSION_SUBRUNS):
+        return _fail(f"session bound out of bounds: {args.session_subruns}")
+
+    created = _cmd_create(args)
+    if created != EXIT_OK:
+        return created
+    if spec is not None or objective_file is not None:
+        # Persist how the mission was launched (existing canonical event
+        # log — no second state engine).  Plain start/create invocations
+        # remain byte-identical to before.
+        root = _root_from(args.root)
+        paths = store.mission_paths(root, args.id)
+        # Bounded, deterministic normalized launch configuration: the
+        # effective values actually passed to create/run after
+        # CLI > spec > default resolution.  Persisting them (not the
+        # external file paths alone) makes launch evidence independent
+        # of later mutation/deletion of the spec or objective files.
+        # The canonical objective text is deliberately *not* duplicated
+        # here — mission state is authoritative; only objective_source.
+        # Values are stable primitives/lists only.
+        normalized = {
+            "repo": args.repo or os.getcwd(),
+            "head": args.head,
+            "pi_wrapper": args.pi_wrapper or adapter.DEFAULT_PI_WRAPPER,
+            "model": args.model or adapter.DEFAULT_MODEL,
+            "validate": list(adapter.split_command(args.validate)
+                             or adapter.DEFAULT_VALIDATE_COMMAND),
+            "consolidate": (
+                list(adapter.split_command(args.consolidate) or ())
+                if args.consolidate
+                else None
+            ),
+            "gpu": bool(args.gpu),
+            "gpu_mem": (args.gpu_mem if args.gpu_mem is not None
+                        else _DEFAULT_GPU_MEM_BYTES),
+            "time_budget": (args.time_budget if args.time_budget is not None
+                            else model.DEFAULT_TIME_BUDGET_S),
+            "subrun_budget": args.subrun_budget,
+            "repair_budget": (args.repair_budget
+                              if args.repair_budget is not None
+                              else model.MAX_REPAIR_ROUNDS),
+            "policy": list(args.policy),
+            "session_subruns": args.session_subruns,
+        }
+        try:
+            store.append_event(paths, {
+                "ts": orchestrator.utc_now_iso(),
+                "event": "launch",
+                "objective_source": objective_source,
+                "spec_file": spec_file,
+                "objective_file": objective_file,
+                "normalized": normalized,
+            })
+        except OSError as exc:
+            # Controlled fail-closed result (same rejection model as the
+            # create path): the persisted mission state stays intact and
+            # reconstructable (no rollback — valid persisted state is never
+            # deleted); start does not claim success and no sub-run is
+            # launched.
+            print(f"error(rejected): launch provenance persistence "
+                  f"failed: {exc}", file=sys.stderr)
+            return EXIT_REJECTED
+    return _cmd_run(args)
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -525,6 +783,44 @@ def _add_shared_flags(subparser: argparse.ArgumentParser) -> None:
                                 "global or per-subcommand position)")
 
 
+def _add_create_options(p: argparse.ArgumentParser, *,
+                        objective_required: bool = True) -> None:
+    """Mission-creation options shared by ``create`` and ``start``."""
+    p.add_argument("--objective", required=objective_required)
+    p.add_argument("--repo", default=None,
+                   help="repository worktree (default: cwd)")
+    p.add_argument("--head", default=None,
+                   help="known-good baseline revision (default: none — review "
+                        "baseline is explicit)")
+    p.add_argument("--pi-wrapper", default=None,
+                   help=f"canonical wrapper (default {adapter.DEFAULT_PI_WRAPPER})")
+    p.add_argument("--model", default=None,
+                   help=f"model name (default {adapter.DEFAULT_MODEL})")
+    p.add_argument("--validate", default=None,
+                   help="deterministic VALIDATE/CONSOLIDATE command string "
+                        "(default: 'bash scripts/quality.sh'), e.g. --validate "
+                        "\"bash -c 'test -f artifact'\"")
+    p.add_argument("--consolidate", default=None,
+                   help="CONSOLIDATE command override (default: validate)")
+    p.add_argument("--gpu", action="store_true", default=False,
+                   help="declare a GPU slot for model-heavy phases (admitted "
+                        "only with gpu capacity evidence)")
+    p.add_argument("--gpu-mem", type=int, default=None,
+                   help=f"declared GPU memory bytes "
+                        f"(default {_DEFAULT_GPU_MEM_BYTES})")
+    p.add_argument("--time-budget", type=int, default=None)
+    p.add_argument("--subrun-budget", type=int, default=None)
+    p.add_argument("--repair-budget", type=int, default=None)
+
+
+def _add_run_options(p: argparse.ArgumentParser) -> None:
+    """Run-stage options shared by ``run``/``continue``/``resume``/``start``."""
+    p.add_argument("--policy", nargs="*", default=[],
+                   help="capacity evidence KEY=INT (cpu_slots, ram_bytes, "
+                        "gpu_slots, gpu_mem_bytes)")
+    p.add_argument("--session-subruns", type=int, default=None)
+
+
 def build_parser(prog: str = "trajectory-pi-missions") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=prog,
@@ -544,29 +840,23 @@ def build_parser(prog: str = "trajectory-pi-missions") -> argparse.ArgumentParse
     p = sub.add_parser("create", help="create a mission (no work launched)")
     _add_shared_flags(p)
     p.add_argument("id")
-    p.add_argument("--objective", required=True)
-    p.add_argument("--repo", default=None,
-                   help="repository worktree (default: cwd)")
-    p.add_argument("--head", default=None,
-                   help="known-good baseline revision (default: none — review "
-                        "baseline is explicit)")
-    p.add_argument("--pi-wrapper", default=None,
-                   help=f"canonical wrapper (default {adapter.DEFAULT_PI_WRAPPER})")
-    p.add_argument("--model", default=None,
-                   help=f"model name (default {adapter.DEFAULT_MODEL})")
-    p.add_argument("--validate", default=None,
-                   help="deterministic VALIDATE/CONSOLIDATE command string "
-                        "(default: 'bash scripts/quality.sh'), e.g. --validate "
-                        "\"bash -c 'test -f artifact'\"")
-    p.add_argument("--consolidate", default=None,
-                   help="CONSOLIDATE command override (default: validate)")
-    p.add_argument("--gpu", action="store_true", default=False,
-                   help="declare a GPU slot for model-heavy phases (admitted "
-                        "only with gpu capacity evidence)")
-    p.add_argument("--gpu-mem", type=int, default=25769803776)
-    p.add_argument("--time-budget", type=int, default=None)
-    p.add_argument("--subrun-budget", type=int, default=None)
-    p.add_argument("--repair-budget", type=int, default=None)
+    _add_create_options(p)
+
+    p = sub.add_parser(
+        "start",
+        help="one command: create (validate + persist) then run "
+             "(existing mission rejected — never resumes)")
+    _add_shared_flags(p)
+    p.add_argument("id")
+    _add_create_options(p, objective_required=False)
+    _add_run_options(p)
+    p.add_argument("--objective-file", default=None,
+                   help="read the (bounded) objective from a UTF-8 text "
+                        "file; conflicting with --objective and --spec")
+    p.add_argument("--spec", default=None,
+                   help="bounded declarative launch spec (strict JSON "
+                        "object); explicit CLI values win, then spec, then "
+                        "defaults; conflicting with --objective-file")
 
     for name, help_text in (
         ("run", "run/resume the mission (bounded session)"),
@@ -576,10 +866,7 @@ def build_parser(prog: str = "trajectory-pi-missions") -> argparse.ArgumentParse
         p = sub.add_parser(name, help=help_text)
         _add_shared_flags(p)
         p.add_argument("id")
-        p.add_argument("--policy", nargs="*", default=[],
-                       help="capacity evidence KEY=INT (cpu_slots, ram_bytes, "
-                            "gpu_slots, gpu_mem_bytes)")
-        p.add_argument("--session-subruns", type=int, default=None)
+        _add_run_options(p)
 
     p = sub.add_parser("status", help="benchmark/status (same state)")
     _add_shared_flags(p)
@@ -629,6 +916,7 @@ def main(argv: list[str] | None = None) -> int:
     args.json = bool(args.json or getattr(args, "sub_json", False))
     handler = {
         "create": _cmd_create,
+        "start": _cmd_start,
         "run": _cmd_run,
         "continue": _cmd_continue,
         "resume": _cmd_resume,
