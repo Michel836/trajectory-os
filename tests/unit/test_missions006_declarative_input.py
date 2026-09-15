@@ -569,3 +569,122 @@ class TestContradictions:
         capsys.readouterr()
         payload = _status_payload(env["root"], capsys)
         assert payload["objective"] == "from cli"
+
+
+class TestPR203ReviewFixes:
+    """Blocking PR #203 review findings — focused regressions.
+
+    1. ``--objective-file`` persists ``objective_source="objective_file"``
+       (not ``"cli"``), preserving CLI-over-spec precedence;
+    2. invalid ``--policy`` / ``--session-subruns`` are rejected *before*
+       mission creation (no mission state, no provider invocation,
+       canonical usage exit code);
+    3. launch-provenance persistence failure is controlled (no uncaught
+       exception, no provider invocation, mission state intact and
+       reconstructable).
+    """
+
+    def test_objective_file_persists_objective_source(
+            self, env: dict[str, str], tmp_path: pathlib.Path,
+            capsys: pytest.CaptureFixture[str]) -> None:
+        objective_path = tmp_path / "objective.txt"
+        objective_path.write_text("from objective file", encoding="utf-8")
+        code = cli.main(["--root", env["root"], "start", "m1",
+                         "--objective-file", str(objective_path),
+                         "--repo", env["repo"], "--head", env["head"],
+                         "--pi-wrapper", env["provider"], "--model", "fake",
+                         "--validate", "true"])
+        assert code == cli.EXIT_OK
+        capsys.readouterr()
+        events = [e for e in store.load_events(
+            store.mission_paths(env["root"], "m1"))
+            if e.get("event") == "launch"]
+        assert len(events) == 1
+        assert events[0]["objective_source"] == "objective_file"
+
+    def test_invalid_policy_rejected_no_mission_no_provider(
+            self, env: dict[str, str], capsys: pytest.CaptureFixture[str]
+            ) -> None:
+        code = cli.main(["--root", env["root"], "start", "m1",
+                         "--objective", "obj",
+                         "--repo", env["repo"], "--head", env["head"],
+                         "--pi-wrapper", env["provider"], "--model", "fake",
+                         "--validate", "true",
+                         "--policy", "bogus_key=1"])
+        assert code == cli.EXIT_USAGE
+        assert "bogus_key" in capsys.readouterr().err
+        assert not pathlib.Path(env["root"], "missions", "m1").exists()
+        assert _marker_count(env["marker"]) == 0
+
+    def test_invalid_session_subruns_rejected_no_mission_no_provider(
+            self, env: dict[str, str], capsys: pytest.CaptureFixture[str]
+            ) -> None:
+        for bound in (0, model.MAX_SESSION_SUBRUNS + 1):
+            code = cli.main(["--root", env["root"], "start", "m1",
+                             "--objective", "obj",
+                             "--repo", env["repo"], "--head", env["head"],
+                             "--pi-wrapper", env["provider"],
+                             "--model", "fake", "--validate", "true",
+                             "--session-subruns", str(bound)])
+            assert code == cli.EXIT_USAGE
+            assert "out of bounds" in capsys.readouterr().err
+            # Rejected before create: no mission state, no provider start.
+            assert not pathlib.Path(env["root"], "missions", "m1").exists()
+            assert _marker_count(env["marker"]) == 0
+
+    def test_launch_event_persistence_failure_is_controlled(
+            self, env: dict[str, str], tmp_path: pathlib.Path,
+            capsys: pytest.CaptureFixture[str],
+            monkeypatch: pytest.MonkeyPatch) -> None:
+        objective_path = tmp_path / "objective.txt"
+        objective_path.write_text("obj", encoding="utf-8")
+        real_append = store.append_event
+
+        def failing_append(paths: Any, event: Any) -> None:
+            if event.get("event") == "launch":
+                raise OSError("simulated persistence failure")
+            real_append(paths, event)
+
+        monkeypatch.setattr(cli.store, "append_event", failing_append)
+        code = cli.main(["--root", env["root"], "start", "m1",
+                         "--objective-file", str(objective_path),
+                         "--repo", env["repo"], "--head", env["head"],
+                         "--pi-wrapper", env["provider"], "--model", "fake",
+                         "--validate", "true"])
+        assert code == cli.EXIT_REJECTED
+        err = capsys.readouterr().err
+        assert "launch provenance persistence failed" in err
+        # No uncaught exception; start never claims success.
+        # No sub-run was launched.
+        assert _marker_count(env["marker"]) == 0
+        # Mission state is intact and reconstructable (created event
+        # persisted; no launch event; load/status work).
+        paths = store.mission_paths(env["root"], "m1")
+        mission, _ = store.load_mission(env["root"], "m1")
+        assert mission.mission_id == "m1"
+        events = store.load_events(paths)
+        assert any(e.get("event") == "created" for e in events)
+        assert not any(e.get("event") == "launch" for e in events)
+        assert cli.main(["--root", env["root"], "status", "m1"]) \
+            == cli._state_exit(mission.mission_state)
+
+    def test_cli_objective_still_beats_spec_objective_for_source(
+            self, env: dict[str, str], tmp_path: pathlib.Path) -> None:
+        # Precedence semantics preserved: explicit CLI objective over spec
+        # objective is source "cli" (regression guard for finding 1).
+        spec_path = tmp_path / "spec.json"
+        _write_spec(spec_path, {"objective": "from spec",
+                                "repo": env["repo"],
+                                "model": "specmodel"})
+        code = cli.main(["--root", env["root"], "start", "m1",
+                         "--spec", str(spec_path),
+                         "--objective", "from cli",
+                         "--head", env["head"],
+                         "--pi-wrapper", env["provider"],
+                         "--validate", "true"])
+        assert code == cli.EXIT_OK
+        events = [e for e in store.load_events(
+            store.mission_paths(env["root"], "m1"))
+            if e.get("event") == "launch"]
+        assert events[0]["objective_source"] == "cli"
+        assert events[0]["objective_file"] is None

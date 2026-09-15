@@ -428,9 +428,10 @@ def _cmd_start(args: argparse.Namespace) -> int:
 
     Bounded declarative input: ``--objective-file`` and ``--spec`` supply
     launch values; precedence is explicit CLI value > spec value > existing
-    parser/create defaults.  All file/spec validation is a fail-closed
-    usage rejection *before* the create path, so a rejection writes no
-    mission state and launches no provider.
+    parser/create defaults.  All file/spec *and* run-stage usage validation
+    (policy entries, session bounds) is a fail-closed usage rejection
+    *before* the create path, so a rejection writes no mission state and
+    launches no provider.
     """
     spec_file: str | None = args.spec
     objective_file: str | None = args.objective_file
@@ -482,6 +483,18 @@ def _cmd_start(args: argparse.Namespace) -> int:
     elif objective_file is not None:
         objective_source = "objective_file"
 
+    # Fail closed on invalid run-stage usage *before* the create path:
+    # a rejected ``start`` must leave no mission state and launch no
+    # provider.  The canonical validators are reused (no parser logic
+    # duplication); the run path re-validates authoritatively later.
+    try:
+        parse_policy(args.policy)
+    except UsageError as exc:
+        return _fail(str(exc))
+    if args.session_subruns is not None and not (
+            1 <= args.session_subruns <= model.MAX_SESSION_SUBRUNS):
+        return _fail(f"session bound out of bounds: {args.session_subruns}")
+
     created = _cmd_create(args)
     if created != EXIT_OK:
         return created
@@ -523,14 +536,24 @@ def _cmd_start(args: argparse.Namespace) -> int:
             "policy": list(args.policy),
             "session_subruns": args.session_subruns,
         }
-        store.append_event(paths, {
-            "ts": orchestrator.utc_now_iso(),
-            "event": "launch",
-            "objective_source": objective_source,
-            "spec_file": spec_file,
-            "objective_file": objective_file,
-            "normalized": normalized,
-        })
+        try:
+            store.append_event(paths, {
+                "ts": orchestrator.utc_now_iso(),
+                "event": "launch",
+                "objective_source": objective_source,
+                "spec_file": spec_file,
+                "objective_file": objective_file,
+                "normalized": normalized,
+            })
+        except OSError as exc:
+            # Controlled fail-closed result (same rejection model as the
+            # create path): the persisted mission state stays intact and
+            # reconstructable (no rollback — valid persisted state is never
+            # deleted); start does not claim success and no sub-run is
+            # launched.
+            print(f"error(rejected): launch provenance persistence "
+                  f"failed: {exc}", file=sys.stderr)
+            return EXIT_REJECTED
     return _cmd_run(args)
 
 
