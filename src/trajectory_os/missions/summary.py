@@ -95,6 +95,19 @@ def mission_summary(mission: MissionDoc,
 
     review = next((flags for flags in reversed(phases)
                    if flags["kind"] == model.PH_REVIEW), None)
+
+    # Mission 004 (deterministic, kind-based): model-heavy vs deterministic
+    # accounting + reconstruction/resume lifecycle events (derived from the
+    # canonical event log — the same evidence the CLI and harness use).
+    kind_by_phase = {phase.phase_id: phase.kind for phase in mission.phases}
+    model_heavy_subruns = [
+        sub for sub in subruns
+        if kind_by_phase.get(sub["phase_id"])
+        and model.is_model_heavy(kind_by_phase[sub["phase_id"]])
+    ]
+    events = store.load_events(paths)
+    reconstruction_events = sum(1 for e in events if e.get("event") == "reconstructed")
+    resume_events = sum(1 for e in events if e.get("event") == "resumed")
     return {
         "schema_version": mission.schema_version,
         "mission_id": mission.mission_id,
@@ -122,6 +135,20 @@ def mission_summary(mission: MissionDoc,
         "subruns": subruns,
         "max_concurrency": 1,  # bounded sequential design (single owner)
         "gpu_gated_phase_count": sum(1 for flags in phases if flags["gpu_gated"]),
+        "model_heavy": {
+            "phase_count": sum(
+                1 for flags in phases if model.is_model_heavy(flags["kind"])),
+            "subrun_count": len(model_heavy_subruns),
+            "subruns": [
+                {"subrun_id": sub["subrun_id"], "phase_id": sub["phase_id"],
+                 "classification": sub["classification"]}
+                for sub in model_heavy_subruns
+            ],
+        },
+        "lifecycle_events": {
+            "reconstruction": reconstruction_events,
+            "resume": resume_events,
+        },
         "automatic": {
             "retries": automatic_retries,
             "repairs_used": mission.repairs_used,
@@ -173,6 +200,16 @@ def render_summary(summary: Mapping[str, Any]) -> str:
     if isinstance(provider, Mapping):
         lines.append(f"provider  : recovered={provider['recovered']} "
                      f"surfaced={provider['surfaced']}")
+    model_heavy = summary.get("model_heavy")
+    if isinstance(model_heavy, Mapping):
+        lines.append(
+            f"model     : heavy_phases={model_heavy['phase_count']} "
+            f"heavy_subruns={model_heavy['subrun_count']}")
+    lifecycle = summary.get("lifecycle_events")
+    if isinstance(lifecycle, Mapping):
+        lines.append(
+            f"lifecycle : reconstruction={lifecycle['reconstruction']} "
+            f"resume={lifecycle['resume']}")
     lines.append(f"human     : interventions={summary['human_interventions']}")
     phases = summary["phases"]
     if isinstance(phases, list):

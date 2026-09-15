@@ -29,6 +29,7 @@ Guarantees (ADR-005):
 from __future__ import annotations
 
 import datetime
+import hashlib
 import os
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -331,6 +332,44 @@ def git_head(repo_root: str) -> str | None:
         return None
     head = proc.stdout.decode("ascii", errors="replace").strip()
     return head if head else None
+
+
+def _git_read(repo_root: str, *args: str) -> bytes | None:
+    """Bounded read-only git invocation (fixed argv; no lock side effects)."""
+    path_env = os.environ.get("PATH") or "/usr/local/bin:/usr/bin:/bin"
+    try:
+        proc = subprocess.run(  # noqa: S603 (fixed argv, read-only subcommands)
+            ["git", *args],
+            cwd=repo_root,
+            env={"GIT_OPTIONAL_LOCKS": "0", "PATH": path_env},
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=GIT_HEAD_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
+def worktree_identity(repo_root: str) -> dict[str, Any]:
+    """Fresh-context / worktree-identity evidence for one subrun (read-only).
+
+    Deterministic: the ``HEAD`` revision plus a stable SHA-256 digest of
+    the working-tree diff against ``HEAD`` (staged + unstaged tracked
+    changes).  Both probes are read-only (``GIT_OPTIONAL_LOCKS=0``) and
+    bounded; on probe failure the field is explicitly ``None`` — never
+    fabricated, never guessed.
+    """
+    head = git_head(repo_root)
+    diff = _git_read(repo_root, "diff", "HEAD")
+    patch_sha = (
+        hashlib.sha256(diff).hexdigest() if diff is not None else None
+    )
+    return {"head": head, "worktree_patch_sha256": patch_sha}
 
 
 def admit_phase_resources(
@@ -674,12 +713,17 @@ def finalize_subrun(
 
     if state_after == model.PS_PASSED and phase.kind != model.PH_REPAIR:
         # Bounded evidence for later phases (identity, exit, attempt counts).
+        worktree = (worktree_identity(mission.repo_root)
+                    if mission.repo_root is not None else None)
         store.save_phase_evidence(paths, phase.phase_id, {
             "phase": phase.phase_id,
             "kind": phase.kind,
             "state": model.PS_PASSED,
             "attempt": phase.attempt,
             "last_subrun": record.to_dict(),
+            # Mission 004: fresh-context / worktree-identity evidence for
+            # the proven subrun (deterministic, read-only; None = no repo).
+            "worktree": worktree,
         })
 
     store.append_event(paths, {"ts": now, "event": "phase_finished",
@@ -757,6 +801,14 @@ def run_mission(
             continue
 
         if decision.action == "run_phase" and decision.phase_id is not None:
+            if (session_subruns == 0 and mission.subrun_started > 0
+                    and not mission.terminal()):
+                # Mission 004: a resume is an explicit, countable event —
+                # this session is launching new work for a mission that a
+                # prior session already started (reconstruction/resume
+                # accounting is derived from this event log).
+                store.append_event(paths, {"ts": clock(), "event": "resumed",
+                                           "phase": decision.phase_id})
             phase = mission.phase(decision.phase_id)
             phase_id = phase.phase_id
             sp = store.subrun_paths(paths, f"{phase_id}-a{phase.attempt + 1}")
