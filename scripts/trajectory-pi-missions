@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# trajectory-pi-missions — production mission orchestration (Mission 004).
+#
+# Thin, stable shim over src/trajectory_os/missions.  It only resolves the
+# repository root, prepends the src layout to PYTHONPATH and execs the
+# operator CLI: `python3 -m trajectory_os.missions.cli "$@"`.
+#
+# Subcommands:
+#   create       canonical five-phase bounded plan (no work launched)
+#   run          run/resume (bounded session; fail-closed guards)
+#   continue     keep a non-terminal mission going
+#   resume       reconstruct (never guesses) then run
+#   status       benchmark/status (human + machine same state)
+#   reconstruct  deterministic reconstruction
+#   evidence     phase evidence (proven sub-run identity + worktree)
+#   summary      bounded human/machine summary
+#   note         bounded human intervention (operator note)
+#   list         all missions under the root
+#   version
+#
+# Exit codes: 0 ok/COMPLETE, 2 usage, 3 rejected/BLOCKED/FAILED,
+#             4 unknown mission, 5 in-flight (session bound / deferred).
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+SRC="${ROOT}/src"
+
+if [[ ! -d "${SRC}/trajectory_os/missions" ]]; then
+  printf 'trajectory-pi-missions: internal error: missing trajectory_os/missions package (expected %s)\n' "${SRC}/trajectory_os/missions" >&2
+  exit 2
+fi
+
+export PYTHONPATH="${SRC}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m trajectory_os.missions.cli "$@"

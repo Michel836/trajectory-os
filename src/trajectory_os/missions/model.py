@@ -71,6 +71,29 @@ KIND_TO_MODE = {
     PH_CONSOLIDATE: "VERIFY",
 }
 
+# ---------------------------------------------------------------------------
+# Mission 004 — model-heavy vs deterministic phase classification (V0)
+# ---------------------------------------------------------------------------
+# "MODEL-HEAVY" phases route to the LLM provider through the canonical
+# trajectory-pi runtime path: every subrun gets a FRESH model/process
+# context (deterministic subprocess ownership), and admission under the
+# resource policy enforces one heavy GPU model at a time. "DETERMINISTIC"
+# phases never invoke a model: they run the operator's bounded validation /
+# consolidation command directly.
+#
+# The classification is KIND-BASED and deterministic, so the operator CLI,
+# the benchmark records and the resource policy classify phases identically
+# everywhere (no per-process drift).
+MODEL_HEAVY_KINDS = frozenset({PH_PLAN, PH_IMPLEMENT, PH_REPAIR, PH_REVIEW})
+DETERMINISTIC_KINDS = frozenset({PH_VALIDATE, PH_CONSOLIDATE})
+
+
+def is_model_heavy(kind: str) -> bool:
+    """Deterministic kind-based classification (raises on unknown kind)."""
+    if kind not in PHASE_KINDS:
+        raise ValueError(f"unknown phase kind: {kind!r}")
+    return kind in MODEL_HEAVY_KINDS
+
 #: Kind -> mission-level state while that phase is active.
 KIND_TO_MISSION_STATE = {
     PH_PLAN: MS_PLANNING,
