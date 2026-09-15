@@ -121,13 +121,54 @@ class TestPhaseCommand:
                                objective="o" * 10)
         assert cmd == [
             "pi",
-            "--no-notify", "--dirty-ok",
+            "--no-notify", "--dirty-ok", "--require-changes",
             "--class", "feature",
             "--mode", "IMPLEMENT",
             "--model", "big",
             "--prompt-file", "/p/implement.txt",
             "--", "TrajectoryOS implement: oooooooooo",
         ]
+
+
+class TestRequireChanges:
+    """M006: only canonical IMPLEMENT sub-runs carry --require-changes."""
+
+    def test_implement_carries_require_changes(self) -> None:
+        cmd = ad.phase_command(m.PH_IMPLEMENT, pi_wrapper="pi",
+                               prompt_file="/p/implement.txt",
+                               model_name="big", phase_id="implement",
+                               objective="o")
+        assert cmd.count("--require-changes") == 1
+        # positioned with the other run-contract flags, before the
+        # deterministic class/mode/model/prompt block
+        assert cmd[:4] == ["pi", "--no-notify", "--dirty-ok",
+                           "--require-changes"]
+        assert cmd[4:8] == ["--class", "feature", "--mode", "IMPLEMENT"]
+        assert cmd[8:] == ["--model", "big", "--prompt-file",
+                           "/p/implement.txt", "--",
+                           "TrajectoryOS implement: o"]
+
+    def test_plan_review_and_repair_do_not_carry_it(self) -> None:
+        for kind, pid in ((m.PH_PLAN, "plan"),
+                          (m.PH_REVIEW, "review"),
+                          (m.PH_REPAIR, "repair")):
+            cmd = ad.phase_command(kind, pi_wrapper="pi",
+                                   prompt_file=f"/p/{pid}.txt",
+                                   model_name="big", phase_id=pid,
+                                   objective="o")
+            assert "--require-changes" not in cmd, kind
+
+    def test_canonical_specs_only_implement(self, tmp_path: Path) -> None:
+        specs = ad.build_canonical_specs(
+            root=str(tmp_path), mission_id="mi", objective="obj",
+            pi_wrapper="pi", model_name="big")
+        by_id = dict((s.phase_id, s) for s in specs)
+        assert "--require-changes" in list(by_id["implement"].command)
+        for pid in ("plan", "review"):
+            assert "--require-changes" not in list(by_id[pid].command)
+        # deterministic phases are untouched (operator command verbatim)
+        assert by_id["validate"].command == ("bash", "scripts/quality.sh")
+        assert by_id["consolidate"].command == ("bash", "scripts/quality.sh")
 
     def test_deterministic(self) -> None:
         a = ad.phase_command(m.PH_PLAN, pi_wrapper="pi",
