@@ -1,0 +1,230 @@
+"""Mission 007 — semantic sub-run outcome contract (producer/consumer layer).
+
+Defines the smallest stable, machine-readable structured result that a
+sub-run's implementing process (canonical trajectory-pi wrapper) must emit
+to prove semantic completion beyond a bare exit-0.
+
+Design invariants:
+
+* deterministic — same inputs yield the same verdict; no I/O in the
+  verification path, no clocks, no guessing;
+* fail closed — missing, malformed, contradictory, stale, or mismatched
+  semantic evidence never supports COMPLETED; it blocks (UNPROVEN) or
+  preserves the process-failure classification;
+* bound to the exact sub-run — the result MUST carry the exact
+  ``subrun_id`` of the sub-run it was produced for, and the consumer
+  verifies that binding explicitly; the runner also clears any stale
+  file at that path before launch, so a previous attempt's evidence can
+  never be mistaken for the current sub-run's proof;
+* minimal — one JSON file with a small fixed schema (``schema_version=1``);
+  no dependencies beyond the standard library;
+* SUCCESS is the ONLY status that can support mission COMPLETED.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+#: Schema version of the semantic result file. Kept at 1 — forward
+#: compatible: a consumer never guesses about versions it doesn't know.
+SEMANTIC_SCHEMA_VERSION = 1
+
+#: Environment variable name the runner sets so the subprocess wrapper
+#: knows where to write the semantic result (the value is a path).
+RESULT_FILE_ENV_VAR = "TRAJECTORY_SUBRUN_RESULT_FILE"
+
+#: Environment variable name the runner sets carrying the EXACT sub-run
+#: id this semantic result must be bound to.
+SUBRUN_ID_ENV_VAR = "TRAJECTORY_SUBRUN_ID"
+
+# --- canonical semantic statuses -------------------------------------------------
+
+#: The sub-run semantically achieved its objective (the agent completed
+#: the work, the wrapper confirmed it via deterministic gates).
+STATUS_SUCCESS = "SUCCESS"
+
+#: The sub-run process exited cleanly (0) but did NOT achieve the
+#: objective (incomplete, missing completion marker, etc.).
+STATUS_INCOMPLETE = "INCOMPLETE"
+
+#: The sub-run failed due to an upstream provider / infrastructure
+#: issue (not a deterministic logic failure of the sub-run itself).
+STATUS_PROVIDER_FAILURE = "PROVIDER_FAILURE"
+
+#: Deterministic failure (the work was attempted but definitively
+#: failed the wrapper's own deterministic gates).
+STATUS_FAILED = "FAILED"
+
+#: The status is ambiguous or unknown (unrecognized terminal state).
+STATUS_UNKNOWN = "UNKNOWN"
+
+ALL_STATUSES = frozenset({
+    STATUS_SUCCESS,
+    STATUS_INCOMPLETE,
+    STATUS_PROVIDER_FAILURE,
+    STATUS_FAILED,
+    STATUS_UNKNOWN,
+})
+
+#: Only this status is capable of supporting mission COMPLETED.
+SUCCESS_STATUSES = frozenset({STATUS_SUCCESS})
+
+#: All string fields are non-empty and bounded (fail closed on runaway).
+_MAX_STR_LEN = 512
+
+
+class SemanticError(Exception):
+    """The semantic result file violates the contract (fail closed).
+
+    ``code`` is a stable machine-readable reason (e.g. ``MALFORMED``,
+    ``SUBRUN_MISMATCH``, ``STATUS_INVALID``) for durable audit.
+    """
+
+    def __init__(self, code: str, detail: str = "") -> None:
+        super().__init__(f"SEMANTIC_{code}: {detail}" if detail
+                         else f"SEMANTIC_{code}")
+        self.code = code
+        self.detail = detail
+
+
+def _require_bounded_str(doc: dict[str, Any], field: str) -> str:
+    """Validate a bounded, non-empty string field (fail closed)."""
+    val = doc[field]  # already checked for presence by the caller
+    if not isinstance(val, str) or not 1 <= len(val) <= _MAX_STR_LEN:
+        raise SemanticError(
+            "FIELD_INVALID",
+            f"{field} must be a non-empty string of at most {_MAX_STR_LEN} "
+            f"chars, got {val!r}")
+    return val
+
+
+def validate_semantic(doc: Any) -> str:
+    """Validate a parsed semantic result and return its status.
+
+    Requires the exact contract (fail closed on ANY violation — missing,
+    malformed, unknown, stale-version, or otherwise bad fields — it never
+    guesses and never fabricates a status):
+
+    * ``schema_version`` == 1 (required);
+    * ``subrun_id``: required, non-empty, bounded string — the result is
+      bound to the exact sub-run that produced it;
+    * ``status``: required, one of :data:`ALL_STATUSES`;
+    * optional provenance fields (``reason``, ``agent_classification``,
+      ``readiness``, ``ts``): if present, MUST be bounded non-empty
+      strings (``null``/oversized/non-string is a contract violation).
+    """
+    if not isinstance(doc, dict):
+        raise SemanticError("MALFORMED", "top-level must be an object")
+
+    ver = doc.get("schema_version")
+    if not (isinstance(ver, int) and not isinstance(ver, bool)
+            and ver == SEMANTIC_SCHEMA_VERSION):
+        raise SemanticError(
+            "SCHEMA_VERSION_INVALID",
+            f"schema_version={ver!r}, expected {SEMANTIC_SCHEMA_VERSION}")
+
+    if "subrun_id" not in doc:
+        raise SemanticError("SUBRUN_ID_MISSING",
+                            "subrun_id is required (result must be bound "
+                            "to the exact sub-run)")
+    _ = _require_bounded_str(doc, "subrun_id")
+
+    status = doc.get("status")
+    if not isinstance(status, str) or status not in ALL_STATUSES:
+        raise SemanticError("STATUS_INVALID",
+                            f"status={status!r} not in {sorted(ALL_STATUSES)}")
+
+    for field in ("reason", "agent_classification", "readiness", "ts"):
+        if field in doc:
+            _ = _require_bounded_str(doc, field)
+
+    return status
+
+
+def validate_subrun_binding(doc: Any, expected_subrun_id: str) -> None:
+    """Explicitly verify the result is bound to the expected sub-run.
+
+    Raises :class:`SemanticError` (``SUBRUN_MISMATCH`` when the ids
+    differ; ``SUBRUN_ID_MISSING``/``FIELD_INVALID`` when the field is
+    absent or malformed in ``doc``) — a mismatch is never tolerated,
+    because only exact-sub-run evidence may support COMPLETED.
+    """
+    if not isinstance(expected_subrun_id, str) or not expected_subrun_id:
+        raise SemanticError("EXPECTED_SUBRUN_INVALID",
+                            f"expected_subrun_id={expected_subrun_id!r}")
+    if not isinstance(doc, dict) or "subrun_id" not in doc:
+        raise SemanticError(
+            "SUBRUN_ID_MISSING",
+            f"evidence is not bound to sub-run {expected_subrun_id!r}")
+    actual = doc["subrun_id"]
+    if not (isinstance(actual, str) and 1 <= len(actual) <= _MAX_STR_LEN):
+        raise SemanticError("FIELD_INVALID", f"subrun_id={actual!r}")
+    if actual != expected_subrun_id:
+        raise SemanticError(
+            "SUBRUN_MISMATCH",
+            f"structural result is bound to sub-run {actual!r}, "
+            f"expected {expected_subrun_id!r}")
+
+
+def interpret_semantic(doc: Any | None,
+                       expected_subrun_id: str) -> tuple[str | None, str | None]:
+    """Fail-closed interpretation of semantic evidence.
+
+    Returns ``(status, error)``:
+
+    * valid + bound to ``expected_subrun_id`` -> ``(status, None)``;
+    * anything else (missing, malformed, unknown, stale, mismatched)
+      -> ``(None, error_code)`` — never a status, never a guess.
+    """
+    if doc is None:
+        return (None, "MISSING")
+    try:
+        status = validate_semantic(doc)
+        validate_subrun_binding(doc, expected_subrun_id)
+    except SemanticError as exc:
+        return (None, exc.code)
+    return (status, None)
+
+
+def semantic_supports_success(doc: Any | None,
+                              expected_subrun_id: str) -> bool:
+    """True ONLY if the evidence is valid, bound to the exact sub-run,
+    AND says SUCCESS. Everything else is False (fail closed).
+    """
+    status, _err = interpret_semantic(doc, expected_subrun_id)
+    return status in SUCCESS_STATUSES
+
+
+def read_semantic_file(path: str) -> tuple[dict[str, Any] | None, str | None]:
+    """Read and parse the semantic result file (fail closed, no raising).
+
+    Returns ``(doc, error)``:
+
+    * file absent/empty/unreadable            -> ``(None, reason)``;
+    * valid JSON + valid contract            -> ``(doc, None)``;
+    * malformed JSON / contract violation    -> ``(None, reason)``.
+
+    The sub-run *binding* is NOT checked here (it is consumer-specific);
+    use :func:`interpret_semantic` / :func:`validate_subrun_binding` to
+    verify the evidence belongs to the exact expected sub-run.
+    """
+    p = Path(path)
+    if not p.is_file():
+        return (None, "MISSING")
+    try:
+        raw = p.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return (None, "UNREADABLE")
+    if not raw.strip():
+        return (None, "EMPTY")
+    try:
+        doc: Any = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return (None, f"MALFORMED:{exc.msg}")
+    try:
+        validate_semantic(doc)
+    except SemanticError as exc:
+        return (None, exc.code)
+    return (doc, None)

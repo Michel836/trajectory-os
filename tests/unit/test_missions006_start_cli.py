@@ -47,7 +47,20 @@ def _marker_provider(tmp_path: pathlib.Path) -> tuple[str, pathlib.Path]:
     marker = tmp_path / "provider-invocations"
     script = tmp_path / "fp"
     script.write_text(
-        "#!/bin/bash\necho invoked >> " + str(marker) + "\nexit 0\n",
+        "#!/bin/bash\n"
+        "echo invoked >> " + str(marker) + "\n"
+        "if [[ -n \"${TRAJECTORY_SUBRUN_RESULT_FILE:-}\" "
+        "&& -n \"${TRAJECTORY_SUBRUN_ID:-}\" ]]; then\n"
+        "  printf '{\"schema_version\":1,"
+        "\"subrun_id\":\"%s\","
+        "\"status\":\"SUCCESS\","
+        "\"agent_classification\":\"AGENT_COMPLETED\","
+        "\"readiness\":\"READY_FOR_COMMIT\","
+        "\"reason\":\"test fixture semantic success\"}\\n' "
+        "\"$TRAJECTORY_SUBRUN_ID\" "
+        "> \"$TRAJECTORY_SUBRUN_RESULT_FILE\"\n"
+        "fi\n"
+        "exit 0\n",
         encoding="utf-8")
     script.chmod(0o755)
     return str(script), marker

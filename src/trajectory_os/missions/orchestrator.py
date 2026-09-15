@@ -625,6 +625,7 @@ def run_phase(
         stdout_file=str(sp["stdout"]),
         stderr_file=str(sp["stderr"]),
         resources=phase.resources,
+        semantic_required=model.is_model_heavy(phase.kind),
     )
     result = runner.run(request)
     return finalize_subrun(root, mission_id, subrun_id, phase_id, result,
@@ -651,6 +652,26 @@ def finalize_subrun(
     record.classification = classification
     record.exit_code = result.exit_code
     record.finished_at = now
+
+    # Mission 007: persist semantic outcome/provenance exactly when the
+    # runner actually participated in the semantic contract. Deterministic
+    # phases and legacy/scripted runners remain legacy-shaped.
+    semantic_observed = any((
+        result.semantic_status is not None,
+        result.semantic_error is not None,
+        result.semantic_agent_classification is not None,
+        result.semantic_readiness is not None,
+        result.semantic_reason is not None,
+    ))
+    if semantic_observed:
+        record.semantic_aware = True
+        record.semantic_status = result.semantic_status
+        record.semantic_error = result.semantic_error
+        record.semantic_agent_classification = (
+            result.semantic_agent_classification)
+        record.semantic_readiness = result.semantic_readiness
+        record.semantic_reason = result.semantic_reason
+
     store.save_subrun(record, paths)
 
     phase = mission.phase(phase_id)

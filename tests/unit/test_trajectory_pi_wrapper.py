@@ -111,7 +111,8 @@ class TPContext:
         for stale in (self.args_log, self.rc_file, self.output, self.touched):
             stale.unlink(missing_ok=True)
 
-    def run(self, *args: str) -> subprocess.CompletedProcess[str]:
+    def run(self, *args: str,
+            extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         # Do not inherit wrapper-internal bootstrap guard state from the
         # ambient environment (issue #152): it would put the wrapper on
         # the recursion-guard fast path and skip the bootstrap hop.
@@ -124,6 +125,8 @@ class TPContext:
             )
         }
         env["PATH"] = f"{self.ctx.parent / 'bin'}{os.pathsep}{os.environ['PATH']}"
+        if extra_env:
+            env.update(extra_env)
         return subprocess.run(
             ["bash", str(WRAPPER), *args],
             cwd=self.work,
@@ -1410,3 +1413,100 @@ def test_producer_run_identity_contract_pinned_in_source() -> None:
     # fail-closed collision guard exists and runs before any artifact write
     # into the run directory (the guard precedes the first identity write)
     assert src.index('[[ -e "$RUN_DIR" || -L "$RUN_DIR" ]]') < src.index("run_id=$STAMP")
+
+
+# ---------------------------------------------------------------------------
+# Mission 007 — semantic sub-run result emission (producer side, wrapper)
+# ---------------------------------------------------------------------------
+
+#: Canonical completion marker expected for AGENT_COMPLETED (test fixture).
+_M007_MARKER = "TRAJECTORY_OS_V0_TEST_COMPLETE"
+
+
+def _m007_env(tp: TPContext, filename: str) -> tuple[dict[str, str], Path]:
+    f = tp.ctx.parent / filename
+    env = {
+        "TRAJECTORY_SUBRUN_RESULT_FILE": str(f),
+        "TRAJECTORY_SUBRUN_ID": "m007-plan-a1",
+    }
+    return (env, f)
+
+
+def _m007_doc(f: Path) -> dict:
+    assert f.is_file(), "semantic result file was not written"
+    doc = json.loads(f.read_text(encoding="utf-8"))
+    assert doc["schema_version"] == 1
+    assert doc["subrun_id"] == "m007-plan-a1"
+    return doc
+
+
+def test_wrapper_emits_success_semantic_result(tp: TPContext) -> None:
+    # RC=0 + completion marker => AGENT_COMPLETED => semantic SUCCESS.
+    tp.scenario(
+        rc=0,
+        output=(
+            "Handoff\n"
+            "TASK: build the feature\n"
+            "RESULT: done\n"
+            f"{_M007_MARKER}\n"
+        ),
+    )
+    env, f = _m007_env(tp, "sem-success.json")
+
+    result = tp.run(*SMOKE_ARGS, "--", "Build the feature.", extra_env=env)
+    assert result.returncode == 0
+    doc = _m007_doc(f)
+    assert doc["status"] == "SUCCESS"
+    assert doc["agent_classification"] == "AGENT_COMPLETED"
+    # atomic emission: no mktemp leftovers remain
+    leftovers = [p for p in f.parent.iterdir() if f.name in p.name and p.name != f.name]
+    assert leftovers == []
+
+
+def test_wrapper_emits_incomplete_semantic_result(tp: TPContext) -> None:
+    # RC=0 without completion evidence => INCOMPLETE_AGENT_RUN.
+    tp.scenario(rc=0, output="I considered the task carefully.\n")
+    env, f = _m007_env(tp, "sem-incomplete.json")
+
+    result = tp.run(*SMOKE_ARGS, "--", "Build the feature.", extra_env=env)
+    assert result.returncode == 0
+    doc = _m007_doc(f)
+    assert doc["status"] == "INCOMPLETE"
+    assert doc["agent_classification"] == "INCOMPLETE_AGENT_RUN"
+
+
+def test_wrapper_emits_provider_failure_semantic_result(tp: TPContext) -> None:
+    # Nonzero + provider phrase => UPSTREAM_PROVIDER_MISSING_QUERY, and the
+    # original non-zero exit code is preserved (no silent success).
+    tp.scenario(rc=7, output=f"500 internal error: {PROVIDER_PHRASE}\n")
+    env, f = _m007_env(tp, "sem-provider.json")
+
+    result = tp.run(*SMOKE_ARGS, "--", "Build the feature.", extra_env=env)
+    assert result.returncode == 7
+    doc = _m007_doc(f)
+    assert doc["status"] == "PROVIDER_FAILURE"
+    assert doc["agent_classification"] == "UPSTREAM_PROVIDER_MISSING_QUERY"
+
+
+def test_wrapper_emits_failed_semantic_result(tp: TPContext) -> None:
+    # Unrelated deterministic failure => AGENT_FAILED / FAILED semantic.
+    tp.scenario(rc=3, output="boom: deterministic failure\n")
+    env, f = _m007_env(tp, "sem-failed.json")
+
+    result = tp.run(*SMOKE_ARGS, "--", "Build the feature.", extra_env=env)
+    assert result.returncode == 3
+    doc = _m007_doc(f)
+    assert doc["status"] == "FAILED"
+    assert doc["agent_classification"] == "AGENT_FAILED"
+
+
+def test_wrapper_semantic_emission_is_opt_in(tp: TPContext) -> None:
+    # Without the contract env vars the wrapper behavior is unchanged and
+    # NOTHING is written to any operator-provided default location.
+    tp.scenario(rc=0, output=f"done.\n{_M007_MARKER}\n")
+    stray = tp.ctx.parent / "should-never-exist.json"
+    assert not stray.exists()
+
+    result = tp.run(*SMOKE_ARGS, "--", "Build the feature.")
+    assert result.returncode == 0
+    assert not stray.exists()

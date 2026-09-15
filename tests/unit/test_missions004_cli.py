@@ -35,7 +35,21 @@ def _head_of(repo: str) -> str:
 
 def _fake_provider(tmp_path: pathlib.Path) -> str:
     p = tmp_path / "fp"
-    p.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    p.write_text(
+        "#!/bin/bash\n"
+        "if [[ -n \"${TRAJECTORY_SUBRUN_RESULT_FILE:-}\" "
+        "&& -n \"${TRAJECTORY_SUBRUN_ID:-}\" ]]; then\n"
+        "  printf '{\"schema_version\":1,"
+        "\"subrun_id\":\"%s\","
+        "\"status\":\"SUCCESS\","
+        "\"agent_classification\":\"AGENT_COMPLETED\","
+        "\"readiness\":\"READY_FOR_COMMIT\","
+        "\"reason\":\"test fixture semantic success\"}\\n' "
+        "\"$TRAJECTORY_SUBRUN_ID\" "
+        "> \"$TRAJECTORY_SUBRUN_RESULT_FILE\"\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8")
     p.chmod(0o755)
     return str(p)
 
