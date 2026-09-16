@@ -2538,7 +2538,7 @@ echo "============================================================"
 echo
 
 notify \
-  "Trajectory Pi started" \
+  "Trajectory agent started" \
   "$RUN_CLASS · $MODEL · ETA $ETA"
 
 # ------------------------------------------------------------
@@ -2657,6 +2657,7 @@ invoke_agent() {
 
     printf "Agent PID      %s (%s)\n\n" "$PI_PID" "$AGENT_BACKEND"
     echo "agent_backend=$AGENT_BACKEND" >> "$META"
+    echo "agent_pid=$PI_PID" >> "$META"
     echo "pi_pid=$PI_PID" >> "$META"
     return 0
 }
@@ -2707,15 +2708,21 @@ while kill -0 "$PI_PID" 2>/dev/null; do
     GPU="$(gpu_line)"
     [[ -n "$GPU" ]] || GPU="GPU unavailable"
 
-    OLLAMA_STATE="idle"
-    if ollama ps 2>/dev/null | grep -q "$MODEL"; then
-        OLLAMA_STATE="active"
-    fi
+    if [[ "$AGENT_BACKEND" == "dsh" ]]; then
+        BACKEND_STATE="dsh/llama.cpp"
+        GEN_THROUGHPUT="gen_3s=unavailable"
+    else
+        OLLAMA_STATE="idle"
+        if ollama ps 2>/dev/null | grep -q "$MODEL"; then
+            OLLAMA_STATE="active"
+        fi
+        BACKEND_STATE="pi/ollama=$OLLAMA_STATE"
 
-    GEN_THROUGHPUT="$(
-        ollama_generation_throughput_line "$OLLAMA_STATE" "$NOW" "$START_EPOCH"
-    )"
-    [[ -n "$GEN_THROUGHPUT" ]] || GEN_THROUGHPUT="gen_3s=unavailable"
+        GEN_THROUGHPUT="$(
+            ollama_generation_throughput_line "$OLLAMA_STATE" "$NOW" "$START_EPOCH"
+        )"
+        [[ -n "$GEN_THROUGHPUT" ]] || GEN_THROUGHPUT="gen_3s=unavailable"
+    fi
 
     MINS=$((ELAPSED / 60))
 
@@ -2728,12 +2735,12 @@ while kill -0 "$PI_PID" 2>/dev/null; do
     fi
 
     LINE="$(
-      printf '[%s] elapsed=%s | %s | files=%s | ollama=%s | %s | %s' \
+      printf '[%s] elapsed=%s | %s | files=%s | backend=%s | %s | %s' \
         "$(date +%H:%M:%S)" \
         "$ELAPSED_H" \
         "$ETA_STATE" \
         "$CHANGED (+$AGENT_CHANGED)" \
-        "$OLLAMA_STATE" \
+        "$BACKEND_STATE" \
         "$GPU" \
         "$GEN_THROUGHPUT"
     )"
@@ -3387,7 +3394,8 @@ echo " TRAJECTORY-PI FINISHED"
 echo "============================================================"
 printf "RUN ID                  %s\n" "$STAMP"
 printf "Runtime                 %s\n" "$ELAPSED_H"
-printf "Pi exit code            %s\n" "$PI_RC"
+echo "agent_exit_code=$PI_RC" >> "$META"
+printf "Agent exit code         %s\n" "$PI_RC"
 printf "Agent classification: %s\n" "$CLASSIFICATION"
 printf "Repository state: %s\n" "$READINESS"
 echo
@@ -3444,7 +3452,7 @@ echo "Readiness reason: $READINESS_REASON"
 echo
 echo "Evidence model:"
 echo "  DETERMINISTIC (wrapper-derived): branch, HEAD before/after,"
-echo "    Pi process exit code, complete temp-index snapshot, patch"
+echo "    agent process exit code, complete temp-index snapshot, patch"
 echo "    SHA-256, complete stat/inventory, index identity (pre-run /"
 echo "    after-agent / final) with SEMANTIC staging identity"
 echo "    (git ls-files --stage -z) as the authoritative readiness gate"
@@ -3461,12 +3469,12 @@ echo "============================================================"
 
 if [[ "$PI_RC" -eq 0 ]]; then
     notify \
-      "Trajectory Pi finished" \
+      "Trajectory agent finished" \
       "$RUN_CLASS completed in $ELAPSED_H · $CHANGED_AFTER files changed · $READINESS"
 else
     notify \
-      "Trajectory Pi ERROR" \
-      "Pi exited $PI_RC after $ELAPSED_H · work preserved · $READINESS"
+      "Trajectory agent ERROR" \
+      "Agent exited $PI_RC after $ELAPSED_H · work preserved · $READINESS"
 fi
 
 echo
