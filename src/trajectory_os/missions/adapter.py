@@ -64,6 +64,7 @@ class AdapterError(Exception):
 #: workload profile the wrapper expects (both must be consistent).
 MODE_TO_CLASS: dict[str, str] = {
     "SMOKE": "smoke",
+    "PLAN": "smoke",
     "IMPLEMENT": "feature",
     "REPAIR": "repair",
     "VERIFY": "smoke",

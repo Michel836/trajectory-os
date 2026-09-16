@@ -36,7 +36,8 @@ class TestClassification:
             ad.phase_class("nope")
 
     def test_modes_and_classes_are_canonical(self) -> None:
-        assert ad.phase_mode(m.PH_PLAN) == "SMOKE"
+        assert ad.phase_mode(m.PH_PLAN) == "PLAN"
+        assert ad.phase_class(m.PH_PLAN) == "smoke"
         assert ad.phase_mode(m.PH_IMPLEMENT) == "IMPLEMENT"
         assert ad.phase_mode(m.PH_VALIDATE) == "VERIFY"
         assert ad.phase_mode(m.PH_REVIEW) == "REVIEW"

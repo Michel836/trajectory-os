@@ -54,6 +54,23 @@ exit 0
 """
 
 
+# Deterministic fake DeepSeek Harness headless backend. It records the
+# complete argv and the permission mode selected by the wrapper, then emits
+# an exact terminal completion marker. No real DSH/model process is started.
+FAKE_DSH = r"""#!/usr/bin/env bash
+if [[ -n "${FAKE_DSH_ARGV_LOG:-}" ]]; then
+  printf '%s\n' "$@" > "$FAKE_DSH_ARGV_LOG"
+fi
+if [[ -n "${FAKE_DSH_PERMISSION_LOG:-}" ]]; then
+  printf '%s\n' "${DSH_PERMISSION_MODE-}" > "$FAKE_DSH_PERMISSION_LOG"
+fi
+printf 'HANDOFF\n'
+printf 'RESULT: fake DSH agent complete\n'
+printf '%s\n' "${FAKE_DSH_MARKER-DSH_TEST_COMPLETE}"
+exit 0
+"""
+
+
 REVIEW_PASS = (
     "VERDICT: PASS\n"
     "\n"
@@ -82,6 +99,13 @@ def repo(tmp_path: Path, monkeypatch) -> Path:
     fake_pi.write_text(FAKE_PI)
     fake_pi.chmod(0o755)
 
+    fake_dsh = fake_bin / "dsh"
+    fake_dsh.write_text(FAKE_DSH)
+    fake_dsh.chmod(0o755)
+
+    fake_dsh_patch = tmp_path / "fake-dsh-patch.yml"
+    fake_dsh_patch.write_text("# deterministic fake DSH patch\n")
+
     r = tmp_path / "repo"
     r.mkdir()
     git(r, "init", "-b", "main")
@@ -96,6 +120,8 @@ def repo(tmp_path: Path, monkeypatch) -> Path:
     # point of first-class read-only verification.
 
     monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
+    monkeypatch.setenv("TP_DSH_BIN", "dsh")
+    monkeypatch.setenv("TP_DSH_PATCH", str(fake_dsh_patch))
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/dev/null")
     return r
@@ -297,6 +323,28 @@ def test_review_mode_reaches_ready_for_commit(repo: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 1b. PLAN: accepted as a first-class mode (read-only, model-heavy)
+# ---------------------------------------------------------------------------
+
+
+def test_plan_mode_is_accepted_and_recorded(repo: Path) -> None:
+    """``--mode PLAN`` is accepted, recorded as the canonical mode, and
+    carries the read-only mutation / changes contract."""
+    git(repo, "checkout", "-b", "feature/plan")
+    proc = run(
+        repo,
+        {},
+        "--mode", "PLAN", "--no-review",
+        "--interval", "1", "--no-notify", "--", "plan the work",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert meta_value(repo, proc, "run_mode") == "PLAN"
+    assert meta_value(repo, proc, "run_mode_source").startswith("explicit")
+    assert meta_value(repo, proc, "mutation_policy") == "read-only"
+    assert meta_value(repo, proc, "changes_policy") == "forbidden"
+
+
+# ---------------------------------------------------------------------------
 # 2. Backward compatibility: --class derives mode and still invokes agent
 # ---------------------------------------------------------------------------
 
@@ -372,6 +420,30 @@ def test_invalid_mode_fails_closed(repo: Path) -> None:
     proc = run(repo, {}, "--mode", "BANANA", "--", "x")
     assert proc.returncode == 2, proc.stdout + proc.stderr
     assert "invalid mode" in (proc.stderr + proc.stdout).lower()
+
+
+def test_plan_with_require_changes_fails_closed(repo: Path) -> None:
+    proc = run(
+        repo,
+        {},
+        "--mode", "PLAN", "--require-changes",
+        "--", "plan",
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "unsafe combination" in (proc.stderr + proc.stdout).lower()
+    assert "require-changes" in (proc.stderr + proc.stdout)
+
+
+def test_plan_with_repair_attempts_fails_closed(repo: Path) -> None:
+    proc = run(
+        repo,
+        {},
+        "--mode", "PLAN", "--repair-attempts", "1",
+        "--", "plan",
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "unsafe combination" in (proc.stderr + proc.stdout).lower()
+    assert "repair-attempts" in (proc.stderr + proc.stdout)
 
 
 # ---------------------------------------------------------------------------
@@ -486,3 +558,135 @@ def test_verify_on_protected_branch_is_allowed_but_writable_is_blocked(
     )
     assert proc_wr.returncode == 3, proc_wr.stdout + proc_wr.stderr
     assert "SAFETY STOP" in proc_wr.stdout
+
+
+# ---------------------------------------------------------------------------
+# Agent-backend abstraction
+# ---------------------------------------------------------------------------
+
+
+def test_invalid_agent_backend_fails_closed(repo: Path) -> None:
+    proc = run(
+        repo,
+        None,
+        "--agent-backend",
+        "not-a-backend",
+        "--",
+        "This must never invoke an agent.",
+    )
+
+    assert proc.returncode == 2
+    assert "--agent-backend must be pi or dsh" in proc.stderr
+
+
+def test_pi_remains_default_agent_backend(repo: Path, tmp_path: Path) -> None:
+    invocation_log = tmp_path / "pi-invocations.log"
+
+    proc = run(
+        repo,
+        {
+            "FAKE_PI_INVOCATION_LOG": str(invocation_log),
+            "FAKE_PI_MARKER": "PLAN_COMPLETE",
+        },
+        "--class",
+        "smoke",
+        "--mode",
+        "PLAN",
+        "--no-review",
+        "--",
+        "Inspect only. Do not modify files. Finish with PLAN_COMPLETE.",
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert invocations(invocation_log) == ["AGENT"]
+    assert meta_value(repo, proc, "agent_backend") == "pi"
+    assert meta_value(repo, proc, "agent_classification") == "AGENT_COMPLETED"
+    assert meta_value(repo, proc, "plan_worktree_state") == "UNCHANGED"
+
+
+def test_dsh_plan_uses_headless_read_only_backend(
+    repo: Path, tmp_path: Path
+) -> None:
+    argv_log = tmp_path / "dsh-argv.log"
+    permission_log = tmp_path / "dsh-permission.log"
+    query = (
+        "Inspect only. Do not modify files. "
+        "Finish with DSH_PLAN_COMPLETE."
+    )
+
+    proc = run(
+        repo,
+        {
+            "FAKE_DSH_ARGV_LOG": str(argv_log),
+            "FAKE_DSH_PERMISSION_LOG": str(permission_log),
+            "FAKE_DSH_MARKER": "DSH_PLAN_COMPLETE",
+        },
+        "--class",
+        "smoke",
+        "--mode",
+        "PLAN",
+        "--agent-backend",
+        "dsh",
+        "--no-review",
+        "--",
+        query,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert meta_value(repo, proc, "agent_backend") == "dsh"
+    assert meta_value(repo, proc, "agent_classification") == "AGENT_COMPLETED"
+    assert meta_value(repo, proc, "plan_worktree_state") == "UNCHANGED"
+
+    assert permission_log.read_text().strip() == "read-only"
+
+    argv = argv_log.read_text().splitlines()
+    assert argv == [
+        "--profile",
+        "headless",
+        "--patch",
+        os.environ["TP_DSH_PATCH"],
+        query,
+    ]
+
+
+def test_dsh_implement_uses_workspace_write_backend(
+    repo: Path, tmp_path: Path
+) -> None:
+    # Writable modes are intentionally not run on protected main.
+    git(repo, "switch", "-c", "feature/test-dsh-backend")
+
+    argv_log = tmp_path / "dsh-implement-argv.log"
+    permission_log = tmp_path / "dsh-implement-permission.log"
+    query = "Perform the bounded task and finish with DSH_IMPLEMENT_COMPLETE."
+
+    proc = run(
+        repo,
+        {
+            "FAKE_DSH_ARGV_LOG": str(argv_log),
+            "FAKE_DSH_PERMISSION_LOG": str(permission_log),
+            "FAKE_DSH_MARKER": "DSH_IMPLEMENT_COMPLETE",
+        },
+        "--class",
+        "feature",
+        "--mode",
+        "IMPLEMENT",
+        "--agent-backend",
+        "dsh",
+        "--no-review",
+        "--",
+        query,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert meta_value(repo, proc, "agent_backend") == "dsh"
+    assert meta_value(repo, proc, "agent_classification") == "AGENT_COMPLETED"
+    assert permission_log.read_text().strip() == "workspace-write"
+
+    argv = argv_log.read_text().splitlines()
+    assert argv == [
+        "--profile",
+        "headless",
+        "--patch",
+        os.environ["TP_DSH_PATCH"],
+        query,
+    ]

@@ -63,7 +63,7 @@ REPAIRABLE_KINDS = frozenset({PH_VALIDATE, PH_REVIEW})
 
 #: Kind -> canonical Mission 002 execution mode the sub-run uses.
 KIND_TO_MODE = {
-    PH_PLAN: "SMOKE",
+    PH_PLAN: "PLAN",
     PH_IMPLEMENT: "IMPLEMENT",
     PH_VALIDATE: "VERIFY",
     PH_REVIEW: "REVIEW",
