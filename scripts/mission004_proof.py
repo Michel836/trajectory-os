@@ -120,13 +120,36 @@ emit_semantic_success() {
   [[ -n "${TRAJECTORY_SUBRUN_RESULT_FILE:-}" &&
      -n "${TRAJECTORY_SUBRUN_ID:-}" ]] || return 0
 
-  printf '%s%s%s%s%s%s%s\n' \
-    '{"schema_version":1,"subrun_id":"' \
-    "$TRAJECTORY_SUBRUN_ID" \
-    '","status":"SUCCESS","agent_classification":"AGENT_COMPLETED",' \
-    '"readiness":"READY_FOR_COMMIT",' \
-    '"reason":"proof harness semantic success"}' \
-    '' '' > "$TRAJECTORY_SUBRUN_RESULT_FILE"
+  # Mission 008 — produce a real, verifiable exact attestation: create the
+  # wrapper run directory the runner independently re-checks (run id,
+  # workspace, HEAD before) and the exact patch artifact whose digest is
+  # recomputed by the runner.
+  local repo head run_id run_dir patch_sha
+  repo="$(pwd -P)"
+  head="$(git -C "$repo" rev-parse HEAD 2>/dev/null || echo '')"
+  [[ -n "$head" ]] || return 0
+  run_id="run-$TRAJECTORY_SUBRUN_ID"
+  run_dir="$repo/.trajectory-pi/runs/$run_id"
+  mkdir -p "$run_dir" 2>/dev/null || return 0
+  printf 'run_id=%s\nworkspace=%s\nhead_before=%s\n' \
+    "$run_id" "$repo" "$head" > "$run_dir/meta.txt" 2>/dev/null || return 0
+  : > "$run_dir/worktree.patch" 2>/dev/null || return 0
+  patch_sha="$(sha256sum "$run_dir/worktree.patch" | awk '{print $1}')"
+
+  printf '{"schema_version":1,"subrun_id":"%s","status":"SUCCESS",' \
+    "$TRAJECTORY_SUBRUN_ID" > "$TRAJECTORY_SUBRUN_RESULT_FILE"
+  printf '"agent_classification":"AGENT_COMPLETED",' \
+    >> "$TRAJECTORY_SUBRUN_RESULT_FILE"
+  printf '"readiness":"READY_FOR_COMMIT",' \
+    >> "$TRAJECTORY_SUBRUN_RESULT_FILE"
+  printf '"reason":"proof harness semantic success",' \
+    >> "$TRAJECTORY_SUBRUN_RESULT_FILE"
+  printf '"attestation":{"schema_version":1,"subrun_id":"%s",' \
+    "$TRAJECTORY_SUBRUN_ID" >> "$TRAJECTORY_SUBRUN_RESULT_FILE"
+  printf '"run_id":"%s","repo_head_before":"%s",' \
+    "$run_id" "$head" >> "$TRAJECTORY_SUBRUN_RESULT_FILE"
+  printf '"repo_head_after":"%s","patch_sha256":"%s"}}\n' \
+    "$head" "$patch_sha" >> "$TRAJECTORY_SUBRUN_RESULT_FILE"
 }
 
 case "$kind" in

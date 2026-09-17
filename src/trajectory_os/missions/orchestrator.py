@@ -672,6 +672,15 @@ def finalize_subrun(
         record.semantic_readiness = result.semantic_readiness
         record.semantic_reason = result.semantic_reason
 
+    # Mission 008: persist the exact-attestation outcome when the runner
+    # observed one. Deterministic phases and legacy runners never set it, so
+    # their records keep the legacy (attestation-absent) shape.
+    if (result.attestation is not None
+            or result.attestation_error is not None):
+        record.semantic_aware = True
+        record.attestation = result.attestation
+        record.attestation_error = result.attestation_error
+
     store.save_subrun(record, paths)
 
     phase = mission.phase(phase_id)

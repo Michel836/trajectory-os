@@ -86,18 +86,36 @@ def repo(tmp_path: Path) -> tuple[str, str]:
 
 
 def _semantic_success_cmd(label: str) -> tuple[str, ...]:
-    """Deterministic producer satisfying the Mission 007 semantic contract:
+    """Deterministic producer satisfying the Mission 008 contract:
 
-    exits 0 AND emits the EXACT structured result bound to the exact
-    sub-run (via the runner-set contract env vars), status SUCCESS —
-    the same shape the canonical trajectory-pi wrapper emits.
+    exits 0 AND emits the frozen M007 structured result bound to the exact
+    sub-run, PLUS a verifiable exact attestation (the wrapper run directory
+    and exact patch artifact the runner independently re-checks).
     """
     script = (
         'echo "$1"; '
-        'printf '
-        '\'{"schema_version":1,"subrun_id":"%s","status":"SUCCESS",'
-        '"agent_classification":"TEST_PRODUCER","reason":"test"}\' '
-        '"$TRAJECTORY_SUBRUN_ID" > "$TRAJECTORY_SUBRUN_RESULT_FILE"'
+        'if [[ -n "${TRAJECTORY_SUBRUN_RESULT_FILE:-}" '
+        '&& -n "${TRAJECTORY_SUBRUN_ID:-}" ]]; then '
+        '  repo="$(pwd -P)"; '
+        '  head="$(git -C "$repo" rev-parse HEAD 2>/dev/null || echo "")"; '
+        '  if [[ -n "$head" ]]; then '
+        '    run_id="run-$TRAJECTORY_SUBRUN_ID"; '
+        '    rd="$repo/.trajectory-pi/runs/$run_id"; '
+        '    mkdir -p "$rd"; '
+        "    printf 'run_id=%s\\nworkspace=%s\\nhead_before=%s\\n' "
+        '"$run_id" "$repo" "$head" > "$rd/meta.txt"; '
+        '    : > "$rd/worktree.patch"; '
+        '    psha="$(sha256sum "$rd/worktree.patch" | cut -c1-64)"; '
+        '    printf \'{"schema_version":1,"subrun_id":"%s",'
+        '"status":"SUCCESS","agent_classification":"TEST_PRODUCER",'
+        '"reason":"test","attestation":{"schema_version":1,'
+        '"subrun_id":"%s","run_id":"%s","repo_head_before":"%s",'
+        '"repo_head_after":"%s","patch_sha256":"%s"}}\\n\' '
+        '"$TRAJECTORY_SUBRUN_ID" "$TRAJECTORY_SUBRUN_ID" '
+        '"$run_id" "$head" "$head" "$psha" '
+        '> "$TRAJECTORY_SUBRUN_RESULT_FILE"; '
+        '  fi; '
+        'fi'
     )
     return ("bash", "-c", script, "_", label)
 

@@ -926,6 +926,27 @@ emit_semantic_subrun_result() {
     local reason;   reason="$(tp_json_escape "${READINESS_REASON:-}")";   reason="${reason:0:512}"
     local agent_cl; agent_cl="$(tp_json_escape "${CLASSIFICATION:-UNKNOWN}")"; agent_cl="${agent_cl:0:512}"
     local readiness; readiness="$(tp_json_escape "${READINESS:-UNKNOWN}")"; readiness="${readiness:0:512}"
+    # Mission 008 — exact execution attestation.
+    # Bind the semantic result to the exact wrapper execution identity
+    # (run_id), the exact repository HEAD before/after, and the exact patch
+    # byte digest. Self-gating: the block is included ONLY when every value
+    # is non-empty — a partial attestation is never emitted (absence is the
+    # fail-closed signal the consumer already handles). Non-fatal semantics
+    # are preserved (mktemp + atomic mv, exit code untouched).
+    local att_run="${STAMP:-}"
+    local att_head_before="${HEAD_BEFORE:-}"
+    local att_head_after="${HEAD_AFTER:-}"
+    local att_patch="${SNAPSHOT_PATCH_SHA:-}"
+    local attestation=""
+    if [[ -n "$att_run" && -n "$att_head_before" && -n "$att_head_after" \
+          && -n "$att_patch" ]]; then
+        attestation="$(printf ', "attestation":{"schema_version":1,"subrun_id":"%s","run_id":"%s","repo_head_before":"%s","repo_head_after":"%s","patch_sha256":"%s"}' \
+            "$(tp_json_escape "$subrun_id")" \
+            "$(tp_json_escape "$att_run")" \
+            "$(tp_json_escape "$att_head_before")" \
+            "$(tp_json_escape "$att_head_after")" \
+            "$(tp_json_escape "$att_patch")")"
+    fi
     local tmp
     tmp="$(mktemp "${result_file}.tmp.XXXXXX" 2>/dev/null)" || return 0
     if ! {
@@ -936,6 +957,7 @@ emit_semantic_subrun_result() {
         printf ' "agent_classification":"%s",' "$agent_cl"
         printf ' "readiness":"%s",'   "$readiness"
         printf ' "reason":"%s"'       "$reason"
+        printf '%s' "$attestation"
         printf '}\n'
     } > "$tmp" 2>/dev/null; then
         rm -f -- "$tmp" 2>/dev/null

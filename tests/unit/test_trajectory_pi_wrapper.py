@@ -1512,6 +1512,34 @@ def test_wrapper_semantic_emission_is_opt_in(tp: TPContext) -> None:
     assert not stray.exists()
 
 
+def test_wrapper_emits_versioned_exact_attestation(tp: TPContext) -> None:
+    """Mission 008: the producer binds SUCCESS to its exact run + repo."""
+    tp.scenario(rc=0, output=f"Handoff\nRESULT: done\n{_M007_MARKER}\n")
+    env, f = _m007_env(tp, "sem-attested.json")
+
+    result = tp.run(*SMOKE_ARGS, "--", "Build the feature.", extra_env=env)
+    assert result.returncode == 0
+    doc = _m007_doc(f)
+    assert doc["status"] == "SUCCESS"
+    att = doc["attestation"]
+    assert att["schema_version"] == 1
+    assert att["subrun_id"] == "m007-plan-a1"
+    assert len(att["repo_head_before"]) == 40
+    assert att["repo_head_before"] == att["repo_head_after"]
+
+    run_dir = tp.work / ".trajectory-pi" / "runs" / att["run_id"]
+    assert run_dir.is_dir()
+    meta = dict(
+        line.split("=", 1)
+        for line in (run_dir / "meta.txt").read_text().splitlines()
+        if "=" in line
+    )
+    assert meta["run_id"] == att["run_id"]
+    assert meta["head_before"] == att["repo_head_before"]
+    patch_sha = (run_dir / "worktree.patch.sha256").read_text().split()[0]
+    assert patch_sha == att["patch_sha256"]
+
+
 def test_context_exceeded_is_provider_failure(tp: TPContext) -> None:
     tp.scenario(
         rc=1,

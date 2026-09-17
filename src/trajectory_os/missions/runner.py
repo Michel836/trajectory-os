@@ -28,6 +28,7 @@ use the scripted :class:`FakeRunner`.  Neither may exceed its bound.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import subprocess
 from dataclasses import dataclass
@@ -74,6 +75,18 @@ class SubrunResult:
     semantic_agent_classification: str | None = None
     semantic_readiness: str | None = None
     semantic_reason: str | None = None
+    # Mission 008 — exact execution attestation outcome.  ``attestation`` is
+    # :data:`semantic.ATTESTATION_VERIFIED` only after the runner has
+    # independently re-derived every identity; otherwise ``None`` and
+    # ``attestation_error`` carries the stable fail-closed code
+    # (``ATTESTATION_MISSING``/``..._MALFORMED``/``..._PARTIAL``/
+    # ``..._MISMATCH``/``..._STALE``/``..._CONTRADICTORY``).
+    attestation: str | None = None
+    attestation_error: str | None = None
+
+    @property
+    def attestation_verified(self) -> bool:
+        return self.attestation == semantic.ATTESTATION_VERIFIED
 
 
 class PhaseRunner(Protocol):
@@ -118,22 +131,31 @@ def classify_subrun(exit_code: int | None,
                     semantic_error: str | None = None,
                     semantic_agent_classification: str | None = None,
                     semantic_readiness: str | None = None,
-                    semantic_reason: str | None = None) -> SubrunResult:
+                    semantic_reason: str | None = None,
+                    attestation: str | None = None,
+                    attestation_error: str | None = None) -> SubrunResult:
     """Deterministic, fail-closed sub-run classification (pure).
 
     * non-zero exit / timeout: the process-evidence classification is
-      authoritative (FAILED / CRASHED); semantic evidence can annotate
-      (``semantic_status`` is preserved for audit) but can NEVER upgrade
+      authoritative (FAILED / CRASHED); semantic + attestation evidence can
+      annotate (the values are preserved for audit) but can NEVER upgrade
       a real process failure into COMPLETED;
     * exit 0: COMPLETED only if valid semantic evidence bound to this
-      exact sub-run says SUCCESS; any missing/malformed/stale/mismatched
-      evidence or non-SUCCESS status classifies fail closed (never
-      COMPLETED).
+      exact sub-run says SUCCESS **and** the exact execution attestation was
+      independently verified (Mission 008). Any missing/malformed/stale/
+      partial/contradictory/mismatched attestation — or a non-SUCCESS
+      status — classifies fail closed (never COMPLETED).
     """
     base = classify_exit(exit_code, timed_out=timed_out)
     if base != model.CR_COMPLETED:
         classification = base
     elif semantic_status is None:
+        classification = model.CR_UNPROVEN
+    elif (semantic_status in semantic.SUCCESS_STATUSES
+          and attestation != semantic.ATTESTATION_VERIFIED):
+        # Attested success is the ONLY route to COMPLETED: an unattested
+        # SUCCESS (legacy M007 record or any attestation rejection) is
+        # explicitly UNPROVEN, never silently promoted.
         classification = model.CR_UNPROVEN
     else:
         classification = _SEMANTIC_TO_CLASSIFICATION[semantic_status]
@@ -146,6 +168,8 @@ def classify_subrun(exit_code: int | None,
         semantic_agent_classification=semantic_agent_classification,
         semantic_readiness=semantic_readiness,
         semantic_reason=semantic_reason,
+        attestation=attestation,
+        attestation_error=attestation_error,
     )
 
 
@@ -192,6 +216,164 @@ def phase_state_for_classification(classification: str) -> str:
     if classification == model.CR_FAILED:
         return model.PS_FAILED
     return model.PS_UNPROVEN  # CRASHED / UNPROVEN: explicit, fail closed
+
+
+# ---------------------------------------------------------------------------
+# Mission 008 — independent attestation verification
+# ---------------------------------------------------------------------------
+# The runner NEVER trusts the producer's claims. It re-derives every identity
+# from sources it can observe itself:
+#   * the exact sub-run id it issued (``request.subrun_id``);
+#   * the wrapper run directory + its ``meta.txt`` (run id, workspace, HEAD);
+#   * a fresh ``git rev-parse HEAD`` in the repository (current HEAD must equal
+#     both attested heads — the wrapper never commits);
+#   * a fresh SHA-256 over the exact ``worktree.patch`` bytes;
+#   * the launch ordering (``meta.txt`` must postdate the runner's own stdout
+#     evidence file created at launch — the clock-free staleness anchor).
+# Any missing artifact, unreadable file, git failure, or disagreement fails
+# closed with a stable code. This function performs I/O by design (it is the
+# runner's job); the pure shape checks live in ``semantic``.
+
+#: Bound for the read-only ``git rev-parse HEAD`` used for verification.
+_GIT_PROBE_TIMEOUT_S = 10.0
+
+
+def _git_head(repo_root: str) -> str | None:
+    """Read-only, bounded ``git rev-parse HEAD`` (fail closed -> None)."""
+    path_env = os.environ.get("PATH") or "/usr/local/bin:/usr/bin:/bin"
+    try:
+        proc = subprocess.run(  # noqa: S603 (fixed argv, read-only)
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo_root,
+            env={"GIT_OPTIONAL_LOCKS": "0", "PATH": path_env},
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=_GIT_PROBE_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    head = proc.stdout.decode("ascii", errors="replace").strip()
+    return head if head else None
+
+
+def _sha256_file(path: Path) -> str | None:
+    """SHA-256 of the exact file bytes (fail closed -> None)."""
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(65536), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _read_kv_file(path: Path) -> dict[str, str]:
+    """Parse a wrapper ``key=value`` evidence file (bounded, fail closed)."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key:
+            values[key] = value.strip()
+    return values
+
+
+def verify_attestation(doc: Any,
+                       request: SubrunRequest) -> tuple[bool, str | None]:
+    """Independently verify a semantic doc's exact execution attestation.
+
+    Returns ``(True, None)`` only when every identity is present, well-formed,
+    and agrees with evidence the runner re-derives itself; otherwise
+    ``(False, code)`` with a stable :mod:`semantic` failure code. Never raises.
+    """
+    att = semantic.extract_attestation(doc)
+    code = semantic.validate_attestation(att)
+    if code is not None:
+        return (False, code)
+    assert isinstance(att, dict)  # guaranteed by validate_attestation
+    try:
+        semantic.validate_attestation_binding(att, request.subrun_id)
+    except semantic.SemanticError:
+        return (False, semantic.ATT_MISMATCH)
+
+    # Top-level M007 binding is authoritative and must agree as well.
+    if not isinstance(doc, dict) or doc.get("subrun_id") != request.subrun_id:
+        return (False, semantic.ATT_MISMATCH)
+
+    run_id = semantic.attestation_field(att, "run_id")
+    head_before = semantic.attestation_field(att, "repo_head_before")
+    head_after = semantic.attestation_field(att, "repo_head_after")
+    patch_sha = semantic.attestation_field(att, "patch_sha256")
+    if None in (run_id, head_before, head_after, patch_sha):
+        return (False, semantic.ATT_PARTIAL)
+    assert run_id is not None and head_before is not None
+    assert head_after is not None and patch_sha is not None
+
+    if request.cwd is None:
+        # No repository context means no independent anchor: fail closed.
+        return (False, semantic.ATT_MISMATCH)
+    try:
+        repo_root = str(Path(request.cwd).resolve())
+    except OSError:
+        return (False, semantic.ATT_MISMATCH)
+    run_dir = Path(repo_root) / ".trajectory-pi" / "runs" / run_id
+    if not run_dir.is_dir():
+        # The attested run did not happen here (or not at all): stale.
+        return (False, semantic.ATT_STALE)
+
+    meta_path = run_dir / "meta.txt"
+    if not meta_path.is_file():
+        return (False, semantic.ATT_STALE)
+
+    # Clock-free staleness anchor: the run's meta.txt must postdate the
+    # runner's own stdout evidence file, which was created at launch. A run
+    # directory left by a previous attempt predates it; equality fails closed.
+    try:
+        meta_mtime = meta_path.stat().st_mtime
+        launch_mtime = Path(request.stdout_file).stat().st_mtime
+    except OSError:
+        return (False, semantic.ATT_STALE)
+    if meta_mtime <= launch_mtime:
+        return (False, semantic.ATT_STALE)
+
+    meta = _read_kv_file(meta_path)
+    if meta.get("run_id") != run_id:
+        return (False, semantic.ATT_MISMATCH)
+    workspace = meta.get("workspace")
+    if workspace is None:
+        return (False, semantic.ATT_MISMATCH)
+    try:
+        if str(Path(workspace).resolve()) != repo_root:
+            return (False, semantic.ATT_MISMATCH)
+    except OSError:
+        return (False, semantic.ATT_MISMATCH)
+    if meta.get("head_before") != head_before:
+        return (False, semantic.ATT_MISMATCH)
+
+    # Independent repository anchor: current HEAD, re-derived by the runner.
+    actual_head = _git_head(request.cwd)
+    if actual_head is None:
+        return (False, semantic.ATT_MISMATCH)
+    if actual_head != head_after or actual_head != head_before:
+        return (False, semantic.ATT_MISMATCH)
+
+    # Exact patch: recompute the digest over the wrapper's exact patch bytes.
+    actual_patch = _sha256_file(run_dir / "worktree.patch")
+    if actual_patch is None or actual_patch != patch_sha:
+        return (False, semantic.ATT_MISMATCH)
+
+    return (True, None)
 
 
 class ProcessPhaseRunner:
@@ -256,6 +438,8 @@ class ProcessPhaseRunner:
         # Read + verify the exact structured result (fail closed: any
         # rejection yields no usable status — never a guess).
         doc, read_error = semantic.read_semantic_file(str(sem_path))
+        attestation: str | None = None
+        attestation_error: str | None = None
         if read_error is not None:
             status: str | None = None
             error: str | None = read_error
@@ -268,6 +452,15 @@ class ProcessPhaseRunner:
                 agent_classification = doc.get("agent_classification")
                 readiness = doc.get("readiness")
                 reason = doc.get("reason")
+                # Mission 008: independently verify the exact execution
+                # attestation. Verification is attempted for every valid
+                # document (so the outcome is recorded even for non-SUCCESS
+                # statuses), but it only gates SUCCESS -> COMPLETED.
+                verified, att_code = verify_attestation(doc, request)
+                if verified:
+                    attestation = semantic.ATTESTATION_VERIFIED
+                else:
+                    attestation_error = att_code
             else:
                 agent_classification = None
                 readiness = None
@@ -280,6 +473,8 @@ class ProcessPhaseRunner:
             semantic_agent_classification=agent_classification,
             semantic_readiness=readiness,
             semantic_reason=reason,
+            attestation=attestation,
+            attestation_error=attestation_error,
         )
 
 

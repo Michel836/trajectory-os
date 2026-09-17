@@ -228,3 +228,188 @@ def read_semantic_file(path: str) -> tuple[dict[str, Any] | None, str | None]:
     except SemanticError as exc:
         return (None, exc.code)
     return (doc, None)
+
+
+# ---------------------------------------------------------------------------
+# Mission 008 — versioned exact execution attestation
+# ---------------------------------------------------------------------------
+# The M007 core contract above stays frozen (schema_version=1). Mission 008
+# adds one OPTIONAL, independently-versioned ``attestation`` object that binds
+# a semantic result to the exact wrapper execution and the exact repository
+# evidence that produced it:
+#
+#     "attestation": {
+#       "schema_version":   1,
+#       "subrun_id":        "<the exact sub-run>",
+#       "run_id":           "<wrapper run identity / run dir name>",
+#       "repo_head_before": "<40-or-64-hex repository HEAD before>",
+#       "repo_head_after":  "<40-or-64-hex repository HEAD after>",
+#       "patch_sha256":     "<64-hex SHA-256 of the exact patch bytes>"
+#     }
+#
+# Only a valid M007 core PLUS a valid, independently-verified attestation can
+# support COMPLETED. A legacy M007 record (no attestation) stays *readable*
+# and its non-SUCCESS statuses keep their meaning, but its SUCCESS can never
+# be silently promoted to attested completion (the runner gates SUCCESS on
+# verification). All checks here are pure (no I/O, no clocks, no guessing).
+
+#: Schema version of the nested attestation object. Independent of the
+#: frozen top-level M007 ``schema_version`` so the legacy core never moves.
+ATTESTATION_SCHEMA_VERSION = 1
+
+#: The single accepted marker for an independently-verified attestation.
+ATTESTATION_VERIFIED = "VERIFIED"
+
+# --- stable fail-closed attestation reason codes -------------------------------
+# One code per failure category the objective requires the runner to reject:
+# missing / malformed / partial / contradictory / mismatched (stale is decided
+# by the runner, which can observe the launch ordering and is therefore not a
+# pure function of the parsed document).
+ATT_MISSING = "ATTESTATION_MISSING"
+ATT_MALFORMED = "ATTESTATION_MALFORMED"
+ATT_PARTIAL = "ATTESTATION_PARTIAL"
+ATT_MISMATCH = "ATTESTATION_MISMATCH"
+ATT_STALE = "ATTESTATION_STALE"
+ATT_CONTRADICTORY = "ATTESTATION_CONTRADICTORY"
+
+ATTESTATION_REASON_CODES = frozenset({
+    ATT_MISSING, ATT_MALFORMED, ATT_PARTIAL, ATT_MISMATCH, ATT_STALE,
+    ATT_CONTRADICTORY,
+})
+
+#: Canonical attestation identity fields mapped to the accepted aliases. The
+#: first alias is canonical; the alternatives keep the contract tolerant of
+#: the equally-explicit ``wrapper_run_id`` / ``head_*`` / ``evidence_sha256``
+#: spellings without inventing values.
+_ATTESTATION_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "subrun_id": ("subrun_id",),
+    "run_id": ("run_id", "wrapper_run_id"),
+    "repo_head_before": ("repo_head_before", "head_before"),
+    "repo_head_after": ("repo_head_after", "head_after"),
+    "patch_sha256": ("patch_sha256", "evidence_sha256"),
+}
+
+#: Flat set of every accepted attestation key (nesting-agnostic detection).
+#: ``subrun_id`` is deliberately excluded: the frozen M007 core always
+#: carries it, so it cannot be used to detect a top-level attestation.
+_ATTESTATION_MARKER_KEYS = frozenset(
+    alias
+    for field, aliases in _ATTESTATION_FIELD_ALIASES.items()
+    if field != "subrun_id"
+    for alias in aliases
+)
+
+#: Fields that MUST be present for an attestation to be usable (the sub-run
+#: identity is also bound at the top level, so it is required separately).
+ATTESTATION_REQUIRED_FIELDS = (
+    "run_id", "repo_head_before", "repo_head_after", "patch_sha256",
+)
+
+
+def _is_lower_hex(value: str, length: int) -> bool:
+    """True only for an exactly-``length`` lowercase hex digest string (pure)."""
+    return len(value) == length and all(c in "0123456789abcdef" for c in value)
+
+
+def extract_attestation(doc: Any) -> Any | None:
+    """Return the attestation mapping carried by ``doc`` (or ``None``).
+
+    Prefers the canonical nested ``attestation`` object; falls back to the
+    top-level document only when it carries attestation marker keys (so a
+    flat-shaped producer is still readable). A missing attestation yields
+    ``None`` — the caller maps that to :data:`ATT_MISSING`.
+    """
+    if not isinstance(doc, dict):
+        return None
+    nested = doc.get("attestation")
+    if nested is not None:
+        return nested
+    if any(key in doc for key in _ATTESTATION_MARKER_KEYS):
+        return doc
+    return None
+
+
+def attestation_field(att: dict[str, Any], field: str) -> str | None:
+    """Resolve a canonical attestation field through its accepted aliases."""
+    for alias in _ATTESTATION_FIELD_ALIASES[field]:
+        if alias in att:
+            value = att[alias]
+            return value if isinstance(value, str) else None
+    return None
+
+
+def validate_attestation(att: Any) -> str | None:
+    """Pure, fail-closed validation of an attestation object.
+
+    Returns ``None`` when ``att`` is a complete, well-formed, internally
+    consistent attestation; otherwise a stable reason code (never raises and
+    never guesses a value):
+
+    * ``None``                             -> absent (``ATT_MISSING``);
+    * non-object / bad version / wrong type / oversized / bad hex
+      -> ``ATT_MALFORMED``;
+    * a required field absent or blank      -> ``ATT_PARTIAL``;
+    * ``repo_head_before != repo_head_after`` (the wrapper never moves HEAD)
+      -> ``ATT_CONTRADICTORY``.
+    """
+    if att is None:
+        return ATT_MISSING
+    if not isinstance(att, dict):
+        return ATT_MALFORMED
+
+    version = att.get("schema_version")
+    if not (isinstance(version, int) and not isinstance(version, bool)
+            and version == ATTESTATION_SCHEMA_VERSION):
+        return ATT_MALFORMED
+
+    values: dict[str, str] = {}
+    for field in ATTESTATION_REQUIRED_FIELDS:
+        raw = att.get(field)
+        if raw is None:
+            # resolve aliases before declaring the field partial
+            for alias in _ATTESTATION_FIELD_ALIASES[field]:
+                if alias in att:
+                    raw = att[alias]
+                    break
+        if raw is None:
+            return ATT_PARTIAL
+        if not isinstance(raw, str) or not 1 <= len(raw) <= _MAX_STR_LEN:
+            return ATT_MALFORMED
+        if not raw.strip():
+            return ATT_PARTIAL
+        values[field] = raw
+
+    for field in ("repo_head_before", "repo_head_after"):
+        if not (_is_lower_hex(values[field], 40)
+                or _is_lower_hex(values[field], 64)):
+            return ATT_MALFORMED
+    if not _is_lower_hex(values["patch_sha256"], 64):
+        return ATT_MALFORMED
+    if values["repo_head_before"] != values["repo_head_after"]:
+        return ATT_CONTRADICTORY
+    return None
+
+
+def validate_attestation_binding(att: Any, expected_subrun_id: str) -> None:
+    """Verify an attestation's own ``subrun_id`` (when present) matches.
+
+    Pure and fail-closed: a mismatched, malformed, or absent expected id is
+    never tolerated. The attestation-level ``subrun_id`` is optional (the
+    top-level M007 binding is authoritative), but when present it MUST agree
+    with the expected sub-run.
+    """
+    if not isinstance(expected_subrun_id, str) or not expected_subrun_id:
+        raise SemanticError("EXPECTED_SUBRUN_INVALID",
+                            f"expected_subrun_id={expected_subrun_id!r}")
+    if not isinstance(att, dict):
+        raise SemanticError(ATT_MALFORMED, "attestation is not an object")
+    actual = att.get("subrun_id")
+    if actual is None:
+        return
+    if not (isinstance(actual, str) and 1 <= len(actual) <= _MAX_STR_LEN):
+        raise SemanticError("FIELD_INVALID", f"attestation.subrun_id={actual!r}")
+    if actual != expected_subrun_id:
+        raise SemanticError(
+            ATT_MISMATCH,
+            f"attestation is bound to sub-run {actual!r}, "
+            f"expected {expected_subrun_id!r}")
