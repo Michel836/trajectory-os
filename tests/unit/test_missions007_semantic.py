@@ -35,12 +35,65 @@ _WRONG_BIND_PRODUCER = (
     '> "$TRAJECTORY_SUBRUN_RESULT_FILE"'
 )
 
+#: Mission 008 — a real producer that emits the frozen M007 core PLUS a
+#: fully verifiable exact attestation, creating the wrapper run directory
+#: and patch artifact the runner independently re-derives.
+_V2_PRODUCER = r'''
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+status = sys.argv[1]
+repo = Path(os.getcwd()).resolve()
+head = subprocess.run(
+    ["git", "-C", str(repo), "rev-parse", "HEAD"],
+    capture_output=True, text=True, check=True).stdout.strip()
+run_id = "run-" + os.environ["TRAJECTORY_SUBRUN_ID"]
+run_dir = repo / ".trajectory-pi" / "runs" / run_id
+run_dir.mkdir(parents=True, exist_ok=True)
+(run_dir / "meta.txt").write_text(
+    "run_id=" + run_id + "\n"
+    "workspace=" + str(repo) + "\n"
+    "head_before=" + head + "\n",
+    encoding="utf-8")
+patch = b""
+(run_dir / "worktree.patch").write_bytes(patch)
+patch_sha = hashlib.sha256(patch).hexdigest()
+doc = {
+    "schema_version": 1,
+    "subrun_id": os.environ["TRAJECTORY_SUBRUN_ID"],
+    "status": status,
+    "agent_classification": "TEST_PRODUCER",
+    "reason": "test",
+    "attestation": {
+        "schema_version": 1,
+        "subrun_id": os.environ["TRAJECTORY_SUBRUN_ID"],
+        "run_id": run_id,
+        "repo_head_before": head,
+        "repo_head_after": head,
+        "patch_sha256": patch_sha,
+    },
+}
+Path(os.environ["TRAJECTORY_SUBRUN_RESULT_FILE"]).write_text(
+    json.dumps(doc), encoding="utf-8")
+'''
+
+
+def _v2_producer(tmp_path: Path, status: str = "SUCCESS") -> tuple[str, ...]:
+    script = tmp_path / "v2_producer.py"
+    script.write_text(_V2_PRODUCER, encoding="utf-8")
+    return ("python3", str(script), status)
+
 
 def _req(tmp: Path,
          command: tuple[str, ...] | None,
          subrun_id: str = "mr-m007-a1",
          phase_id: str = "plan",
          timeout_s: int = 30,
+         cwd: str | None = None,
          ) -> runner.SubrunRequest:
     base = tmp / "ev"
     return runner.SubrunRequest(
@@ -52,7 +105,7 @@ def _req(tmp: Path,
         round=1,
         attempt=1,
         command=command or (),
-        cwd=None,
+        cwd=cwd,
         timeout_s=timeout_s,
         stdout_file=f"{base}/subrun.stdout.log",
         stderr_file=f"{base}/subrun.stderr.log",
@@ -155,9 +208,18 @@ def test_read_semantic_file_fail_closed(tmp_path: Path):
 
 
 def test_classification_semantic_matrix():
-    # exit 0: semantic evidence decides
-    assert runner.classify_subrun(0, semantic_status="SUCCESS").classification \
+    # exit 0: a VERIFIED exact attestation plus SUCCESS is the only route to
+    # COMPLETED (Mission 008). An unattested SUCCESS is explicitly UNPROVEN.
+    assert runner.classify_subrun(
+        0, semantic_status="SUCCESS",
+        attestation=semantic.ATTESTATION_VERIFIED).classification \
         == model.CR_COMPLETED
+    assert runner.classify_subrun(0, semantic_status="SUCCESS").classification \
+        == model.CR_UNPROVEN
+    assert runner.classify_subrun(
+        0, semantic_status="SUCCESS",
+        attestation_error=semantic.ATT_MISSING).classification \
+        == model.CR_UNPROVEN
     assert runner.classify_subrun(0, semantic_status="INCOMPLETE").classification \
         == model.CR_UNPROVEN
     assert runner.classify_subrun(0, semantic_status="FAILED").classification \
@@ -174,9 +236,12 @@ def test_classification_semantic_matrix():
 
 
 def test_process_failure_is_never_upgraded():
-    r = runner.classify_subrun(3, semantic_status="SUCCESS", semantic_error=None)
+    r = runner.classify_subrun(
+        3, semantic_status="SUCCESS",
+        attestation=semantic.ATTESTATION_VERIFIED)
     assert r.classification == model.CR_FAILED
     assert r.semantic_status == "SUCCESS"  # recorded for audit
+    assert r.attestation == semantic.ATTESTATION_VERIFIED
     r = runner.classify_subrun(143, semantic_status="PROVIDER_FAILURE")
     assert r.classification == model.CR_CRASHED
     r = runner.classify_subrun(None, timed_out=True, semantic_status="SUCCESS")
@@ -192,13 +257,42 @@ def _mk(tmp: Path, **kw) -> runner.SubrunRequest:
     return _req(tmp, **kw)
 
 
+def _git_repo(tmp_path: Path) -> str:
+    import subprocess
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.email=t@t.t",
+         "-c", "user.name=t", "commit", "-q", "--allow-empty",
+         "-m", "baseline"],
+        check=True,
+    )
+    return str(repo)
+
+
 def test_e2e_exit0_success_semantic(tmp_path: Path):
-    req = _mk(tmp_path, command=_bash("SUCCESS"))
+    repo = _git_repo(tmp_path)
+    req = _req(tmp_path, command=_v2_producer(tmp_path), cwd=repo)
     res = runner.ProcessPhaseRunner().run(req)
     assert res.exit_code == 0
     assert res.classification == model.CR_COMPLETED
     assert res.semantic_status == "SUCCESS"
     assert res.semantic_error is None
+    assert res.attestation == semantic.ATTESTATION_VERIFIED
+    assert res.attestation_error is None
+
+
+def test_e2e_unattested_success_is_not_promoted(tmp_path: Path):
+    """A legacy M007 v1 SUCCESS (no attestation) is never COMPLETED."""
+    repo = _git_repo(tmp_path)
+    req = _req(tmp_path, command=_bash("SUCCESS"), cwd=repo)
+    res = runner.ProcessPhaseRunner().run(req)
+    assert res.exit_code == 0
+    assert res.semantic_status == "SUCCESS"
+    assert res.classification == model.CR_UNPROVEN
+    assert res.attestation is None
+    assert res.attestation_error == semantic.ATT_MISSING
 
 
 def test_e2e_exit0_incomplete_semantic(tmp_path: Path):
@@ -333,10 +427,10 @@ def test_semantic_success_is_persisted_and_exposed(tmp_path: Path):
     root = tmp_path / "root"
 
     commands = {
-        model.PH_PLAN: _bash("SUCCESS"),
-        model.PH_IMPLEMENT: _bash("SUCCESS"),
+        model.PH_PLAN: _v2_producer(tmp_path, "SUCCESS"),
+        model.PH_IMPLEMENT: _v2_producer(tmp_path, "SUCCESS"),
         model.PH_VALIDATE: ("true",),
-        model.PH_REVIEW: _bash("SUCCESS"),
+        model.PH_REVIEW: _v2_producer(tmp_path, "SUCCESS"),
         model.PH_CONSOLIDATE: ("true",),
     }
 
@@ -374,11 +468,14 @@ def test_semantic_success_is_persisted_and_exposed(tmp_path: Path):
     assert record.semantic_agent_classification == "TEST_PRODUCER"
     assert record.semantic_readiness is None
     assert record.semantic_reason == "test"
+    assert record.attestation == semantic.ATTESTATION_VERIFIED
+    assert record.attestation_error is None
 
     persisted = record.to_dict()
     assert persisted["semantic_status"] == "SUCCESS"
     assert persisted["semantic_agent_classification"] == "TEST_PRODUCER"
     assert persisted["semantic_reason"] == "test"
+    assert persisted["attestation"] == semantic.ATTESTATION_VERIFIED
 
     evidence = store.load_phase_evidence(paths, "implement")
     last = evidence["last_subrun"]

@@ -333,7 +333,7 @@ def test_v184_final_query_not_baked_into_pi_args() -> None:
     text = source()
 
     start = text.index("PI_ARGS=(")
-    end = text.index("invoke_pi_agent()", start)
+    end = text.index("invoke_agent()", start)
     construction = text[start:end]
 
     assert 'PI_ARGS+=("$FINAL_QUERY")' not in construction
@@ -343,7 +343,7 @@ def test_v184_final_query_not_baked_into_pi_args() -> None:
 def test_v184_each_invocation_receives_pi_final_query() -> None:
     text = source()
 
-    start = text.index("invoke_pi_agent()")
+    start = text.index("invoke_agent()")
     end = text.index("\n}\n", start)
     block = text[start:end]
 
@@ -354,20 +354,20 @@ def test_v184_first_pass_uses_original_query() -> None:
     text = source()
 
     assert 'PI_FINAL_QUERY="$FINAL_QUERY"' in text
-    assert 'invoke_pi_agent "$LOG"' in text
+    assert 'invoke_agent "$LOG"' in text
 
 
 def test_v184_repair_pass_uses_repair_prompt() -> None:
     text = source()
 
     assert 'PI_FINAL_QUERY="$(cat -- "$attempt_dir/prompt.md")"' in text
-    assert 'invoke_pi_agent "$attempt_dir/pi.log"' in text
+    assert 'invoke_agent "$attempt_dir/pi.log"' in text
 
 
 def test_v184_signal_traps_are_installed_per_invocation() -> None:
     text = source()
 
-    start = text.index("invoke_pi_agent()")
+    start = text.index("invoke_agent()")
     end = text.index("\n}\n", start)
     block = text[start:end]
 
@@ -375,7 +375,7 @@ def test_v184_signal_traps_are_installed_per_invocation() -> None:
     assert "trap 'handle_signal TERM' TERM" in block
 
     # Traps are intentionally reset after waits and are therefore restored
-    # by the next invoke_pi_agent call.
+    # by the next invoke_agent call.
     assert text.count("trap - INT TERM") >= 2
 
 

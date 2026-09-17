@@ -64,6 +64,7 @@ class AdapterError(Exception):
 #: workload profile the wrapper expects (both must be consistent).
 MODE_TO_CLASS: dict[str, str] = {
     "SMOKE": "smoke",
+    "PLAN": "smoke",
     "IMPLEMENT": "feature",
     "REPAIR": "repair",
     "VERIFY": "smoke",
@@ -274,7 +275,15 @@ def build_canonical_specs(
 
     mission_root = pathlib.Path(root) / "missions" / mission_id
     sequence = [(model.KIND_TO_PHASE_ID[k], k) for k in model.CANONICAL_SEQUENCE]
-    prompts = materialize_phase_prompts(mission_root, mission_id, objective, sequence)
+
+    # REPAIR is created dynamically by the orchestrator and therefore is not
+    # part of the canonical five-phase sequence.  Still materialize its
+    # prompt at mission creation so a later bounded repair has a fresh,
+    # explicit REPAIR context instead of inheriting the IMPLEMENT prompt.
+    prompt_sequence = [*sequence, ("repair", model.PH_REPAIR)]
+    prompts = materialize_phase_prompts(
+        mission_root, mission_id, objective, prompt_sequence
+    )
 
     gpu_resources: dict[str, object] | None = (
         {"gpu": True, "gpu_mem_bytes": gpu_mem_bytes} if gpu else None

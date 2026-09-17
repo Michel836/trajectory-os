@@ -36,7 +36,8 @@ class TestClassification:
             ad.phase_class("nope")
 
     def test_modes_and_classes_are_canonical(self) -> None:
-        assert ad.phase_mode(m.PH_PLAN) == "SMOKE"
+        assert ad.phase_mode(m.PH_PLAN) == "PLAN"
+        assert ad.phase_class(m.PH_PLAN) == "smoke"
         assert ad.phase_mode(m.PH_IMPLEMENT) == "IMPLEMENT"
         assert ad.phase_mode(m.PH_VALIDATE) == "VERIFY"
         assert ad.phase_mode(m.PH_REVIEW) == "REVIEW"
@@ -290,3 +291,20 @@ class TestSplitCommand:
     def test_oversized_part(self) -> None:
         with pytest.raises(ad.AdapterError):
             ad.split_command("ok " + "y" * (m.MAX_COMMAND_PART_LEN + 1))
+
+def test_canonical_specs_materialize_repair_prompt(tmp_path: Path) -> None:
+    ad.build_canonical_specs(
+        root=str(tmp_path),
+        mission_id="mi",
+        objective="obj",
+        pi_wrapper="pi",
+        model_name="big",
+    )
+
+    repair_prompt = tmp_path / "missions" / "mi" / "prompts" / "repair.txt"
+    assert repair_prompt.is_file()
+
+    text = repair_prompt.read_text(encoding="utf-8")
+    assert "kind      : REPAIR" in text
+    assert "mode      : REPAIR" in text
+    assert "[phase:REPAIR]" in text

@@ -86,18 +86,36 @@ def repo(tmp_path: Path) -> tuple[str, str]:
 
 
 def _semantic_success_cmd(label: str) -> tuple[str, ...]:
-    """Deterministic producer satisfying the Mission 007 semantic contract:
+    """Deterministic producer satisfying the Mission 008 contract:
 
-    exits 0 AND emits the EXACT structured result bound to the exact
-    sub-run (via the runner-set contract env vars), status SUCCESS —
-    the same shape the canonical trajectory-pi wrapper emits.
+    exits 0 AND emits the frozen M007 structured result bound to the exact
+    sub-run, PLUS a verifiable exact attestation (the wrapper run directory
+    and exact patch artifact the runner independently re-checks).
     """
     script = (
         'echo "$1"; '
-        'printf '
-        '\'{"schema_version":1,"subrun_id":"%s","status":"SUCCESS",'
-        '"agent_classification":"TEST_PRODUCER","reason":"test"}\' '
-        '"$TRAJECTORY_SUBRUN_ID" > "$TRAJECTORY_SUBRUN_RESULT_FILE"'
+        'if [[ -n "${TRAJECTORY_SUBRUN_RESULT_FILE:-}" '
+        '&& -n "${TRAJECTORY_SUBRUN_ID:-}" ]]; then '
+        '  repo="$(pwd -P)"; '
+        '  head="$(git -C "$repo" rev-parse HEAD 2>/dev/null || echo "")"; '
+        '  if [[ -n "$head" ]]; then '
+        '    run_id="run-$TRAJECTORY_SUBRUN_ID"; '
+        '    rd="$repo/.trajectory-pi/runs/$run_id"; '
+        '    mkdir -p "$rd"; '
+        "    printf 'run_id=%s\\nworkspace=%s\\nhead_before=%s\\n' "
+        '"$run_id" "$repo" "$head" > "$rd/meta.txt"; '
+        '    : > "$rd/worktree.patch"; '
+        '    psha="$(sha256sum "$rd/worktree.patch" | cut -c1-64)"; '
+        '    printf \'{"schema_version":1,"subrun_id":"%s",'
+        '"status":"SUCCESS","agent_classification":"TEST_PRODUCER",'
+        '"reason":"test","attestation":{"schema_version":1,'
+        '"subrun_id":"%s","run_id":"%s","repo_head_before":"%s",'
+        '"repo_head_after":"%s","patch_sha256":"%s"}}\\n\' '
+        '"$TRAJECTORY_SUBRUN_ID" "$TRAJECTORY_SUBRUN_ID" '
+        '"$run_id" "$head" "$head" "$psha" '
+        '> "$TRAJECTORY_SUBRUN_RESULT_FILE"; '
+        '  fi; '
+        'fi'
     )
     return ("bash", "-c", script, "_", label)
 
@@ -699,3 +717,84 @@ def test_unknown_mission_id_is_a_lookup_error(
     create_mission(str(tmp_path), build_config(tmp_path, repo_path, head))
     with pytest.raises(store.MissionNotFound):
         store.load_mission(str(tmp_path), "nope")
+
+def test_dynamic_repair_uses_canonical_repair_command_and_gpu_resources(
+        tmp_path: Path, repo: tuple[str, str]) -> None:
+    repo_path, head = repo
+
+    from trajectory_os.missions import adapter
+
+    specs = adapter.build_canonical_specs(
+        root=str(tmp_path),
+        mission_id=MID,
+        objective="repair contract test",
+        pi_wrapper="scripts/trajectory-pi",
+        model_name="test-model",
+        gpu=True,
+        gpu_mem_bytes=123456,
+    )
+
+    cfg = MissionConfig(
+        mission_id=MID,
+        objective="repair contract test",
+        repo_root=repo_path,
+        cwd=repo_path,
+        baseline_revision=head,
+        phase_specs=specs,
+        repair_budget=1,
+    )
+
+    create_mission(str(tmp_path), cfg)
+
+    run_mission(
+        str(tmp_path),
+        MID,
+        ScriptedRunner({"validate": [1, 0]}),
+    )
+
+    doc = load(tmp_path)
+    repair = doc.phase("repair.1")
+
+    assert repair.kind == model.PH_REPAIR
+    assert repair.mode == "REPAIR"
+    assert repair.resources == {
+        "gpu": True,
+        "gpu_mem_bytes": 123456,
+    }
+
+    cmd = list(repair.command)
+
+    assert "--require-changes" not in cmd
+    assert cmd[cmd.index("--class") + 1] == "repair"
+    assert cmd[cmd.index("--mode") + 1] == "REPAIR"
+    assert cmd[cmd.index("--model") + 1] == "test-model"
+
+    prompt = cmd[cmd.index("--prompt-file") + 1]
+    assert prompt.endswith("/prompts/repair.txt")
+
+    sep = cmd.index("--")
+    assert cmd[sep + 1].startswith("TrajectoryOS repair.1:")
+
+
+def test_dynamic_repair_preserves_legacy_custom_implement_fallback(
+        tmp_path: Path, repo: tuple[str, str]) -> None:
+    repo_path, head = repo
+
+    cfg = build_config(tmp_path, repo_path, head)
+
+    create_mission(str(tmp_path), cfg)
+
+    run_mission(
+        str(tmp_path),
+        MID,
+        ScriptedRunner({"validate": [1, 0]}),
+    )
+
+    doc = load(tmp_path)
+    repair = doc.phase("repair.1")
+
+    # Historical/custom mission configurations remain readable and retain
+    # their existing fallback command semantics.
+    implement = doc.phase("implement")
+    if "--mode" not in implement.command:
+        assert repair.command == implement.command

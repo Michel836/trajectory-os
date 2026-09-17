@@ -672,6 +672,15 @@ def finalize_subrun(
         record.semantic_readiness = result.semantic_readiness
         record.semantic_reason = result.semantic_reason
 
+    # Mission 008: persist the exact-attestation outcome when the runner
+    # observed one. Deterministic phases and legacy runners never set it, so
+    # their records keep the legacy (attestation-absent) shape.
+    if (result.attestation is not None
+            or result.attestation_error is not None):
+        record.semantic_aware = True
+        record.attestation = result.attestation
+        record.attestation_error = result.attestation_error
+
     store.save_subrun(record, paths)
 
     phase = mission.phase(phase_id)
@@ -888,26 +897,109 @@ def run_mission(
     )
 
 
+def _canonical_repair_command(
+        mission: store.MissionDoc,
+        implement: store.PhaseDoc | None,
+        round_no: int,
+        paths: dict[str, Path],
+) -> list[str] | None:
+    """Derive a canonical trajectory-pi REPAIR argv from IMPLEMENT.
+
+    This deliberately recognizes only the canonical wrapper contract.
+    Custom/legacy commands return ``None`` and retain the historical
+    fallback in ``_create_repair_phase``.
+    """
+    if implement is None or not implement.command:
+        return None
+
+    command = list(implement.command)
+
+    def value_after(flag: str) -> str | None:
+        if command.count(flag) != 1:
+            return None
+        idx = command.index(flag)
+        if idx + 1 >= len(command):
+            return None
+        return command[idx + 1]
+
+    if value_after("--mode") != "IMPLEMENT":
+        return None
+    if value_after("--class") != "feature":
+        return None
+
+    model_name = value_after("--model")
+    if not model_name:
+        return None
+
+    if command.count("--") != 1:
+        return None
+
+    repair_prompt = paths["mission"].parent / "prompts" / "repair.txt"
+    if not repair_prompt.is_file():
+        return None
+
+    tail = f"TrajectoryOS repair.{round_no}: {mission.objective}"
+    if len(tail) > model.MAX_COMMAND_PART_LEN:
+        tail = tail[:model.MAX_COMMAND_PART_LEN]
+
+    return [
+        command[0],
+        "--no-notify",
+        "--dirty-ok",
+        "--class", "repair",
+        "--mode", "REPAIR",
+        "--model", model_name,
+        "--prompt-file", str(repair_prompt),
+        "--", tail,
+    ]
+
+
 def _create_repair_phase(mission: store.MissionDoc,
                          round_no: int,
                          paths: dict[str, Path]) -> None:
     pid = f"{model.REPAIR_PHASE_ID_PREFIX}{round_no}"
     if any(p.phase_id == pid for p in mission.phases):
         return
-    # Command precedence: an explicit REPAIR phase command, else the
-    # IMPLEMENT phase command, else the last failed repairable phase.
+    # Command precedence:
+    #   1. an already-proven explicit/dynamic REPAIR command;
+    #   2. a canonical REPAIR command derived from canonical IMPLEMENT;
+    #   3. historical IMPLEMENT/repairable-command fallback for legacy or
+    #      custom mission configurations.
     command: list[str] = []
+    resources: dict[str, object] | None = None
+
     repair_specs = [p for p in mission.phases if p.kind == model.PH_REPAIR]
     if repair_specs and repair_specs[0].command:
         command = list(repair_specs[0].command)
-    implement = next((p for p in mission.phases if p.kind == model.PH_IMPLEMENT
-                      and p.command), None)
+        if repair_specs[0].resources is not None:
+            resources = dict(repair_specs[0].resources)
+
+    implement = next(
+        (p for p in mission.phases
+         if p.kind == model.PH_IMPLEMENT and p.command),
+        None,
+    )
+
+    if not command:
+        derived = _canonical_repair_command(
+            mission, implement, round_no, paths
+        )
+        if derived is not None:
+            command = derived
+            if implement is not None and implement.resources is not None:
+                resources = dict(implement.resources)
+
     if not command and implement is not None:
         command = list(implement.command)
+        if implement.resources is not None:
+            resources = dict(implement.resources)
+
     if not command:
         for p in mission.phases:
             if p.kind in model.REPAIRABLE_KINDS and p.command:
                 command = list(p.command)
+                if p.resources is not None:
+                    resources = dict(p.resources)
                 break
     if not command:
         raise MissionGuardBlocked(
@@ -922,7 +1014,7 @@ def _create_repair_phase(mission: store.MissionDoc,
         round=round_no,
         depends_on=[],
         command=command,
-        resources=None,
+        resources=resources,
         attempt=0,
         max_attempts=1,
         repairs_at_attempt=mission.repairs_used,

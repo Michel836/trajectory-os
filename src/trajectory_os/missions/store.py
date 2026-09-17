@@ -231,6 +231,9 @@ _SUBRUN_KEYS = (
     # persist the complete bounded outcome/provenance shape explicitly.
     "semantic_status", "semantic_error",
     "semantic_agent_classification", "semantic_readiness", "semantic_reason",
+    # Mission 008. Optional exact-attestation outcome; absent on legacy M007
+    # records (readable as-is, never silently promoted).
+    "attestation", "attestation_error",
 )
 
 
@@ -269,6 +272,14 @@ class SubrunDoc:
     semantic_readiness: str | None = None
     semantic_reason: str | None = None
     semantic_aware: bool = False
+    # --- Mission 008: exact execution attestation outcome (optional) ---
+    # ``attestation``: ``semantic.ATTESTATION_VERIFIED`` when the runner
+    # independently verified every identity, else ``None``.
+    # ``attestation_error``: the stable fail-closed code recorded for an
+    # unattested/rejected attestation, else ``None``. Both are absent on
+    # legacy M007 records, which stay readable without silent promotion.
+    attestation: str | None = None
+    attestation_error: str | None = None
 
     @property
     def provider_failure(self) -> bool:
@@ -307,6 +318,11 @@ class SubrunDoc:
                 self.semantic_agent_classification)
             doc["semantic_readiness"] = self.semantic_readiness
             doc["semantic_reason"] = self.semantic_reason
+        if self.attestation is not None or self.attestation_error is not None:
+            # Mission 008: written only when an attestation outcome exists;
+            # legacy M007 records keep their exact old shape (no key).
+            doc["attestation"] = self.attestation
+            doc["attestation_error"] = self.attestation_error
         return doc
 
     @staticmethod
@@ -336,6 +352,21 @@ class SubrunDoc:
             "semantic_reason",
         }
         present_semantic_keys = semantic_keys.intersection(doc)
+        attestation: str | None = None
+        attestation_error: str | None = None
+        attestation_keys = {"attestation", "attestation_error"}
+        present_attestation_keys = attestation_keys.intersection(doc)
+        if (present_attestation_keys
+                and present_attestation_keys != attestation_keys):
+            raise MalformedMissionError(
+                model.R_MALFORMED_STATE,
+                path,
+                "partial attestation evidence shape")
+        if present_attestation_keys and not present_semantic_keys:
+            raise MalformedMissionError(
+                model.R_MALFORMED_STATE,
+                path,
+                "attestation evidence without semantic evidence")
         if present_semantic_keys:
             if present_semantic_keys != semantic_keys:
                 raise MalformedMissionError(
@@ -376,15 +407,44 @@ class SubrunDoc:
                         model.R_MALFORMED_STATE,
                         path,
                         f"{field_name} invalid")
+            # Mission 008: optional exact-attestation outcome. Readable only
+            # as a complete pair; absent on legacy M007 records (backward
+            # readable, never silently promoted).
+            if present_attestation_keys:
+                attestation = doc.get("attestation")
+                attestation_error = doc.get("attestation_error")
+                if attestation is not None:
+                    _chk(
+                        attestation == semantic.ATTESTATION_VERIFIED,
+                        model.R_MALFORMED_STATE, path,
+                        f"attestation={attestation!r}")
+                if attestation_error is not None:
+                    _chk(
+                        isinstance(attestation_error, str)
+                        and attestation_error in semantic.ATTESTATION_REASON_CODES,
+                        model.R_MALFORMED_STATE, path,
+                        f"attestation_error={attestation_error!r}")
             # Fail closed: an aware record may only claim COMPLETED when its
             # persisted evidence is exactly SUCCESS. Missing, contradictory,
             # malformed, or absent evidence never reads as a proven pass.
-            if (doc["classification"] == model.CR_COMPLETED
-                    and semantic_status != semantic.STATUS_SUCCESS):
-                raise MalformedMissionError(
-                    model.R_CONTRADICTION, path,
-                    "COMPLETED requires SUCCESS semantic evidence "
-                    rf"(persisted status={semantic_status!r})")
+            if doc["classification"] == model.CR_COMPLETED:
+                if present_attestation_keys:
+                    # Mission 008 records must carry independently-verified
+                    # exact attestation; an unattested COMPLETED is a
+                    # contradiction, never a silent promotion.
+                    if (semantic_status != semantic.STATUS_SUCCESS
+                            or attestation
+                            != semantic.ATTESTATION_VERIFIED):
+                        raise MalformedMissionError(
+                            model.R_CONTRADICTION, path,
+                            "COMPLETED requires verified exact attestation "
+                            rf"(status={semantic_status!r}, "
+                            rf"attestation={attestation!r})")
+                elif semantic_status != semantic.STATUS_SUCCESS:
+                    raise MalformedMissionError(
+                        model.R_CONTRADICTION, path,
+                        "COMPLETED requires SUCCESS semantic evidence "
+                        rf"(persisted status={semantic_status!r})")
         return SubrunDoc(
             subrun_id=_str(doc["subrun_id"], path, "subrun_id"),
             phase_id=_str(doc["phase_id"], path, "phase_id"),
@@ -407,6 +467,8 @@ class SubrunDoc:
             semantic_readiness=semantic_readiness,
             semantic_reason=semantic_reason,
             semantic_aware=aware,
+            attestation=attestation,
+            attestation_error=attestation_error,
         )
 
 
