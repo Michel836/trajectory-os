@@ -865,8 +865,9 @@ semantic_status_for_classification() {
     case "${1-}" in
         AGENT_COMPLETED)                 base="SUCCESS" ;;
         INCOMPLETE_AGENT_RUN)            base="INCOMPLETE" ;;
-        UPSTREAM_PROVIDER_MISSING_QUERY) base="PROVIDER_FAILURE" ;;
-        AGENT_FAILED)                    base="FAILED" ;;
+        UPSTREAM_PROVIDER_MISSING_QUERY)    base="PROVIDER_FAILURE" ;;
+        UPSTREAM_PROVIDER_CONTEXT_EXCEEDED) base="PROVIDER_FAILURE" ;;
+        AGENT_FAILED)                       base="FAILED" ;;
         *)                               base="UNKNOWN" ;;
     esac
     # PLAN: AGENT_COMPLETED maps to SUCCESS only when all three
@@ -2823,6 +2824,11 @@ if grep -qF "no user query found in messages" "$LOG" 2>/dev/null; then
     PROVIDER_MISSING_QUERY=1
 fi
 
+PROVIDER_CONTEXT_EXCEEDED=0
+if grep -qF "Context size has been exceeded." "$LOG" 2>/dev/null; then
+    PROVIDER_CONTEXT_EXCEEDED=1
+fi
+
 CURRENT_STATUS_AFTER="$(status_fingerprint)"
 AGENT_CHANGED_AFTER="$(count_added_since_baseline "$CURRENT_STATUS_AFTER")"
 # PLAN: deterministic worktree identity — exact fingerprint equality.
@@ -2849,6 +2855,8 @@ if (( READ_ONLY_MODE == 1 )); then
     fi
 elif [[ "$PI_RC" -ne 0 && "$PROVIDER_MISSING_QUERY" -eq 1 ]]; then
     CLASSIFICATION="UPSTREAM_PROVIDER_MISSING_QUERY"
+elif [[ "$PI_RC" -ne 0 && "$PROVIDER_CONTEXT_EXCEEDED" -eq 1 ]]; then
+    CLASSIFICATION="UPSTREAM_PROVIDER_CONTEXT_EXCEEDED"
 elif [[ "$PI_RC" -eq 0 ]]; then
     if completion_evidence_present "$LOG"; then
         CLASSIFICATION="AGENT_COMPLETED"
@@ -3198,9 +3206,19 @@ if (( REPAIR_ATTEMPTS > 0 )) && [[ "$READINESS" == "NEEDS_REVIEW" && -z "$FORWAR
         AGENT_CHANGED_AFTER="$(count_added_since_baseline "$CURRENT_STATUS_AFTER")"
 
         PMQ=0
-        if grep -qF "no user query found in messages" -e "$LOG" 2>/dev/null; then PMQ=1; fi
+        if grep -qF "no user query found in messages" "$LOG" 2>/dev/null; then
+            PMQ=1
+        fi
+
+        PCX=0
+        if grep -qF "Context size has been exceeded." "$LOG" 2>/dev/null; then
+            PCX=1
+        fi
+
         if [[ "$PI_RC" -ne 0 && "$PMQ" -eq 1 ]]; then
             CLASSIFICATION="UPSTREAM_PROVIDER_MISSING_QUERY"
+        elif [[ "$PI_RC" -ne 0 && "$PCX" -eq 1 ]]; then
+            CLASSIFICATION="UPSTREAM_PROVIDER_CONTEXT_EXCEEDED"
         elif [[ "$PI_RC" -eq 0 ]]; then
             if completion_evidence_present "$LOG"; then
                 CLASSIFICATION="AGENT_COMPLETED"
@@ -3364,6 +3382,14 @@ if [[ "$SNOT" == "COMPLETE" ]]; then
     # Human-friendly stat of the SAME snapshot (untracked included).
     echo "===== SNAPSHOT DIFF STAT ====="
     cat "$RUN_DIR/worktree-stat.txt"
+fi
+
+if [[ "$CLASSIFICATION" == "UPSTREAM_PROVIDER_CONTEXT_EXCEEDED" ]]; then
+    echo
+    echo "UPSTREAM PROVIDER CONTEXT-SIZE FAILURE"
+    echo "The agent/provider aborted because the configured context window was exceeded."
+    echo "All agent worktree changes have been PRESERVED as-is."
+    echo "No reset, clean, automatic retry, commit, push, or merge was performed."
 fi
 
 if [[ "$CLASSIFICATION" == "UPSTREAM_PROVIDER_MISSING_QUERY" ]]; then

@@ -1510,3 +1510,44 @@ def test_wrapper_semantic_emission_is_opt_in(tp: TPContext) -> None:
     result = tp.run(*SMOKE_ARGS, "--", "Build the feature.")
     assert result.returncode == 0
     assert not stray.exists()
+
+
+def test_context_exceeded_is_provider_failure(tp: TPContext) -> None:
+    tp.scenario(
+        rc=1,
+        output="dsh: PI_AI_ERROR: Context size has been exceeded.\n",
+    )
+
+    result = tp.run(*SMOKE_ARGS, "--", "Build the feature.")
+
+    assert result.returncode == 1
+    assert "UPSTREAM_PROVIDER_CONTEXT_EXCEEDED" in result.stdout
+    assert "UPSTREAM PROVIDER CONTEXT-SIZE FAILURE" in result.stdout
+    assert (
+        "classification=UPSTREAM_PROVIDER_CONTEXT_EXCEEDED"
+        in tp.latest_meta()
+    )
+
+
+def test_context_exceeded_emits_provider_failure_semantic_result(
+        tp: TPContext) -> None:
+    tp.scenario(
+        rc=1,
+        output="dsh: PI_AI_ERROR: Context size has been exceeded.\n",
+    )
+    env, f = _m007_env(tp, "sem-provider-context.json")
+
+    result = tp.run(
+        *SMOKE_ARGS,
+        "--",
+        "Build the feature.",
+        extra_env=env,
+    )
+
+    assert result.returncode == 1
+    doc = _m007_doc(f)
+    assert doc["status"] == "PROVIDER_FAILURE"
+    assert (
+        doc["agent_classification"]
+        == "UPSTREAM_PROVIDER_CONTEXT_EXCEEDED"
+    )

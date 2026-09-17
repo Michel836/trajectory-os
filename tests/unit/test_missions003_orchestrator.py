@@ -699,3 +699,84 @@ def test_unknown_mission_id_is_a_lookup_error(
     create_mission(str(tmp_path), build_config(tmp_path, repo_path, head))
     with pytest.raises(store.MissionNotFound):
         store.load_mission(str(tmp_path), "nope")
+
+def test_dynamic_repair_uses_canonical_repair_command_and_gpu_resources(
+        tmp_path: Path, repo: tuple[str, str]) -> None:
+    repo_path, head = repo
+
+    from trajectory_os.missions import adapter
+
+    specs = adapter.build_canonical_specs(
+        root=str(tmp_path),
+        mission_id=MID,
+        objective="repair contract test",
+        pi_wrapper="scripts/trajectory-pi",
+        model_name="test-model",
+        gpu=True,
+        gpu_mem_bytes=123456,
+    )
+
+    cfg = MissionConfig(
+        mission_id=MID,
+        objective="repair contract test",
+        repo_root=repo_path,
+        cwd=repo_path,
+        baseline_revision=head,
+        phase_specs=specs,
+        repair_budget=1,
+    )
+
+    create_mission(str(tmp_path), cfg)
+
+    run_mission(
+        str(tmp_path),
+        MID,
+        ScriptedRunner({"validate": [1, 0]}),
+    )
+
+    doc = load(tmp_path)
+    repair = doc.phase("repair.1")
+
+    assert repair.kind == model.PH_REPAIR
+    assert repair.mode == "REPAIR"
+    assert repair.resources == {
+        "gpu": True,
+        "gpu_mem_bytes": 123456,
+    }
+
+    cmd = list(repair.command)
+
+    assert "--require-changes" not in cmd
+    assert cmd[cmd.index("--class") + 1] == "repair"
+    assert cmd[cmd.index("--mode") + 1] == "REPAIR"
+    assert cmd[cmd.index("--model") + 1] == "test-model"
+
+    prompt = cmd[cmd.index("--prompt-file") + 1]
+    assert prompt.endswith("/prompts/repair.txt")
+
+    sep = cmd.index("--")
+    assert cmd[sep + 1].startswith("TrajectoryOS repair.1:")
+
+
+def test_dynamic_repair_preserves_legacy_custom_implement_fallback(
+        tmp_path: Path, repo: tuple[str, str]) -> None:
+    repo_path, head = repo
+
+    cfg = build_config(tmp_path, repo_path, head)
+
+    create_mission(str(tmp_path), cfg)
+
+    run_mission(
+        str(tmp_path),
+        MID,
+        ScriptedRunner({"validate": [1, 0]}),
+    )
+
+    doc = load(tmp_path)
+    repair = doc.phase("repair.1")
+
+    # Historical/custom mission configurations remain readable and retain
+    # their existing fallback command semantics.
+    implement = doc.phase("implement")
+    if "--mode" not in implement.command:
+        assert repair.command == implement.command
