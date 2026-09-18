@@ -1672,3 +1672,72 @@ def test_read_only_failed_maps_to_failed() -> None:
         classification="READ_ONLY_FAILED",
         mode="REVIEW",
     ) == "FAILED"
+
+
+# ---------------------------------------------------------------------------
+# Mission 011 — provider locality / live attribution (real wrapper output)
+# ---------------------------------------------------------------------------
+
+
+def test_live_banner_and_heartbeat_attribution_for_remote_agent(
+        tp: TPContext) -> None:
+    tp.scenario(rc=0, output="Handoff\nTRAJECTORY_PI_TEST_COMPLETE\n")
+    _install_telemetry_fakes(tp, ollama_active=False, journal_body="")
+
+    result = tp.run(*SMOKE_ARGS, "--model", "deepseek-flash",
+                    "--", "remote agent attribution")
+    assert result.returncode == 0, result.stderr
+
+    # Banner: provider locality is explicit, not guessed by the reader.
+    assert "Agent backend  pi" in result.stdout
+    assert "Agent provider deepseek (remote)" in result.stdout
+    assert "Agent model    deepseek-flash" in result.stdout
+    assert "reviewer=ollama/qwen3.6:27b local" in result.stdout
+
+    # Heartbeat: the remote agent is active; the local GPU belongs to the
+    # (idle) local reviewer; generation is remote (not local telemetry).
+    status = _latest_status_log(tp)
+    assert "agent=pi/deepseek:deepseek-flash remote active" in status
+    assert "reviewer=ollama:qwen3.6:27b local idle" in status
+    assert "local-gpu(review)=99% 22800/24576MiB" in status
+    assert "agent-gen=remote/n-a" in status
+
+
+def test_live_heartbeat_attribution_for_local_agent(tp: TPContext) -> None:
+    tp.scenario(rc=0, output="Handoff\nTRAJECTORY_PI_TEST_COMPLETE\n")
+    now = int(subprocess.run(
+        ["date", "+%s"], check=True, capture_output=True, text=True,
+    ).stdout.strip())
+    _install_telemetry_fakes(
+        tp,
+        ollama_active=True,
+        journal_body=(
+            f"{now}.000000 host ollama[1]: "
+            "slot print_timing: id 0 | task 0 | "
+            "n_gen = 346, tg = 38.05 t/s, tg_3s = 36.37 t/s\n"
+        ),
+    )
+
+    result = tp.run(*SMOKE_ARGS, "--", "local agent attribution")
+    assert result.returncode == 0, result.stderr
+
+    status = _latest_status_log(tp)
+    assert "agent=pi/ollama:qwen3.8-dev3090 local active" in status
+    assert "local-gpu(agent)=99% 22800/24576MiB" in status
+    assert "agent-gen=36.37 tok/s" in status
+
+
+def test_live_validation_status_never_describes_the_validator(
+        tp: TPContext) -> None:
+    tp.scenario(rc=0, output="")
+    _install_telemetry_fakes(tp, ollama_active=False, journal_body="")
+
+    result = tp.run("--mode", "verify", "--no-review", "--no-notify",
+                    "--validate", "true", "--", "validate attribution")
+    assert result.returncode == 0, result.stderr
+
+    status = _latest_status_log(tp)
+    assert "phase=VALIDATE" in status
+    # Deterministic validation is not a model: no GPU/gen actor.
+    assert "local-gpu(none)=" in status
+    assert "agent-gen=n/a" in status

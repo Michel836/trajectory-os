@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from trajectory_os.missions import identity, model, semantic, store
+from trajectory_os.missions import gate, identity, model, semantic, store
 from trajectory_os.missions.store import MissionDoc
 
 # --- Mission 009: exact-execution-attestation projection -------------------
@@ -199,6 +199,65 @@ def mission_summary(mission: MissionDoc,
     events = store.load_events(paths)
     reconstruction_events = sum(1 for e in events if e.get("event") == "reconstructed")
     resume_events = sum(1 for e in events if e.get("event") == "resumed")
+
+    # Mission 009: exact-execution-attestation projection over the
+    # model-heavy sub-runs (the only sub-runs that carry an M008
+    # outcome). Counts are derived from the same canonical records.
+    attestation_projection = {
+        "model_heavy_subruns": len(model_heavy_subruns),
+        "verified": sum(
+            1 for sub in model_heavy_subruns
+            if sub["attestation"] == ATT_VERIFIED),
+        "unproven": sum(
+            1 for sub in model_heavy_subruns
+            if sub["attestation"] == ATT_UNPROVEN),
+        "legacy": sum(
+            1 for sub in model_heavy_subruns
+            if sub["attestation"] == ATT_LEGACY),
+    }
+
+    # Mission 010: expose both patch identity domains distinctly. The
+    # two digests are independent and MUST never be compared for
+    # equality; the domain id + authoritative field make that explicit
+    # in operator-visible output.
+    patch_identity_projection = {
+        "wrapper_snapshot": dict(identity.DOMAIN_DESCRIPTORS[0]),
+        "mission_worktree": dict(identity.DOMAIN_DESCRIPTORS[1]),
+    }
+
+    # Exact run/repository/patch identity of the most recent verified
+    # model-heavy sub-run (the M009 bounded identity). ``None`` when no
+    # sub-run is verified yet — never fabricated from a legacy record.
+    latest_attested_identity = next(
+        (sub["attestation_identity"] for sub in reversed(model_heavy_subruns)
+         if sub["attestation"] == ATT_VERIFIED
+         and sub["attestation_identity"] is not None),
+        None,
+    )
+
+    # Mission 011: the reduced-intervention operator gate. Derived purely
+    # from canonical persisted state (+ the two persisted human approval
+    # markers); the supporting evidence and repository identity are the
+    # canonical projections already computed above, so operator output has
+    # one source of truth.
+    operator_gate = gate.gate_view(mission)
+    operator_gate["evidence"] = {
+        "phases_passed": sum(
+            1 for flags in phases if flags["state"] == model.PS_PASSED),
+        "phases_total": len(phases),
+        "phase_states": dict(phase_states),
+        "final_review_state": None if review is None else review["state"],
+        "final_review_reason": None if review is None else review["reason"],
+        "attestation": dict(attestation_projection),
+        "patch_identity": patch_identity_projection,
+        "latest_attested_identity": latest_attested_identity,
+    }
+    operator_gate["repository"] = {
+        "repo_root": mission.repo_root,
+        "cwd": mission.cwd,
+        "baseline_revision": mission.baseline_revision,
+    }
+
     return {
         "schema_version": mission.schema_version,
         "mission_id": mission.mission_id,
@@ -245,25 +304,14 @@ def mission_summary(mission: MissionDoc,
         # two digests are independent and MUST never be compared for
         # equality; the domain id + authoritative field make that explicit
         # in operator-visible output.
-        "patch_identity": {
-            "wrapper_snapshot": dict(identity.DOMAIN_DESCRIPTORS[0]),
-            "mission_worktree": dict(identity.DOMAIN_DESCRIPTORS[1]),
-        },
+        "patch_identity": patch_identity_projection,
         # Mission 009: exact-execution-attestation projection over the
         # model-heavy sub-runs (the only sub-runs that carry an M008
         # outcome). Counts are derived from the same canonical records.
-        "attestation": {
-            "model_heavy_subruns": len(model_heavy_subruns),
-            "verified": sum(
-                1 for sub in model_heavy_subruns
-                if sub["attestation"] == ATT_VERIFIED),
-            "unproven": sum(
-                1 for sub in model_heavy_subruns
-                if sub["attestation"] == ATT_UNPROVEN),
-            "legacy": sum(
-                1 for sub in model_heavy_subruns
-                if sub["attestation"] == ATT_LEGACY),
-        },
+        "attestation": attestation_projection,
+        # Mission 011: current human trust-boundary gate + supporting
+        # evidence + remaining autonomous budget + exact next action.
+        "operator_gate": operator_gate,
         "lifecycle_events": {
             "reconstruction": reconstruction_events,
             "resume": resume_events,
@@ -345,6 +393,25 @@ def render_summary(summary: Mapping[str, Any]) -> str:
                 f"({wrapper['field']}) | mission_worktree="
                 f"{mission_worktree['domain']} ({mission_worktree['field']}) "
                 "[independent domains; never compared]")
+    # Mission 011: the operator gate is the headline reduced-intervention
+    # status (current gate + whether a human is required + exact next act).
+    operator_gate = summary.get("operator_gate")
+    if isinstance(operator_gate, Mapping):
+        lines.append(
+            f"gate      : {operator_gate['gate']} "
+            f"({operator_gate['reason']}) "
+            f"human_action={operator_gate['human_action_required']}")
+        autonomous = operator_gate.get("autonomous_budget")
+        if isinstance(autonomous, Mapping):
+            lines.append(
+                f"budget    : repairs_remaining="
+                f"{autonomous['repairs_remaining']}/"
+                f"{autonomous['repair_budget']} "
+                f"subruns_remaining={autonomous['subruns_remaining']}/"
+                f"{autonomous['subrun_budget']}")
+        action = operator_gate.get("next_human_action")
+        if action:
+            lines.append(f"next      : {action}")
     lines.append(f"human     : interventions={summary['human_interventions']}")
     phases = summary["phases"]
     if isinstance(phases, list):

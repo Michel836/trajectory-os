@@ -212,6 +212,14 @@ Options:
                        and provider come from its settings/patch config;
                        --model and --thinking remain Pi-specific.
   --model MODEL        Pi/Ollama model (default: qwen3.8-dev3090)
+  --agent-provider NAME
+                       provider serving the agent model; sets the
+                       provider/locality shown in the banner and
+                       heartbeat. Auto-inferred from --model when
+                       omitted; remote (deepseek, openai, ...) vs local
+                       (ollama, ...) determines whose resource the local
+                       GPU telemetry describes. TP_AGENT_PROVIDER also
+                       sets the default.
   --thinking LEVEL     default: medium
   --prompt-file FILE   use @FILE plus a short user message
   --interval SEC       heartbeat interval (default: 10)
@@ -309,6 +317,9 @@ RUN_CLASS="feature"
 # RECOVERY SMOKE (resolved after class validation).
 RUN_MODE=""
 AGENT_BACKEND="pi"
+# Mission 011 — optional explicit agent provider (env override). Empty means
+# infer from the model name so provider locality is never guessed silently.
+AGENT_PROVIDER="${TP_AGENT_PROVIDER:-}"
 MODEL="qwen3.8-dev3090"
 THINKING="medium"
 
@@ -361,6 +372,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --agent-backend)
             AGENT_BACKEND="${2:?missing agent backend}"
+            shift 2
+            ;;
+        --agent-provider)
+            AGENT_PROVIDER="${2:?missing agent provider}"
             shift 2
             ;;
         --model)
@@ -456,6 +471,58 @@ case "$AGENT_BACKEND" in
         exit 2
         ;;
 esac
+
+# ------------------------------------------------------------
+# Mission 011 — provider locality for truthful live attribution
+#
+# The display must distinguish the Pi agent framework, the model the
+# agent generates with, and the local Ollama reviewer/GPU.  This mirrors
+# the pure model in src/trajectory_os/live_status.py.  An explicit
+# --agent-provider / TP_AGENT_PROVIDER always wins; otherwise the
+# provider is inferred from the model name prefix.  A remote model
+# (deepseek-flash) must never be attributed to the local GPU.
+# ------------------------------------------------------------
+AGENT_PROVIDER_NAME=""
+AGENT_PROVIDER_LOCALITY=""
+resolve_agent_provider() {
+    local provider="${AGENT_PROVIDER:-}"
+    local model_lc="${MODEL,,}"
+    local prefix="${model_lc%%[-/:@]*}"
+    if [[ -z "$provider" ]]; then
+        if [[ "$AGENT_BACKEND" == "dsh" ]]; then
+            provider="dsh"
+        else
+            case "$prefix" in
+                deepseek|openai|anthropic|google|gemini|groq|mistral|xai|grok|openrouter|together|fireworks|remote|azure|bedrock|vertex|cerebras|perplexity)
+                    provider="$prefix" ;;
+                ollama|llama.cpp|llamacpp|llamafile|local|vllm|lmstudio|lm-studio)
+                    provider="$prefix" ;;
+                *)
+                    if [[ "$model_lc" == *deepseek* ]]; then
+                        provider="deepseek"
+                    else
+                        provider="ollama"
+                    fi
+                    ;;
+            esac
+        fi
+    fi
+    AGENT_PROVIDER_NAME="${provider,,}"
+    case "$AGENT_PROVIDER_NAME" in
+        ollama|llama.cpp|llamacpp|llamafile|local|vllm|lmstudio|lm-studio|text-generation-webui)
+            AGENT_PROVIDER_LOCALITY="local" ;;
+        deepseek|openai|anthropic|google|gemini|groq|mistral|xai|grok|openrouter|together|fireworks|remote|dsh|azure|bedrock|vertex|cerebras|perplexity)
+            AGENT_PROVIDER_LOCALITY="remote" ;;
+        *)
+            AGENT_PROVIDER_LOCALITY="unknown" ;;
+    esac
+}
+resolve_agent_provider
+if [[ "$AGENT_BACKEND" == "dsh" && -z "${AGENT_PROVIDER:-}" ]]; then
+    # DSH provider/model come from its external settings; locality is not
+    # knowable here, so it stays unknown rather than being assumed local.
+    AGENT_PROVIDER_LOCALITY="unknown"
+fi
 
 if [[ "$AGENT_BACKEND" == "dsh" ]]; then
     if ! command -v "$DSH_BIN" >/dev/null 2>&1; then
@@ -1088,17 +1155,35 @@ human_duration() {
         $((total % 60))
 }
 
-gpu_line() {
-    nvidia-smi \
+# Sample local GPU telemetry into globals (NO command substitution at the
+# call site: a subshell would discard the globals).
+gpu_sample() {
+    local row
+    GPU_UTIL=""
+    GPU_POWER=""
+    GPU_USED=""
+    GPU_TOTAL=""
+    row="$(nvidia-smi \
       --query-gpu=utilization.gpu,power.draw,memory.used,memory.total \
-      --format=csv,noheader,nounits 2>/dev/null |
-    awk -F',' '{
-      gsub(/^[ \t]+|[ \t]+$/, "", $1)
-      gsub(/^[ \t]+|[ \t]+$/, "", $2)
-      gsub(/^[ \t]+|[ \t]+$/, "", $3)
-      gsub(/^[ \t]+|[ \t]+$/, "", $4)
-      printf "GPU %s%% | %s W | VRAM %s/%s MiB", $1,$2,$3,$4
-    }'
+      --format=csv,noheader,nounits 2>/dev/null | head -n1)"
+    [[ -n "$row" ]] || return 0
+    IFS=',' read -r GPU_UTIL GPU_POWER GPU_USED GPU_TOTAL <<< "$row"
+    GPU_UTIL="${GPU_UTIL// /}"
+    GPU_POWER="${GPU_POWER// /}"
+    GPU_USED="${GPU_USED// /}"
+    GPU_TOTAL="${GPU_TOTAL// /}"
+}
+
+# Legacy (raw) GPU fragment from the last gpu_sample.
+gpu_legacy_string() {
+    [[ -n "$GPU_UTIL" ]] || return 0
+    printf "GPU %s%% | %s W | VRAM %s/%s MiB" \
+        "$GPU_UTIL" "$GPU_POWER" "$GPU_USED" "$GPU_TOTAL"
+}
+
+gpu_line() {
+    gpu_sample
+    gpu_legacy_string
 }
 
 # Return recent native Ollama generation throughput when defensible.
@@ -1119,13 +1204,16 @@ ollama_generation_throughput_line() {
     local start_epoch="${3:-0}"
     local sample=""
 
+    GEN3S_RATE=""
+    GEN3S_FULL="gen_3s=unavailable"
+
     if [[ "$ollama_state" != "active" ]]; then
-        printf 'gen_3s=unavailable'
+        printf '%s' "$GEN3S_FULL"
         return 0
     fi
 
     if ! command -v journalctl >/dev/null 2>&1; then
-        printf 'gen_3s=unavailable'
+        printf '%s' "$GEN3S_FULL"
         return 0
     fi
 
@@ -1174,13 +1262,143 @@ ollama_generation_throughput_line() {
 
     if [[ "$sample" == live$'\t'* ]]; then
         IFS=$'\t' read -r _ rate age <<< "$sample"
-        printf 'gen_3s=%s tok/s' "$rate"
+        GEN3S_RATE="$rate"
+        GEN3S_FULL="gen_3s=$rate tok/s"
     elif [[ "$sample" == stale$'\t'* ]]; then
         IFS=$'\t' read -r _ rate age <<< "$sample"
-        printf 'gen_3s=unavailable | last_gen=%s tok/s age=%ss' "$rate" "$age"
+        GEN3S_FULL="gen_3s=unavailable | last_gen=$rate tok/s age=${age}s"
     else
-        printf 'gen_3s=unavailable'
+        GEN3S_FULL="gen_3s=unavailable"
     fi
+    printf '%s' "$GEN3S_FULL"
+}
+
+# ------------------------------------------------------------
+# Mission 011 — live status attribution (mirrors
+# src/trajectory_os/live_status.py; producer/reader share the field
+# names).  The legacy ``ollama=``/``gen_3s=``/``GPU``/``VRAM`` tokens
+# are retained so existing readers stay compatible; the new fields make
+# the actor explicit so no reader has to guess.
+# ------------------------------------------------------------
+GPU_UTIL=""
+GPU_POWER=""
+GPU_USED=""
+GPU_TOTAL=""
+GEN3S_RATE=""
+GEN3S_FULL="gen_3s=unavailable"
+LIVE_ELAPSED_H="00:00:00"
+LIVE_CHANGED="0"
+LIVE_GPU_LEGACY=""
+LIVE_GEN3S_FULL="gen_3s=unavailable"
+LIVE_OLLAMA_STATE="idle"
+
+ollama_model_loaded() {
+    ollama ps 2>/dev/null | grep -q -- "$1"
+}
+
+# Which actor owns the local GPU telemetry in this phase (pure).
+agent_gpu_role() {
+    case "${1^^}" in
+        REVIEW) printf 'review' ;;
+        VALIDATE) printf 'none' ;;
+        IMPLEMENT|REPAIR|RECOVERY|SMOKE|PLAN)
+            case "$AGENT_PROVIDER_LOCALITY" in
+                local) printf 'agent' ;;
+                remote) printf 'review' ;;
+                *) printf 'none' ;;
+            esac
+            ;;
+        *) printf 'none' ;;
+    esac
+}
+
+# Truthful agent generation summary for this phase (pure).
+agent_generation_label() {
+    case "${1^^}" in
+        IMPLEMENT|REPAIR|RECOVERY|SMOKE|PLAN) ;;
+        *) printf 'n/a'; return 0 ;;
+    esac
+    case "$AGENT_PROVIDER_LOCALITY" in
+        local)
+            if [[ -n "$GEN3S_RATE" ]]; then
+                printf '%s tok/s' "$GEN3S_RATE"
+            else
+                printf 'local/unavailable'
+            fi
+            ;;
+        remote) printf 'remote/n-a' ;;
+        *) printf 'unknown/n-a' ;;
+    esac
+}
+
+# ``local-gpu(role)=util% used/totalMiB`` from the last gpu_line sample.
+live_gpu_fragment() {
+    local role="$1"
+    if [[ -z "$GPU_UTIL" ]]; then
+        printf 'local-gpu(%s)=unavailable' "$role"
+    else
+        printf 'local-gpu(%s)=%s%% %s/%sMiB' \
+            "$role" "$GPU_UTIL" "$GPU_USED" "$GPU_TOTAL"
+    fi
+}
+
+# Build the compact one-line heartbeat from the LIVE_* globals.
+build_live_line() {
+    local phase="$1" agent_state="$2" reviewer_state="$3" agent_gen="$4"
+    local role gpu_frag backend_label model_label
+    role="$(agent_gpu_role "$phase")"
+    gpu_frag="$(live_gpu_fragment "$role")"
+    backend_label="pi"
+    model_label="$MODEL"
+    if [[ "$AGENT_BACKEND" == "dsh" ]]; then
+        backend_label="dsh"
+        model_label="external"
+    fi
+    printf '[%s] elapsed=%s | phase=%s | agent=%s/%s:%s %s %s | reviewer=ollama:%s local %s | %s | agent-gen=%s | ollama=%s | %s | %s | files=%s' \
+        "$(date +%H:%M:%S)" \
+        "$LIVE_ELAPSED_H" \
+        "$phase" \
+        "$backend_label" "$AGENT_PROVIDER_NAME" "$model_label" \
+        "$AGENT_PROVIDER_LOCALITY" "$agent_state" \
+        "$REVIEWER_MODEL" "$reviewer_state" \
+        "$gpu_frag" \
+        "$agent_gen" \
+        "$LIVE_OLLAMA_STATE" \
+        "$LIVE_GPU_LEGACY" \
+        "$LIVE_GEN3S_FULL" \
+        "$LIVE_CHANGED"
+}
+
+# Emit one attributed status line (stdout + status.log) at a phase
+# transition.  Used for VALIDATE/REVIEW/REPAIR so those phases are
+# observable and correctly attributed, not just the agent heartbeat.
+emit_live_status() {
+    local phase="$1" agent_state="$2" reviewer_state="$3" agent_gen="${4-}"
+    local now elapsed ollama_model next_epoch
+    now="$(date +%s)"
+    elapsed=$((now - START_EPOCH))
+    (( elapsed < 0 )) && elapsed=0
+    LIVE_ELAPSED_H="$(human_duration "$elapsed")"
+    LIVE_CHANGED="$(changed_count)"
+    gpu_sample
+    LIVE_GPU_LEGACY="$(gpu_legacy_string)"
+    [[ -n "$LIVE_GPU_LEGACY" ]] || LIVE_GPU_LEGACY="GPU unavailable"
+    ollama_model="$MODEL"
+    [[ "$phase" == "REVIEW" ]] && ollama_model="$REVIEWER_MODEL"
+    LIVE_OLLAMA_STATE="idle"
+    if ollama_model_loaded "$ollama_model"; then
+        LIVE_OLLAMA_STATE="active"
+    fi
+    next_epoch="$now"
+    ollama_generation_throughput_line \
+        "$LIVE_OLLAMA_STATE" "$next_epoch" "$START_EPOCH" >/dev/null
+    LIVE_GEN3S_FULL="$GEN3S_FULL"
+    [[ -n "$LIVE_GEN3S_FULL" ]] || LIVE_GEN3S_FULL="gen_3s=unavailable"
+    [[ -n "$agent_gen" ]] || agent_gen="$(agent_generation_label "$phase")"
+    local line
+    line="$(build_live_line "$phase" "$agent_state" "$reviewer_state" "$agent_gen")"
+    echo "$line"
+    echo "$line" >> "$STATUS_LOG"
 }
 
 current_status() {
@@ -2602,17 +2820,20 @@ printf "Mutation policy %s\n" "$MUTATION_POLICY"
 printf "Changes        %s\n" "$CHANGES_POLICY"
 printf "ETA            %s\n" "$ETA"
 printf "Agent backend  %s\n" "$AGENT_BACKEND"
+printf "Agent provider %s (%s)\n" "$AGENT_PROVIDER_NAME" "$AGENT_PROVIDER_LOCALITY"
 if [[ "$AGENT_BACKEND" == "pi" ]]; then
-    printf "Model          %s\n" "$MODEL"
+    printf "Agent model    %s\n" "$MODEL"
     printf "Thinking       %s\n" "$THINKING"
 else
-    printf "Model          %s\n" "DSH settings (provider/model external)"
+    printf "Agent model    %s\n" "DSH settings (provider/model external)"
     printf "Thinking       %s\n" "DSH-managed"
 fi
 printf "Validation     %s\n" "$( [[ "${#VALIDATE_CMDS[@]}" -gt 0 ]] && echo enabled || echo not configured )"
-printf "Review         %s (%s)\n" \
+printf "Review         %s (reviewer=%s/%s local)\n" \
     "$([[ "$REVIEW" -eq 1 ]] && echo enabled || echo disabled)" \
-    "$REVIEWER_MODEL"
+    "ollama" "$REVIEWER_MODEL"
+printf "Local GPU      reviewer resource during REVIEW; unattributed during VALIDATE (%s agent)\n" \
+    "$AGENT_PROVIDER_LOCALITY"
 printf "Repair attempts %s\n" "$( [[ "$REPAIR_ATTEMPTS" -gt 0 ]] && echo "enabled ($REPAIR_ATTEMPTS max)" || echo disabled )"
 printf "Branch         %s\n" "$BRANCH"
 printf "HEAD           %.12s\n" "$HEAD_BEFORE"
@@ -2783,30 +3004,32 @@ fi
 while kill -0 "$PI_PID" 2>/dev/null; do
     NOW="$(date +%s)"
     ELAPSED=$((NOW - START_EPOCH))
-    ELAPSED_H="$(human_duration "$ELAPSED")"
+    LIVE_ELAPSED_H="$(human_duration "$ELAPSED")"
 
     CHANGED="$(changed_count)"
     CURRENT_STATUS="$(status_fingerprint)"
 
     AGENT_CHANGED="$(count_added_since_baseline "$CURRENT_STATUS")"
+    LIVE_CHANGED="$CHANGED (+$AGENT_CHANGED)"
 
-    GPU="$(gpu_line)"
-    [[ -n "$GPU" ]] || GPU="GPU unavailable"
+    gpu_sample
+    LIVE_GPU_LEGACY="$(gpu_legacy_string)"
+    [[ -n "$LIVE_GPU_LEGACY" ]] || LIVE_GPU_LEGACY="GPU unavailable"
+
+    # Mission 011: the local-model token reflects the agent's own model
+    # during agent phases (kept for legacy readers); the attributed
+    # ``agent``/``reviewer``/``local-gpu`` fields below carry the truth.
+    LIVE_OLLAMA_STATE="idle"
+    if ollama_model_loaded "$MODEL"; then
+        LIVE_OLLAMA_STATE="active"
+    fi
+    ollama_generation_throughput_line \
+        "$LIVE_OLLAMA_STATE" "$NOW" "$START_EPOCH" >/dev/null
+    LIVE_GEN3S_FULL="$GEN3S_FULL"
+    [[ -n "$LIVE_GEN3S_FULL" ]] || LIVE_GEN3S_FULL="gen_3s=unavailable"
 
     if [[ "$AGENT_BACKEND" == "dsh" ]]; then
-        BACKEND_STATE="dsh/llama.cpp"
-        GEN_THROUGHPUT="gen_3s=unavailable"
-    else
-        OLLAMA_STATE="idle"
-        if ollama ps 2>/dev/null | grep -q "$MODEL"; then
-            OLLAMA_STATE="active"
-        fi
-        BACKEND_STATE="pi/ollama=$OLLAMA_STATE"
-
-        GEN_THROUGHPUT="$(
-            ollama_generation_throughput_line "$OLLAMA_STATE" "$NOW" "$START_EPOCH"
-        )"
-        [[ -n "$GEN_THROUGHPUT" ]] || GEN_THROUGHPUT="gen_3s=unavailable"
+        LIVE_GEN3S_FULL="gen_3s=unavailable"
     fi
 
     MINS=$((ELAPSED / 60))
@@ -2819,16 +3042,8 @@ while kill -0 "$PI_PID" 2>/dev/null; do
         ETA_STATE="beyond expected range"
     fi
 
-    LINE="$(
-      printf '[%s] elapsed=%s | %s | files=%s | backend=%s | %s | %s' \
-        "$(date +%H:%M:%S)" \
-        "$ELAPSED_H" \
-        "$ETA_STATE" \
-        "$CHANGED (+$AGENT_CHANGED)" \
-        "$BACKEND_STATE" \
-        "$GPU" \
-        "$GEN_THROUGHPUT"
-    )"
+    LINE="$(build_live_line \
+        "$RUN_MODE" active idle "$(agent_generation_label "$RUN_MODE")")"
 
     echo "$LINE"
     echo "$LINE" >> "$STATUS_LOG"
@@ -3035,9 +3250,13 @@ run_worktree_snapshot
 SNOT="${SNAPSHOT_STATUS}"
 
 emit_lifecycle "VALIDATING"
+emit_live_status "VALIDATE" idle idle "n/a"
 run_validations
 
 emit_lifecycle "REVIEWING"
+if [[ "$REVIEW" -eq 1 ]]; then
+    emit_live_status "REVIEW" idle active "n/a"
+fi
 run_review
 
 # Final pre-readiness worktree-identity verification: as late as
@@ -3263,6 +3482,7 @@ if (( REPAIR_ATTEMPTS > 0 )) && [[ "$READINESS" == "NEEDS_REVIEW" && -z "$FORWAR
     while (( REPAIR_USED < REPAIR_ATTEMPTS )) && [[ "$READINESS" == "NEEDS_REVIEW" && -z "$FORWARDED_SIGNAL" ]]; do
         REPAIR_USED=$((REPAIR_USED + 1))
         emit_lifecycle "REPAIRING"
+        emit_live_status "REPAIR" active idle ""
         attempt_dir="$RUN_DIR/repair/$REPAIR_USED"
         REPAIR_ATTEMPT_DIR="$attempt_dir"
         mkdir -p -- "$attempt_dir"
