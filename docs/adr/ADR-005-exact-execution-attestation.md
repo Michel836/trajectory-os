@@ -82,3 +82,21 @@ Rules:
   v1 shape, which is safe: it can never support `COMPLETED`.
 - Legacy M007 missions remain reconstructable; they simply cannot be
   re-read as attested successes.
+
+## Revision — dedicated launch-order anchor
+
+Status: Accepted (2026-09-17)
+
+The M008 decision is unchanged; this revision records a dogfood-driven
+correction to rule 2's launch-ordering check.
+
+The original check compared `meta.txt` against the sub-run's stdout/stderr
+evidence file, which the runner creates at launch. Normal subprocess output
+updates those files' mtimes *after* the wrapper has created `meta.txt`, so a
+genuine fresh run could be rejected as `ATTESTATION_STALE`.
+
+The runner now writes a dedicated, immutable per-sub-run launch marker
+(`<subrun_id>.launch`) immediately before subprocess launch and compares
+`meta.txt` against it. The marker is created exactly once, is never touched
+by output capture, and is cleared and re-created fail-closed on re-launch.
+No other identity in the attestation verification changes.

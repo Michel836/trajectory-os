@@ -145,6 +145,7 @@ def render_phase_prompt(mission_id: str, phase_id: str, kind: str,
     if kind not in PHASE_INSTRUCTIONS:
         raise AdapterError("PROMPT_KIND_INVALID", kind)
     mode = phase_mode(kind)
+    completion_marker = f"TRAJECTORY_{kind}_COMPLETE"
     parts = [
         "# TrajectoryOS mission sub-run context (bounded, deterministic)",
         "",
@@ -159,6 +160,13 @@ def render_phase_prompt(mission_id: str, phase_id: str, kind: str,
         "",
         "instructions",
         PHASE_INSTRUCTIONS[kind],
+        "",
+        "completion contract",
+        "When the phase is actually complete, include a HANDOFF line that",
+        "briefly states the result and evidence for the next phase.",
+        "The exact final non-blank line of your response MUST be:",
+        completion_marker,
+        "Do not emit that marker unless the phase is genuinely complete.",
         "",
     ]
     return "\n".join(parts)

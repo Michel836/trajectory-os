@@ -180,6 +180,17 @@ class TestRequireChanges:
                              phase_id="plan", objective="obj")
         assert a == b
 
+    def test_model_heavy_prompt_has_explicit_completion_contract(
+            self) -> None:
+        for kind in (m.PH_PLAN, m.PH_IMPLEMENT, m.PH_REPAIR, m.PH_REVIEW):
+            text = ad.render_phase_prompt("mi", kind.lower(), kind, "obj")
+            assert "HANDOFF" in text
+            assert f"TRAJECTORY_{kind}_COMPLETE" in text
+            assert (
+                "The exact final non-blank line of your response MUST be:"
+                in text
+            )
+
     def test_rejects_non_heavy_kind(self) -> None:
         with pytest.raises(ad.AdapterError):
             ad.phase_command(m.PH_VALIDATE, pi_wrapper="pi",

@@ -863,12 +863,14 @@ tp_json_escape() {
 semantic_status_for_classification() {
     local base
     case "${1-}" in
-        AGENT_COMPLETED)                 base="SUCCESS" ;;
-        INCOMPLETE_AGENT_RUN)            base="INCOMPLETE" ;;
+        AGENT_COMPLETED)                    base="SUCCESS" ;;
+        READ_ONLY_VERIFIED)                 base="SUCCESS" ;;
+        INCOMPLETE_AGENT_RUN)               base="INCOMPLETE" ;;
         UPSTREAM_PROVIDER_MISSING_QUERY)    base="PROVIDER_FAILURE" ;;
         UPSTREAM_PROVIDER_CONTEXT_EXCEEDED) base="PROVIDER_FAILURE" ;;
         AGENT_FAILED)                       base="FAILED" ;;
-        *)                               base="UNKNOWN" ;;
+        READ_ONLY_FAILED)                   base="FAILED" ;;
+        *)                                  base="UNKNOWN" ;;
     esac
     # PLAN: AGENT_COMPLETED maps to SUCCESS only when all three
     # read-only invariants are proven deterministic:
@@ -910,6 +912,36 @@ semantic_status_for_classification() {
             base="UNKNOWN"
         fi
     fi
+
+    # REVIEW: READ_ONLY_VERIFIED proves only that the read-only agent
+    # process itself completed without mutating forbidden state. It is NOT
+    # sufficient to claim semantic SUCCESS for the REVIEW phase.
+    #
+    # REVIEW SUCCESS requires the wrapper's independent review to PASS,
+    # the post-review exact-patch verification to PASS, and the final
+    # deterministic repository readiness to be READY_FOR_COMMIT.
+    #
+    # A deterministically known non-ready state is FAILED. Missing or
+    # otherwise unproven evidence remains UNKNOWN. This preserves the
+    # fail-closed trust boundary: READ_ONLY_VERIFIED alone can never
+    # promote an unsuccessful independent review.
+    if [[ "${1-}" == "READ_ONLY_VERIFIED" && "${RUN_MODE:-}" == "REVIEW" ]]; then
+        if [[ "${REVIEW_STATUS:-}" == "PASS"               && "${FINAL_VERIFY_STATUS:-}" == "PASS"               && "${READINESS:-}" == "READY_FOR_COMMIT" ]]; then
+            base="SUCCESS"
+        elif [[ "${READINESS:-}" == "NEEDS_REVIEW"                 || "${READINESS:-}" == "BLOCKED" ]]; then
+            base="FAILED"
+        else
+            base="UNKNOWN"
+        fi
+    fi
+
+    # Any future/unknown read-only mode must prove its own promotion
+    # contract explicitly. Never inherit SUCCESS merely from process-level
+    # READ_ONLY_VERIFIED.
+    if [[ "${1-}" == "READ_ONLY_VERIFIED"           && "${RUN_MODE:-}" != "PLAN"           && "${RUN_MODE:-}" != "REVIEW" ]]; then
+        base="UNKNOWN"
+    fi
+
     echo "$base"
 }
 
