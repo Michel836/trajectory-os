@@ -1,0 +1,43 @@
+{
+  "trigger": {
+    "kind": "MISSION_FAILURE",
+    "source": "trajectory-pi-goals dogfood",
+    "detail": "controlled failure of the superseded node triggers a bounded deterministic replan",
+    "provenance": {
+      "mission_id": "m-m016-failing"
+    }
+  },
+  "changes": [
+    {
+      "op": "SUPERSEDE_NODE",
+      "reason": "replace the deterministically failed node with a bounded recovered node",
+      "node_id": "n-failing",
+      "node_spec": {
+        "node_id": "n-failing2",
+        "title": "Recovered execution after the bounded deterministic replan",
+        "priority": 70,
+        "depends_on": [
+          "n-foundation"
+        ],
+        "acceptance_criteria": [
+          {
+            "criterion_id": "ac-risk",
+            "statement": "A controlled failure is detected, blocked and deterministically replanned"
+          }
+        ],
+        "mission_ref": {
+          "mission_id": "m-m016-failing2",
+          "required": true
+        },
+        "resources": {
+          "cpu_slots": 1
+        },
+        "budgets": {
+          "time_budget_s": 1800,
+          "repair_budget": 0,
+          "max_attempts": 1
+        }
+      }
+    }
+  ]
+}

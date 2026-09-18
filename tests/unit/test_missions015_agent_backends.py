@@ -315,6 +315,71 @@ class _SilentProc(FakeProc):
             self._out.put(None)
 
 
+class _TurnErrorProc(FakeProc):
+    """Runtime that reports an explicitly errored turn before going idle.
+
+    Models the real DeepSeek Harness runtime when the provider route has no
+    credential: the session reaches ``idle`` but the turn ended with a
+    structured ``reason.kind == "error"``.
+    """
+
+    def handle(self, frame: dict[str, Any]) -> None:
+        method = frame.get("method")
+        req_id = frame.get("id")
+        if method == "initialize":
+            self._out.put(json.dumps({
+                "jsonrpc": "2.0", "id": req_id,
+                "result": {"serverInfo": {"name":
+                                           "deepseek-harness-sdk-runtime",
+                                           "version": "0.0.1"}}}) + "\n")
+        elif method == "session/prompt":
+            session_id = frame["params"]["sessionId"]
+            self._out.put(json.dumps({
+                "jsonrpc": "2.0", "id": req_id,
+                "result": {"messageId": "msg-1"}}) + "\n")
+            self._out.put(json.dumps({
+                "jsonrpc": "2.0", "method": "session.status",
+                "params": {"sessionId": session_id,
+                           "status": "running"}}) + "\n")
+            self._out.put(json.dumps({
+                "jsonrpc": "2.0", "method": "session.event",
+                "params": {
+                    "sessionId": session_id,
+                    "event": {"type": "turn/end", "data": {
+                        "turn": 1,
+                        "reason": {"kind": "error", "error": {
+                            "code": "MISSING_CREDENTIAL",
+                            "message": "no API key for provider route"}},
+                    }}}}) + "\n")
+            self._out.put(json.dumps({
+                "jsonrpc": "2.0", "method": "session.status",
+                "params": {"sessionId": session_id,
+                           "status": "idle"}}) + "\n")
+        elif method == "shutdown":
+            self._out.put(json.dumps({
+                "jsonrpc": "2.0", "id": req_id, "result": {}}) + "\n")
+            self._out.put(None)
+
+
+def test_dsh_turn_error_fails_closed_not_completed() -> None:
+    """A reachable idle after an errored turn is not a reliable completion."""
+    backend = _dsh(lambda argv: _TurnErrorProc(), sdk=True)
+    result = backend.run(_request())
+    assert result.status == model.RS_UNAVAILABLE
+    assert result.reason == model.R_CREDENTIALS_MISSING
+    assert result.completion is not None
+    assert result.completion.reliable is False
+
+
+def test_canary_turn_error_is_unavailable() -> None:
+    backend = _dsh(lambda argv: _TurnErrorProc(), sdk=True)
+    outcome = canary.run_canary(
+        _request(), factory=lambda name: backend
+        if name == model.BACKEND_DEEPSEEK_HARNESS else FakePi())
+    assert outcome.status == model.CS_CANARY_UNAVAILABLE
+    assert outcome.reason == model.R_CREDENTIALS_MISSING
+
+
 # --- model --------------------------------------------------------------------
 
 

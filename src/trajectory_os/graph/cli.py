@@ -30,6 +30,14 @@ where explicitly noted):
     reuse-history   append-only cross-mission consumption history
     why-reuse  explain one node's reuse inputs with stable reason codes
     provenance  explicit producer -> consumer reuse provenance chains
+    goal       compact goal-level proof dashboard (alias: dashboard)
+    goal-proof full machine-readable goal-level proof projection
+    goal-explain deterministic why/explain for the goal or one node
+    goal-criteria acceptance criteria and their exact proving evidence
+    goal-risks unresolved/blocked/stale/legacy/unproven/invalid risks
+    goal-record record + persist one derived goal-proof snapshot
+    goal-validate reconstruct + revalidate the persisted goal proof
+    goal-history append-only goal-proof event history
     version   CLI version
 
 No command performs a Git trust-boundary write. Scheduling/admission/
@@ -57,6 +65,10 @@ from typing import Any
 
 from trajectory_os import __version__
 from trajectory_os.graph import evidence, identity, model, readiness, store, summary
+from trajectory_os.graph.proof import engine as proof_engine
+from trajectory_os.graph.proof import model as proof_model
+from trajectory_os.graph.proof import store as proof_store
+from trajectory_os.graph.proof import summary as proof_summary
 from trajectory_os.graph.replan import engine as replan_engine
 from trajectory_os.graph.replan import model as replan_model
 from trajectory_os.graph.replan import summary as replan_summary
@@ -816,6 +828,187 @@ def _cmd_provenance(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+# --- Mission 016 goal-level proof ---------------------------------------------
+
+
+def _cmd_goal_dashboard(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = proof_summary.dashboard_document(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except proof_model.GoalProofError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except replan_model.ReplanValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+        return EXIT_OK
+    print(proof_summary.render_dashboard(document))
+    return EXIT_OK
+
+
+def _cmd_goal_proof(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        proof = proof_engine.build_proof(
+            root, args.goal_id, computed_at=orchestrator.utc_now_iso())
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except proof_model.GoalProofError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    payload = proof.to_dict()
+    payload["status"] = "OK"
+    payload["identity"] = proof_engine.identity_refs(proof)
+    _print_json(payload)
+    return EXIT_OK
+
+
+def _cmd_goal_explain(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = proof_summary.explain_document(
+            root, args.goal_id, args.subject or "goal")
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except proof_model.GoalProofError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+        return EXIT_OK
+    if document.get("status") == "UNKNOWN_NODE":
+        return _fail(f"node not found: {args.subject}")
+    print(proof_summary.render_explain(document))
+    return EXIT_OK
+
+
+def _cmd_goal_criteria(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        proof = proof_engine.build_proof(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except proof_model.GoalProofError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json({
+            "status": "OK",
+            "goal_id": proof.goal_id,
+            "proof_id": proof.proof_id,
+            "criteria": [c.to_dict() for c in proof.criteria],
+        })
+        return EXIT_OK
+    for criterion in proof.criteria:
+        print(proof_summary.criterion_line(criterion.to_dict()))
+    return EXIT_OK
+
+
+def _cmd_goal_risks(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        proof = proof_engine.build_proof(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except proof_model.GoalProofError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json({
+            "status": "OK",
+            "goal_id": proof.goal_id,
+            "final_state": proof.final_state,
+            "final_reason": proof.final_reason,
+            "risks": [risk.to_dict() for risk in proof.risks],
+        })
+        return EXIT_OK
+    if not proof.risks:
+        print("risks     : none (goal complete)")
+        return EXIT_OK
+    for risk in proof.risks:
+        print(f"  ! {risk.risk_class}:{risk.reason}:{risk.subject} "
+              f"{risk.detail}")
+    return EXIT_OK
+
+
+def _cmd_goal_record(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        proof, event, appended = proof_store.record_proof(
+            root, args.goal_id, computed_at=orchestrator.utc_now_iso())
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except proof_model.GoalProofError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    payload = {
+        "status": "RECORDED",
+        "goal_id": proof.goal_id,
+        "graph_id": proof.graph_id,
+        "proof_id": proof.proof_id,
+        "final_state": proof.final_state,
+        "final_reason": proof.final_reason,
+        "complete": proof.complete,
+        "event_id": event.event_id,
+        "appended": appended,
+    }
+    if args.json:
+        _print_json(payload)
+        return EXIT_OK
+    print(f"recorded  : {proof.goal_id} [{proof.final_state}/"
+          f"{proof.final_reason}]")
+    print(f"proof     : {proof.proof_id}")
+    print(f"event     : {event.event_id} appended={appended}")
+    return EXIT_OK
+
+
+def _cmd_goal_validate(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        read = proof_engine.reconstruct(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except proof_model.GoalProofError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(read.to_dict())
+        return EXIT_OK
+    print(f"valid     : {args.goal_id} reconstructed={read.reconstructed}")
+    print(f"persisted : {read.persisted.proof_id}")
+    print(f"live      : {read.live.proof_id}")
+    print(f"final     : {read.persisted.final_state} "
+          f"({read.persisted.final_reason})")
+    return EXIT_OK
+
+
+def _cmd_goal_history(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = proof_summary.history_document(root, args.goal_id)
+    except proof_model.GoalProofError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+        return EXIT_OK
+    print(f"history   : {document['count']} goal-proof event(s)")
+    for event in document["events"]:
+        print(f"  {event['computed_at']} {event['event']} "
+              f"{event['status']} {event['reason']} "
+              f"proof={event['proof_id'][:12]}")
+    return EXIT_OK
+
+
 def _cmd_version() -> int:
     print(f"trajectory-pi-goals {__version__}")
     return EXIT_OK
@@ -1212,6 +1405,47 @@ def build_parser(prog: str = "trajectory-pi-goals") -> argparse.ArgumentParser:
     _add_shared_flags(p)
     p.add_argument("goal_id")
 
+    # --- Mission 016 goal-level proof --------------------------------------
+    p = sub.add_parser(
+        "goal",
+        help="compact goal-level proof dashboard")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+
+    p = sub.add_parser(
+        "dashboard", help="compact goal-level proof dashboard (alias)")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+
+    p = sub.add_parser(
+        "goal-proof",
+        help="full machine-readable goal-level proof projection")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+
+    p = sub.add_parser(
+        "goal-explain",
+        help="deterministic why/explain for the goal or one node")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+    p.add_argument("subject", nargs="?", default="goal")
+
+    for name, help_text in (
+        ("goal-criteria", "acceptance criteria and their exact evidence"),
+        ("goal-risks", "unresolved/blocked/stale/legacy/unproven risks"),
+        ("goal-validate", "reconstruct + revalidate the persisted proof"),
+        ("goal-history", "append-only goal-proof event history"),
+    ):
+        p = sub.add_parser(name, help=help_text)
+        _add_shared_flags(p)
+        p.add_argument("goal_id")
+
+    p = sub.add_parser(
+        "goal-record",
+        help="record + persist one derived goal-proof snapshot")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+
     sub.add_parser("version", help="CLI version")
     return parser
 
@@ -1267,6 +1501,15 @@ def main(argv: list[str] | None = None) -> int:
         "replan-validate": _cmd_replan_validate,
         "replan-project": _cmd_replan_project,
         "adopt-generation": _cmd_adopt_generation,
+        "goal": _cmd_goal_dashboard,
+        "dashboard": _cmd_goal_dashboard,
+        "goal-proof": _cmd_goal_proof,
+        "goal-explain": _cmd_goal_explain,
+        "goal-criteria": _cmd_goal_criteria,
+        "goal-risks": _cmd_goal_risks,
+        "goal-record": _cmd_goal_record,
+        "goal-validate": _cmd_goal_validate,
+        "goal-history": _cmd_goal_history,
     }[args.command]
     return int(handler(args))
 

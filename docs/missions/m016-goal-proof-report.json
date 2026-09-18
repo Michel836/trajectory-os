@@ -1,0 +1,386 @@
+{
+  "generated_at": "2026-09-18T15:21:01Z",
+  "issue": 222,
+  "mission": "M016",
+  "qualification": {
+    "canary": {
+      "backend": "deepseek-harness",
+      "canary_id": "fa974cad9ffe90a43195d067f97a538791494c0fad4d4766da7f13d61c2f13d0",
+      "completion": {
+        "detail": "CREDENTIALS_MISSING",
+        "evidence_id": "d245196757174bf025941908bf2f732defcfc277c11c6f2abf9a8563ca18c12e",
+        "message_id": null,
+        "reliable": false,
+        "schema_version": 1,
+        "source": "NONE",
+        "stop_reason": null
+      },
+      "error": null,
+      "fallback_backend": "pi",
+      "fallback_from": null,
+      "lifecycle": [
+        {
+          "kind": "STARTED",
+          "method": "spawn",
+          "sequence": 0
+        },
+        {
+          "kind": "INITIALIZED",
+          "method": "initialize",
+          "sequence": 1
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 2
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 3
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 4
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 5
+        },
+        {
+          "kind": "RUNNING",
+          "method": "session.status",
+          "sequence": 6
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 7
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 8
+        },
+        {
+          "kind": "RESULT",
+          "method": "session/prompt",
+          "sequence": 9
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 10
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 11
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 12
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 13
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 14
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 15
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 16
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 17
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 18
+        },
+        {
+          "kind": "MESSAGE",
+          "method": "session.event",
+          "sequence": 19
+        },
+        {
+          "kind": "IDLE",
+          "method": "session.status",
+          "sequence": 20
+        },
+        {
+          "kind": "ERROR",
+          "method": "session.event",
+          "sequence": 21
+        }
+      ],
+      "primary_backend": "deepseek-harness",
+      "reason": "CREDENTIALS_MISSING",
+      "run_id": "d09b717ccd34c07c8657f61d15a7dc8521455f0b13c25c8232606f04336c5733",
+      "run_reason": "CREDENTIALS_MISSING",
+      "run_status": "UNAVAILABLE",
+      "runtime_ms": 619,
+      "session_id": null,
+      "status": "CANARY_UNAVAILABLE",
+      "transport": "runtime"
+    },
+    "comparison": {
+      "backend": "deepseek-harness",
+      "canary_reason": "CREDENTIALS_MISSING",
+      "canary_status": "CANARY_UNAVAILABLE",
+      "completion_reliable": false,
+      "completion_source": "NONE",
+      "error": null,
+      "fallback_from": null,
+      "fallback_probe": {
+        "available": true,
+        "backend": "pi",
+        "reason": "BACKEND_OK",
+        "runtime_version": null,
+        "schema_version": 1,
+        "sdk_version": null,
+        "transport": "subprocess"
+      },
+      "lifecycle_evidence_count": 22,
+      "primary_probe": {
+        "available": true,
+        "backend": "deepseek-harness",
+        "reason": "BACKEND_OK",
+        "runtime_version": null,
+        "schema_version": 1,
+        "sdk_version": "0.1.5rc1",
+        "transport": "runtime"
+      },
+      "primary_transport": "runtime",
+      "reason": "CREDENTIALS_MISSING",
+      "repair_count": 0,
+      "runtime_available": true,
+      "runtime_ms": 619,
+      "sdk_available": true,
+      "status": "UNAVAILABLE",
+      "structured_lifecycle": false,
+      "transport": "runtime",
+      "turn_error": "MISSING_CREDENTIAL"
+    },
+    "fallback": {
+      "authoritative": true,
+      "backend": "pi",
+      "executed": false,
+      "note": "the proven Pi + DeepSeek Flash path remains authoritative; no live fallback model run is required for the deterministic goal-proof program",
+      "reason": "PROVEN_PI_FALLBACK"
+    },
+    "fallback_probe": {
+      "available": true,
+      "backend": "pi",
+      "detail": "pi executable: /home/chu/.local/share/pi-node/node-v22.22.3-linux-x64/bin/pi",
+      "probe_id": "681d8fd301794a3c78281d8d9a6794513fe5dfb15a55158bdec2140267321b5c",
+      "reason": "BACKEND_OK",
+      "runtime_version": null,
+      "schema_version": 1,
+      "sdk_version": null,
+      "transport": "subprocess"
+    },
+    "git_writes": false,
+    "primary_probe": {
+      "available": true,
+      "backend": "deepseek-harness",
+      "detail": "runtime: /home/chu/.cache/trajectory-os/deepseek-harness-sdk/bin/dsh; sdk=yes",
+      "probe_id": "9987d4bfa3bcfeabcdaf3b40c3691deb6ef4269ac7062bf335062ac95d1c50ce",
+      "reason": "BACKEND_OK",
+      "runtime_version": null,
+      "schema_version": 1,
+      "sdk_version": "0.1.5rc1",
+      "transport": "runtime"
+    },
+    "reason": "CREDENTIALS_MISSING",
+    "status": "CANARY_UNAVAILABLE",
+    "task": "Reply with exactly the token DSH_CANARY_OK and make no repository change. Do not run git, create, modify or delete any file."
+  },
+  "results": {
+    "S1_graph_created": true,
+    "S2_initial_incomplete": true,
+    "S3_failure_blocked": true,
+    "S3_foundation_complete": true,
+    "S3_recorded": true,
+    "S4_history_preserved": true,
+    "S4_replan_applied": true,
+    "S5_replacement_complete": true,
+    "S5_reuse_resolved": true,
+    "S6_scheduled": true,
+    "S7_complete": true,
+    "S8_reconstructed": true,
+    "S9_dashboard": true,
+    "S9_history": true,
+    "S9_why": true
+  },
+  "root": "<isolated-root>",
+  "scenarios": [
+    {
+      "checks": [
+        {
+          "description": "goal graph created from the checked-in spec",
+          "ok": true,
+          "scenario": "S1"
+        }
+      ],
+      "scenario": "S1",
+      "status": "PASS"
+    },
+    {
+      "checks": [
+        {
+          "description": "DeepSeek Harness qualification is deterministic",
+          "ok": true,
+          "scenario": "S10"
+        },
+        {
+          "description": "DeepSeek Harness qualification performs no Git write",
+          "ok": true,
+          "scenario": "S10"
+        },
+        {
+          "description": "proven Pi path remains the authoritative fallback",
+          "ok": true,
+          "scenario": "S10"
+        }
+      ],
+      "scenario": "S10",
+      "status": "PASS"
+    },
+    {
+      "checks": [
+        {
+          "description": "goal is fail-closed INCOMPLETE with no proven criterion",
+          "ok": true,
+          "scenario": "S2"
+        }
+      ],
+      "scenario": "S2",
+      "status": "PASS"
+    },
+    {
+      "checks": [
+        {
+          "description": "producer mission completes with exact attested evidence",
+          "ok": true,
+          "scenario": "S3"
+        },
+        {
+          "description": "controlled failure blocks the goal fail-closed",
+          "ok": true,
+          "scenario": "S3"
+        },
+        {
+          "description": "fail-closed incomplete goal proof is recorded",
+          "ok": true,
+          "scenario": "S3"
+        }
+      ],
+      "scenario": "S3",
+      "status": "PASS"
+    },
+    {
+      "checks": [
+        {
+          "description": "bounded deterministic replan activates generation 2",
+          "ok": true,
+          "scenario": "S4"
+        },
+        {
+          "description": "prior generation is preserved (generation count >= 2)",
+          "ok": true,
+          "scenario": "S4"
+        }
+      ],
+      "scenario": "S4",
+      "status": "PASS"
+    },
+    {
+      "checks": [
+        {
+          "description": "replacement mission completes with exact evidence",
+          "ok": true,
+          "scenario": "S5"
+        },
+        {
+          "description": "explicit cross-mission evidence reuse resolves",
+          "ok": true,
+          "scenario": "S5"
+        }
+      ],
+      "scenario": "S5",
+      "status": "PASS"
+    },
+    {
+      "checks": [
+        {
+          "description": "scheduler admits dependency-ready work",
+          "ok": true,
+          "scenario": "S6"
+        }
+      ],
+      "scenario": "S6",
+      "status": "PASS"
+    },
+    {
+      "checks": [
+        {
+          "description": "goal reaches COMPLETE with every criterion proven",
+          "ok": true,
+          "scenario": "S7"
+        }
+      ],
+      "scenario": "S7",
+      "status": "PASS"
+    },
+    {
+      "checks": [
+        {
+          "description": "reconstruction reproduces the exact persisted proof id",
+          "ok": true,
+          "scenario": "S8"
+        }
+      ],
+      "scenario": "S8",
+      "status": "PASS"
+    },
+    {
+      "checks": [
+        {
+          "description": "dashboard/JSON exposes every criterion and its evidence",
+          "ok": true,
+          "scenario": "S9"
+        },
+        {
+          "description": "deterministic why/explain is available",
+          "ok": true,
+          "scenario": "S9"
+        },
+        {
+          "description": "append-only goal-proof history is recorded",
+          "ok": true,
+          "scenario": "S9"
+        }
+      ],
+      "scenario": "S9",
+      "status": "PASS"
+    }
+  ],
+  "status": "PASS"
+}

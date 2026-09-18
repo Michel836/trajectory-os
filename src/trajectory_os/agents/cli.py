@@ -5,6 +5,7 @@ Commands:
     probe    deterministic capability probe (pi, deepseek-harness)
     canary   one bounded DeepSeek Harness canary with Pi fallback evidence
     compare  run one bounded task on both backends and compare
+    qualify  M016 bounded DeepSeek Harness qualification (secret-free)
     version
 
 No backend may commit, push, merge, reset, restore, clean, stash, rebase,
@@ -79,6 +80,21 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_qualify(args: argparse.Namespace) -> int:
+    from trajectory_os.agents import qualification
+
+    outcome = qualification.qualify(
+        workspace=args.workspace or os.getcwd(), timeout_s=args.timeout,
+        allow_runtime=args.allow_runtime)
+    payload = outcome.to_dict()
+    if args.save:
+        Path(args.save).write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8")
+    _print(payload, args.json)
+    return EXIT_OK
+
+
 def _cmd_version() -> int:
     print(f"trajectory-agent {__version__}")
     return EXIT_OK
@@ -122,6 +138,15 @@ def build_parser(prog: str = "trajectory-agent") -> argparse.ArgumentParser:
     p.add_argument("--model", default=None)
     p.add_argument("--json", action="store_true")
 
+    p = sub.add_parser(
+        "qualify", help="M016 bounded DeepSeek Harness qualification")
+    p.add_argument("--workspace", default=None)
+    p.add_argument("--timeout", type=int, default=120)
+    p.add_argument("--allow-runtime", action="store_true",
+                   help="allow the runtime transport without the SDK")
+    p.add_argument("--save", default=None)
+    p.add_argument("--json", action="store_true")
+
     sub.add_parser("version", help="CLI version")
     return parser
 
@@ -140,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         "probe": _cmd_probe,
         "canary": _cmd_canary,
         "compare": _cmd_compare,
+        "qualify": _cmd_qualify,
     }[args.command]
     try:
         return int(handler(args))

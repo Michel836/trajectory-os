@@ -1,0 +1,119 @@
+{
+  "dsh_home": "/home/chu/.cache/trajectory-os/dsh-m016",
+  "note": "Mission 016 DeepSeek Harness qualification over the M015 provider-neutral agent-backend contract. One bounded, read-only canary was attempted with an isolated DSH_HOME/workspace. Structured JSON-RPC lifecycle evidence is authoritative: an errored turn is never reinterpreted as success. When credentials are unavailable or the developer-preview runtime is incompatible, the result is a deterministic CANARY_UNAVAILABLE or CANARY_INCOMPATIBLE and the proven Pi path remains the fallback. No secret is logged. No Git trust-boundary write is performed.",
+  "outcome": {
+    "canary": {
+      "backend": "deepseek-harness",
+      "canary_id": "6c9240c59838713023b9e2cb489374e7eaed0c09f3ae018a2cf2c8eba2ff10a6",
+      "completion": {
+        "detail": "RPC_ERROR",
+        "evidence_id": "25ddfc5efc3c95754db8281a6644cb3f0122cf38e54739ae16556eec5b166494",
+        "message_id": null,
+        "reliable": false,
+        "schema_version": 1,
+        "source": "NONE",
+        "stop_reason": null
+      },
+      "error": null,
+      "fallback_backend": "pi",
+      "fallback_from": null,
+      "lifecycle": [
+        {
+          "kind": "STARTED",
+          "method": "spawn",
+          "sequence": 0
+        },
+        {
+          "kind": "INITIALIZED",
+          "method": "initialize",
+          "sequence": 1
+        },
+        {
+          "kind": "ERROR",
+          "method": "session/prompt",
+          "sequence": 2
+        }
+      ],
+      "primary_backend": "deepseek-harness",
+      "reason": "RPC_ERROR",
+      "run_id": "72d389909acb582799601120e3506f9230fd843ef1d3d06216084d259f97d07f",
+      "run_reason": "RPC_ERROR",
+      "run_status": "FAILED",
+      "runtime_ms": 497,
+      "session_id": null,
+      "status": "CANARY_FAIL",
+      "transport": "runtime"
+    },
+    "comparison": {
+      "backend": "deepseek-harness",
+      "canary_reason": "RPC_ERROR",
+      "canary_status": "CANARY_FAIL",
+      "completion_reliable": false,
+      "completion_source": "NONE",
+      "error": null,
+      "fallback_from": null,
+      "fallback_probe": {
+        "available": true,
+        "backend": "pi",
+        "reason": "BACKEND_OK",
+        "runtime_version": null,
+        "schema_version": 1,
+        "sdk_version": null,
+        "transport": "subprocess"
+      },
+      "lifecycle_evidence_count": 3,
+      "primary_probe": {
+        "available": true,
+        "backend": "deepseek-harness",
+        "reason": "BACKEND_OK",
+        "runtime_version": null,
+        "schema_version": 1,
+        "sdk_version": "0.1.5rc1",
+        "transport": "runtime"
+      },
+      "primary_transport": "runtime",
+      "reason": "RPC_ERROR",
+      "repair_count": 0,
+      "runtime_available": true,
+      "runtime_ms": 497,
+      "sdk_available": true,
+      "status": "FAILED",
+      "structured_lifecycle": false,
+      "transport": "runtime"
+    },
+    "fallback": {
+      "authoritative": true,
+      "backend": "pi",
+      "executed": false,
+      "note": "the proven Pi + DeepSeek Flash path remains authoritative; no live fallback model run is required for the deterministic goal-proof program",
+      "reason": "PROVEN_PI_FALLBACK"
+    },
+    "fallback_probe": {
+      "available": true,
+      "backend": "pi",
+      "detail": "pi executable: /home/chu/.local/share/pi-node/node-v22.22.3-linux-x64/bin/pi",
+      "probe_id": "681d8fd301794a3c78281d8d9a6794513fe5dfb15a55158bdec2140267321b5c",
+      "reason": "BACKEND_OK",
+      "runtime_version": null,
+      "schema_version": 1,
+      "sdk_version": null,
+      "transport": "subprocess"
+    },
+    "git_writes": false,
+    "primary_probe": {
+      "available": true,
+      "backend": "deepseek-harness",
+      "detail": "runtime: /home/chu/.cache/trajectory-os/deepseek-harness-sdk/bin/dsh; sdk=yes",
+      "probe_id": "9987d4bfa3bcfeabcdaf3b40c3691deb6ef4269ac7062bf335062ac95d1c50ce",
+      "reason": "BACKEND_OK",
+      "runtime_version": null,
+      "schema_version": 1,
+      "sdk_version": "0.1.5rc1",
+      "transport": "runtime"
+    },
+    "reason": "RPC_ERROR",
+    "status": "CANARY_INCOMPATIBLE",
+    "task": "Reply with exactly the token DSH_CANARY_OK and make no repository change. Do not run git, create, modify or delete any file."
+  },
+  "workspace": "/tmp/m016-canary-ws"
+}

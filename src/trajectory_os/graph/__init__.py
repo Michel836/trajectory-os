@@ -33,11 +33,15 @@ Modules (imported lazily by consumers to keep the package light):
 * ``replan``     — M015 bounded adaptive replanning over immutable graph
   generations (explicit triggers, validated plans, append-only history,
   scheduler generation binding).
+* ``proof``      — M016 derived goal-level proof, reconstruction proof and
+  compact operator dashboard (exact criterion -> evidence bindings, stable
+  risks, never a second source of truth).
 
-Design invariants (ADR-010, ADR-011, ADR-012, ADR-013): no second graph or
-execution engine, reuse is input provenance only (never completion proof),
-replanning is graph evolution only (never semantic success promotion), no
-operator micro-gates, no autonomous Git trust-boundary write.
+Design invariants (ADR-010, ADR-011, ADR-012, ADR-013, ADR-015): no second
+graph or execution engine, reuse is input provenance only (never completion
+proof), replanning is graph evolution only (never semantic success promotion),
+goal proof is derived evidence only, no operator micro-gates, no autonomous
+Git trust-boundary write.
 """
 
 from trajectory_os.graph.model import SCHEMA_VERSION as GRAPH_SCHEMA_VERSION  # noqa: F401

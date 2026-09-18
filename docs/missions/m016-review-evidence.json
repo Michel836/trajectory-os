@@ -1,0 +1,41 @@
+{
+  "git_writes": false,
+  "issue": 222,
+  "note": "M016 independent read-only adversarial review across three disjoint exact-patch passes. An earlier pass surfaced candidate BLOCKER/MAJOR findings (unreachable non-passed explicit phase branch; impossible complete-without-phase-evidence state; missing-required-mission gate handling). Those were adjudicated: the explicit-phase branch was made explicitly fail-closed, the impossible whole-mission case now reports CONTRADICTORY/MISSION_EVIDENCE_MISSING, and a missing required mission now yields a STOP gate. Re-review of every pass returned PASS with no findings.",
+  "passes": [
+    {
+      "findings": "FINDINGS: none\nVERDICT: PASS",
+      "focus": "core goal-proof model/identity/evidence semantics",
+      "pass": "A",
+      "patch_bytes": 56097,
+      "patch_sha256": "f330fa71b2d0463a232e67a282dd2a1385e08392b32a67416315ea883b498fc4",
+      "summary": "core deterministic proof semantics",
+      "verdict": "PASS"
+    },
+    {
+      "findings": "FINDINGS: none\nVERDICT: PASS",
+      "focus": "goal-proof engine/store/summary/reconstruction and ADR",
+      "pass": "B",
+      "patch_bytes": 61802,
+      "patch_sha256": "bac100f2e172acd916db25702616710eaa9140eba9e93bc2292502519f6912ec",
+      "summary": "read-only composition, store, dashboard, ADR",
+      "verdict": "PASS"
+    },
+    {
+      "findings": "FINDINGS: none\nVERDICT: PASS",
+      "focus": "operator CLI/agents qualification/tests/examples/scripts integration",
+      "pass": "C",
+      "patch_bytes": 106683,
+      "patch_sha256": "887498b11168cedf1a0859d1261ccb9b236416c9cde091bd02adc3b82650bf18",
+      "summary": "operator surface, agent qualification, tests, evidence scripts",
+      "verdict": "PASS"
+    }
+  ],
+  "reviewer": {
+    "authority": "advisory; does not override deterministic evidence or human merge authority",
+    "mode": "read-only adversarial review",
+    "model": "qwen3.6:35b",
+    "runtime": "ollama (local)"
+  },
+  "verdict": "PASS"
+}

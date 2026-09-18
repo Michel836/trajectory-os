@@ -41,6 +41,14 @@
 #   replan-validate    reconstruct + revalidate persisted replan state
 #   replan-project     machine-readable M016 replanning projection
 #   adopt-generation   re-bind scheduler state to the newest generation
+#   goal               compact goal-level proof dashboard (alias: dashboard)
+#   goal-proof         full machine-readable goal-level proof projection
+#   goal-explain       deterministic why/explain for the goal or a node
+#   goal-criteria      acceptance criteria and their exact evidence
+#   goal-risks         unresolved/blocked/stale/legacy/unproven risks
+#   goal-record        record + persist one derived goal-proof snapshot
+#   goal-validate      reconstruct + revalidate the persisted goal proof
+#   goal-history       append-only goal-proof event history
 #   version
 #
 # Exit codes: 0 ok, 2 usage, 3 rejected, 4 unknown goal.
@@ -67,6 +75,11 @@ fi
 
 if [[ ! -d "${SRC}/trajectory_os/graph/replan" ]]; then
   printf 'trajectory-pi-goals: internal error: missing trajectory_os/graph/replan package (expected %s)\n' "${SRC}/trajectory_os/graph/replan" >&2
+  exit 2
+fi
+
+if [[ ! -d "${SRC}/trajectory_os/graph/proof" ]]; then
+  printf 'trajectory-pi-goals: internal error: missing trajectory_os/graph/proof package (expected %s)\n' "${SRC}/trajectory_os/graph/proof" >&2
   exit 2
 fi
 
