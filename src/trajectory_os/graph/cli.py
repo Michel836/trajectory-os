@@ -24,6 +24,12 @@ where explicitly noted):
     history   append-only scheduling decision history
     why-schedule  explain one node's scheduling outcome
     validate-schedule  reconstruct + revalidate scheduler state (read-only)
+    reuse     inspect the resolved cross-mission reuse projection
+    reuse-resolve  resolve + persist the reuse projection (consumption log)
+    reuse-validate  reconstruct + revalidate the persisted reuse projection
+    reuse-history   append-only cross-mission consumption history
+    why-reuse  explain one node's reuse inputs with stable reason codes
+    provenance  explicit producer -> consumer reuse provenance chains
     version   CLI version
 
 No command performs a Git trust-boundary write. Scheduling/admission/
@@ -51,6 +57,12 @@ from typing import Any
 
 from trajectory_os import __version__
 from trajectory_os.graph import evidence, identity, model, readiness, store, summary
+from trajectory_os.graph.replan import engine as replan_engine
+from trajectory_os.graph.replan import model as replan_model
+from trajectory_os.graph.replan import summary as replan_summary
+from trajectory_os.graph.reuse import engine as reuse_engine
+from trajectory_os.graph.reuse import model as reuse_model
+from trajectory_os.graph.reuse import summary as reuse_summary
 from trajectory_os.graph.scheduler import engine as scheduler_engine
 from trajectory_os.graph.scheduler import model as scheduler_model
 from trajectory_os.graph.scheduler import summary as scheduler_summary
@@ -667,6 +679,8 @@ def _cmd_validate_schedule(args: argparse.Namespace) -> int:
         return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
     except scheduler_model.SchedulerValidationError as exc:
         return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except reuse_model.ReuseValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
     if args.json:
         _print_json(read.to_dict())
         return EXIT_OK
@@ -682,8 +696,312 @@ def _cmd_validate_schedule(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+# --- Mission 014 cross-mission reuse -----------------------------------------
+
+
+def _cmd_reuse(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = reuse_summary.status_document(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except reuse_model.ReuseValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+    else:
+        print(reuse_summary.render_status(document))
+    return EXIT_OK
+
+
+def _cmd_reuse_resolve(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        result = reuse_engine.resolve_and_record(
+            root, args.goal_id, consumed_at=orchestrator.utc_now_iso())
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except reuse_model.ReuseValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(result.to_dict())
+        return EXIT_OK
+    projection = result.projection
+    counts = projection.counts()
+    print(f"status    : {'BLOCKED' if result.blocked else 'RESOLVED'}")
+    print(f"goal      : {projection.goal_id} graph={projection.graph_id}")
+    print(f"projection: {projection.projection_id}")
+    print(f"inputs    : resolved={counts['resolved']} "
+          f"unresolved={counts['unresolved']} rejected={counts['rejected']} "
+          f"blocking={counts['blocking']}")
+    print(f"recorded  : {len(result.appended)} new consumption event(s)")
+    for item in projection.inputs:
+        print(f"  - {item.consumer_node_id} <- "
+              f"{item.producer_node_id}/{item.phase_id} "
+              f"[{item.status}] {item.reason} trust={item.trust}")
+    return EXIT_OK
+
+
+def _cmd_reuse_validate(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        read = reuse_engine.reconstruct(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except reuse_model.ReuseValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(read.to_dict())
+        return EXIT_OK
+    print(f"valid     : {args.goal_id} reuse "
+          f"inputs={len(read.projection.inputs)} "
+          f"consumptions={len(read.consumptions)}")
+    print(f"projection: {read.projection.projection_id}")
+    return EXIT_OK
+
+
+def _cmd_reuse_history(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = reuse_summary.history_document(root, args.goal_id)
+    except reuse_model.ReuseValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+    else:
+        print(reuse_summary.render_history(document))
+    return EXIT_OK
+
+
+def _cmd_why_reuse(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = reuse_summary.explain_document(
+            root, args.goal_id, args.node_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except reuse_model.ReuseValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+        return EXIT_OK
+    if document["status"] == "UNKNOWN_NODE":
+        return _fail(f"node not found in reuse projection: {args.node_id}")
+    print(reuse_summary.render_explain(document))
+    return EXIT_OK
+
+
+def _cmd_provenance(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = reuse_summary.provenance_document(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except reuse_model.ReuseValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+    else:
+        print(reuse_summary.render_provenance(document))
+    return EXIT_OK
+
+
 def _cmd_version() -> int:
     print(f"trajectory-pi-goals {__version__}")
+    return EXIT_OK
+
+
+# --- Mission 015 adaptive replanning ------------------------------------------
+
+
+def _cmd_replan_preview(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        spec = load_spec(args.spec)
+        decision = replan_engine.preview_spec(
+            root, args.goal_id, spec,
+            created_at=orchestrator.utc_now_iso())
+    except UsageError as exc:
+        return _fail(f"spec: {exc}")
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except replan_model.ReplanValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(decision.to_dict())
+        return EXIT_OK
+    print(f"status    : {decision.status}")
+    print(f"reason    : {decision.reason}")
+    print(f"trigger   : {decision.trigger.trigger_id}")
+    if decision.plan is not None:
+        print(f"plan      : {decision.plan.plan_id}")
+        print(f"new graph : {decision.plan.new_graph_id}")
+        print(f"changes   : {len(decision.plan.changes)}")
+        for change in decision.plan.change_summary():
+            print(f"  - {change['op']} {change['reason']}")
+    return EXIT_OK
+
+
+def _cmd_replan_apply(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        spec = load_spec(args.spec)
+        result = replan_engine.apply_spec(
+            root, args.goal_id, spec,
+            created_at=orchestrator.utc_now_iso())
+    except UsageError as exc:
+        return _fail(f"spec: {exc}")
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except replan_model.ReplanValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(result.to_dict())
+        return EXIT_OK if result.accepted else EXIT_REJECTED
+    print(f"status    : {result.status}")
+    print(f"reason    : {result.reason}")
+    print(f"generation: {result.generation.generation_id} "
+          f"(#{result.generation.generation_number})")
+    print(f"graph     : {result.generation.graph_id}")
+    if result.plan is not None:
+        print(f"plan      : {result.plan.plan_id}")
+    print(f"scheduler : {'adopted' if result.adopted_scheduler else 'n/a'}")
+    if not result.accepted:
+        return EXIT_REJECTED
+    return EXIT_OK
+
+
+def _cmd_current_generation(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = replan_summary.status_document(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except replan_model.ReplanValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+    else:
+        print(replan_summary.render_status(document))
+    return EXIT_OK
+
+
+def _cmd_replan_history(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = replan_summary.history_document(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except replan_model.ReplanValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+    else:
+        print(replan_summary.render_history(document))
+    return EXIT_OK
+
+
+def _cmd_replan_why(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = replan_summary.explain_document(
+            root, args.goal_id, args.node_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except replan_model.ReplanValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+        return EXIT_OK
+    if document["node"] is None:
+        return _fail(f"node not found: {args.node_id}", EXIT_USAGE)
+    print(replan_summary.render_explain(document))
+    return EXIT_OK
+
+
+def _cmd_replan_validate(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        state = replan_engine.current_generation(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except replan_model.ReplanValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(state.to_dict())
+        return EXIT_OK
+    print(f"valid     : {args.goal_id} replan "
+          f"generations={len(state.generations)} events={len(state.events)}")
+    print(f"generation: {state.generation.generation_id} "
+          f"(#{state.generation.generation_number})")
+    print(f"graph     : {state.active_graph_id}")
+    return EXIT_OK
+
+
+def _cmd_replan_project(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = replan_summary.projection_document(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except replan_model.ReplanValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+    else:
+        print(json.dumps(document, indent=2, sort_keys=True))
+    return EXIT_OK
+
+
+def _cmd_adopt_generation(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        state = scheduler_engine.adopt_generation(
+            root, args.goal_id, created_at=orchestrator.utc_now_iso())
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except replan_model.ReplanValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except scheduler_model.SchedulerValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json({
+            "status": "ADOPTED",
+            "goal_id": state.goal_id,
+            "graph_id": state.graph_id,
+            "generation_id": state.generation_id,
+            "superseded_generations": list(state.superseded_generations),
+        })
+        return EXIT_OK
+    print(f"adopted   : {state.goal_id}")
+    print(f"generation: {state.generation_id}")
+    print(f"graph     : {state.graph_id}")
     return EXIT_OK
 
 
@@ -807,6 +1125,93 @@ def build_parser(prog: str = "trajectory-pi-goals") -> argparse.ArgumentParser:
     p.add_argument("goal_id")
     p.add_argument("node_id")
 
+    # --- Mission 014 cross-mission reuse -----------------------------------
+    p = sub.add_parser(
+        "reuse",
+        help="inspect the resolved cross-mission reuse projection")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+
+    p = sub.add_parser(
+        "reuse-resolve",
+        help="resolve + persist the reuse projection and consumption history")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+
+    for name, help_text in (
+        ("reuse-validate",
+         "reconstruct + revalidate the persisted reuse projection"),
+        ("reuse-history",
+         "append-only cross-mission consumption history"),
+        ("provenance",
+         "explicit producer -> consumer reuse provenance chains"),
+    ):
+        p = sub.add_parser(name, help=help_text)
+        _add_shared_flags(p)
+        p.add_argument("goal_id")
+
+    p = sub.add_parser(
+        "why-reuse",
+        help="explain one node's reuse inputs with stable reason codes")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+    p.add_argument("node_id")
+
+    # --- Mission 015 adaptive replanning -----------------------------------
+    p = sub.add_parser(
+        "replan-preview",
+        help="build and validate a replan plan without writing")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+    p.add_argument("--spec", required=True,
+                   help="bounded operator replan spec (trigger/changes/policy)")
+
+    p = sub.add_parser(
+        "replan-apply",
+        help="validate and atomically activate a replan generation")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+    p.add_argument("--spec", required=True,
+                   help="bounded operator replan spec (trigger/changes/policy)")
+
+    p = sub.add_parser(
+        "current-generation",
+        help="current validated graph generation (alias: generation)")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+
+    p = sub.add_parser("generation",
+                       help="current validated graph generation")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+
+    for name, help_text in (
+        ("replan-history", "append-only replan event history"),
+        ("replan-project", "machine-readable M016 replanning projection"),
+    ):
+        p = sub.add_parser(name, help=help_text)
+        _add_shared_flags(p)
+        p.add_argument("goal_id")
+
+    p = sub.add_parser(
+        "replan-why",
+        help="explain one node's replan evolution")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+    p.add_argument("node_id")
+
+    p = sub.add_parser(
+        "replan-validate",
+        help="reconstruct + revalidate persisted replan state")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+
+    p = sub.add_parser(
+        "adopt-generation",
+        help="re-bind scheduler state to the newest validated generation")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+
     sub.add_parser("version", help="CLI version")
     return parser
 
@@ -847,6 +1252,21 @@ def main(argv: list[str] | None = None) -> int:
         "history": _cmd_history,
         "why-schedule": _cmd_why_schedule,
         "validate-schedule": _cmd_validate_schedule,
+        "reuse": _cmd_reuse,
+        "reuse-resolve": _cmd_reuse_resolve,
+        "reuse-validate": _cmd_reuse_validate,
+        "reuse-history": _cmd_reuse_history,
+        "why-reuse": _cmd_why_reuse,
+        "provenance": _cmd_provenance,
+        "replan-preview": _cmd_replan_preview,
+        "replan-apply": _cmd_replan_apply,
+        "current-generation": _cmd_current_generation,
+        "generation": _cmd_current_generation,
+        "replan-history": _cmd_replan_history,
+        "replan-why": _cmd_replan_why,
+        "replan-validate": _cmd_replan_validate,
+        "replan-project": _cmd_replan_project,
+        "adopt-generation": _cmd_adopt_generation,
     }[args.command]
     return int(handler(args))
 

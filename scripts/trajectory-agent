@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# trajectory-agent — bounded TrajectoryOS agent-backend CLI (Mission 015).
+#
+# Thin, stable shim over src/trajectory_os/agents. It resolves the repository
+# root, prepends the src layout to PYTHONPATH and execs the operator CLI.
+#
+# Subcommands:
+#   probe    deterministic backend capability probe (pi, deepseek-harness)
+#   canary   one bounded DeepSeek Harness canary with Pi fallback evidence
+#   compare  run one bounded task on both backends and compare
+#   version
+#
+# No backend may commit, push, merge, reset, restore, clean, stash, rebase,
+# switch or checkout. This shim performs no Git write.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+SRC="${ROOT}/src"
+
+if [[ ! -d "${SRC}/trajectory_os/agents" ]]; then
+  printf 'trajectory-agent: internal error: missing trajectory_os/agents package (expected %s)\n' "${SRC}/trajectory_os/agents" >&2
+  exit 2
+fi
+
+export PYTHONPATH="${SRC}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m trajectory_os.agents.cli "$@"
