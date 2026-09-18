@@ -27,6 +27,20 @@
 #   history    append-only scheduling decision history
 #   why-schedule       explain one node's scheduling outcome
 #   validate-schedule  reconstruct + revalidate scheduler state
+#   reuse              inspect the resolved cross-mission reuse projection
+#   reuse-resolve      resolve + persist the reuse projection
+#   reuse-validate     reconstruct + revalidate the persisted projection
+#   reuse-history      append-only cross-mission consumption history
+#   why-reuse          explain one node's reuse inputs
+#   provenance         explicit producer -> consumer reuse provenance
+#   replan-preview     build + validate an adaptive replan plan (read-only)
+#   replan-apply       activate a validated replan generation
+#   current-generation current validated graph generation (alias: generation)
+#   replan-history     append-only replan event history
+#   replan-why         explain one node's replan evolution
+#   replan-validate    reconstruct + revalidate persisted replan state
+#   replan-project     machine-readable M016 replanning projection
+#   adopt-generation   re-bind scheduler state to the newest generation
 #   version
 #
 # Exit codes: 0 ok, 2 usage, 3 rejected, 4 unknown goal.
@@ -43,6 +57,16 @@ fi
 
 if [[ ! -d "${SRC}/trajectory_os/graph/scheduler" ]]; then
   printf 'trajectory-pi-goals: internal error: missing trajectory_os/graph/scheduler package (expected %s)\n' "${SRC}/trajectory_os/graph/scheduler" >&2
+  exit 2
+fi
+
+if [[ ! -d "${SRC}/trajectory_os/graph/reuse" ]]; then
+  printf 'trajectory-pi-goals: internal error: missing trajectory_os/graph/reuse package (expected %s)\n' "${SRC}/trajectory_os/graph/reuse" >&2
+  exit 2
+fi
+
+if [[ ! -d "${SRC}/trajectory_os/graph/replan" ]]; then
+  printf 'trajectory-pi-goals: internal error: missing trajectory_os/graph/replan package (expected %s)\n' "${SRC}/trajectory_os/graph/replan" >&2
   exit 2
 fi
 

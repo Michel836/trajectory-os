@@ -15,13 +15,19 @@ dispatch is never silently replayed.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from trajectory_os.graph import model as graph_model
 from trajectory_os.graph import readiness
 from trajectory_os.graph import store as graph_store
+from trajectory_os.graph.replan import model as replan_model
+from trajectory_os.graph.replan import store as replan_store
+from trajectory_os.graph.reuse import engine as reuse_engine
+from trajectory_os.graph.reuse import model as reuse_model
+from trajectory_os.graph.reuse import store as reuse_store
 from trajectory_os.graph.scheduler import arbiter, model
 from trajectory_os.graph.scheduler import evidence as sched_evidence
 from trajectory_os.graph.scheduler import identity as sched_identity
@@ -145,6 +151,23 @@ class CycleInputs:
     projection: readiness.ReadinessProjection
     runtime: dict[str, sched_evidence.MissionRuntimeEvidence]
     state: model.SchedulerState | None
+    reuse: reuse_model.ReuseProjection | None = None
+    generation: replan_model.Generation | None = None
+
+
+def _generation_payload(
+        generation: replan_model.Generation | None,
+) -> dict[str, object] | None:
+    if generation is None:
+        return None
+    return {
+        "generation_id": generation.generation_id,
+        "generation_number": generation.generation_number,
+        "parent_generation_id": generation.parent_generation_id,
+        "graph_id": generation.graph_id,
+        "plan_id": generation.plan_id,
+        "trigger_id": generation.trigger_id,
+    }
 
 
 def load_inputs(root: str, goal_id: str,
@@ -158,18 +181,42 @@ def load_inputs(root: str, goal_id: str,
     ]
     runtime = sched_evidence.collect_runtime(root, mission_ids)
     state = sched_store.load_state(root, goal_id)
+    generation = (replan_store.load_current(root, goal_id)
+                  if replan_store.replan_exists(root, goal_id) else None)
     if state is not None:
         if state.goal_id != graph.goal_id:
             raise model.SchedulerValidationError(
                 model.E_GRAPH_MISMATCH, "state",
                 f"goal {state.goal_id} != {graph.goal_id}")
         if state.graph_id != graph.graph_id:
+            # Mission 015: a replan superseded the generation this state was
+            # bound to. Stale-generation work is never dispatched silently.
+            if generation is not None \
+                    and generation.graph_id == graph.graph_id:
+                raise model.SchedulerValidationError(
+                    model.E_STALE_GENERATION, "state",
+                    f"{model.R_STALE_GENERATION}: {state.graph_id} superseded "
+                    f"by {generation.generation_id}")
             raise model.SchedulerValidationError(
                 model.E_GRAPH_MISMATCH, "state",
                 f"graph {state.graph_id} != {graph.graph_id}")
+        if (generation is not None and state.generation_id is not None
+                and state.generation_id != generation.generation_id):
+            raise model.SchedulerValidationError(
+                model.E_STALE_GENERATION, "state",
+                f"{model.R_STALE_GENERATION}: {state.generation_id} != "
+                f"{generation.generation_id}")
     policy.validate()  # explicit capacity is validated before any planning
+    # Mission 014: the scheduler consumes the *persisted* exact reuse
+    # projection (when one has been resolved). A declared-but-unpersisted
+    # reuse input is treated as unresolved by the arbiter, never guessed.
+    reuse = reuse_store.load_projection(root, goal_id)
+    if reuse is not None and reuse.graph_id != graph.graph_id:
+        # Mission 015: a projection resolved for a superseded generation is
+        # never trusted; declared mandatory inputs fail closed as unresolved.
+        reuse = None
     return CycleInputs(graph=graph, projection=projection, runtime=runtime,
-                       state=state)
+                       state=state, reuse=reuse, generation=generation)
 
 
 def build_decision(root: str, goal_id: str, policy: model.SchedulerPolicy,
@@ -190,6 +237,8 @@ def build_decision(root: str, goal_id: str, policy: model.SchedulerPolicy,
         counters,
         created_at=created_at,
         prior_active_node_ids=prior_active,
+        reuse=inputs.reuse,
+        generation=_generation_payload(inputs.generation),
     )
 
 
@@ -214,7 +263,9 @@ def run_cycle(
     if state is None:
         state = model.SchedulerState.initial(
             goal_id=inputs.graph.goal_id, graph_id=inputs.graph.graph_id,
-            policy=policy, updated_at=created_at)
+            policy=policy, updated_at=created_at,
+            generation_id=(inputs.generation.generation_id
+                           if inputs.generation is not None else None))
     decision = build_decision(root, goal_id, policy, created_at=created_at,
                               inputs=inputs)
     if expected_decision_id is not None \
@@ -315,6 +366,10 @@ def run_cycle(
             else (*state.decision_ids, decision.decision_id)
         ),
         updated_at=created_at,
+        generation_id=(inputs.generation.generation_id
+                       if inputs.generation is not None
+                       else state.generation_id),
+        superseded_generations=state.superseded_generations,
     )
     sched_store.save_state(paths, new_state)
     status = ("DISPATCHED" if dispatched
@@ -355,8 +410,15 @@ class ReconstructionRead:
 
 
 def reconstruct(root: str, goal_id: str) -> ReconstructionRead:
-    """Strictly reconstruct scheduler state and validate live accounting."""
+    """Strictly reconstruct scheduler state and validate live accounting.
+
+    Mission 014: when the graph declares reuse inputs, the persisted reuse
+    projection is reconstructed first so scheduler state can never be read
+    apart from the exact reusable evidence it was bound to.
+    """
     graph, _ = graph_store.load_graph(root, goal_id)
+    if any(node.reuse_inputs for node in graph.nodes):
+        reuse_engine.reconstruct(root, goal_id)
     reconstructed = sched_store.reconstruct(root, goal_id, graph)
     mission_ids = [
         node.mission_ref.mission_id
@@ -397,3 +459,62 @@ def decision_history(root: str, goal_id: str) -> Sequence[model.ScheduleDecision
     paths = sched_store.scheduler_paths(root, goal_id)
     return tuple(sched_store.load_decision(paths, decision_id)
                  for decision_id in state.decision_ids)
+
+
+# --- Mission 015 generation adoption ------------------------------------------
+
+
+def adopt_generation(root: str, goal_id: str, *,
+                     created_at: str) -> model.SchedulerState:
+    """Re-bind scheduler state to the newest validated graph generation.
+
+    The previous scheduler state and its immutable decisions are archived
+    (never deleted) under ``scheduler/superseded/<generation>/`` before a
+    fresh state is bound to the new generation. Dispatch records, budget
+    counters and decisions from the superseded generation are therefore
+    never reused, so stale-generation work can never be dispatched.
+    """
+    graph, _ = graph_store.load_graph(root, goal_id)
+    generation = (replan_store.load_current(root, goal_id)
+                  if replan_store.replan_exists(root, goal_id) else None)
+    if generation is None or generation.graph_id != graph.graph_id:
+        raise model.SchedulerValidationError(
+            model.E_STALE_GENERATION, "state",
+            "no validated active generation to adopt")
+    paths = sched_store.scheduler_paths(root, goal_id)
+    old = sched_store.load_state(root, goal_id)
+    if old is not None and old.generation_id == generation.generation_id \
+            and old.graph_id == graph.graph_id:
+        return old
+    superseded: list[str] = []
+    policy = model.DEFAULT_POLICY
+    if old is not None:
+        policy = old.policy
+        superseded = list(old.superseded_generations)
+        label = (old.generation_id or generation.parent_generation_id
+                 or old.graph_id)
+        if label not in superseded:
+            superseded.append(label)
+        archive_dir = paths["root"] / "superseded" / label
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        if paths["state"].is_file():
+            os.replace(paths["state"], archive_dir / "state.json")
+        decisions = paths["decisions"]
+        if decisions.is_dir():
+            os.replace(decisions, archive_dir / "decisions")
+    new_state = model.SchedulerState.initial(
+        goal_id=graph.goal_id, graph_id=graph.graph_id, policy=policy,
+        updated_at=created_at, generation_id=generation.generation_id)
+    new_state = replace(new_state,
+                        superseded_generations=tuple(superseded))
+    sched_store.save_state(paths, new_state)
+    sched_store.append_event(paths, {
+        "ts": created_at,
+        "event": "generation_adopted",
+        "goal_id": goal_id,
+        "generation_id": generation.generation_id,
+        "previous_generation_id": (None if old is None
+                                   else old.generation_id),
+        "superseded_generations": superseded,
+    })
+    return new_state

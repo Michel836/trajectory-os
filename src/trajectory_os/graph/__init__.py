@@ -28,9 +28,16 @@ Modules (imported lazily by consumers to keep the package light):
 * ``scheduler``  — M013 deterministic portfolio scheduler + resource
   arbiter (capacity policy, admission, dispatch composition, durable
   decisions).
+* ``reuse``      — M014 explicit fail-closed cross-mission evidence reuse
+  (declarations, read-only resolution, projection + consumption store).
+* ``replan``     — M015 bounded adaptive replanning over immutable graph
+  generations (explicit triggers, validated plans, append-only history,
+  scheduler generation binding).
 
-Design invariants (ADR-010, ADR-011): no second graph or execution engine,
-no operator micro-gates, no autonomous Git trust-boundary write.
+Design invariants (ADR-010, ADR-011, ADR-012, ADR-013): no second graph or
+execution engine, reuse is input provenance only (never completion proof),
+replanning is graph evolution only (never semantic success promotion), no
+operator micro-gates, no autonomous Git trust-boundary write.
 """
 
 from trajectory_os.graph.model import SCHEMA_VERSION as GRAPH_SCHEMA_VERSION  # noqa: F401

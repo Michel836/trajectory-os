@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "goal_id": "g-m014-dogfood",
+  "objective": "Prove explicit fail-closed cross-mission evidence reuse: one immutable proven upstream artifact consumed by multiple downstream nodes, with unresolved mandatory reuse remaining unscheduled.",
+  "nodes": [
+    {
+      "node_id": "n-up",
+      "title": "Upstream producer with proven exact evidence",
+      "priority": 90,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Producer completes with exact attested evidence"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-reuse-up",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 1
+      }
+    },
+    {
+      "node_id": "n-down",
+      "title": "First consumer of the immutable upstream proof",
+      "priority": 80,
+      "depends_on": [
+        "n-up"
+      ],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Consumer reuses proven upstream evidence as input provenance only"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-reuse-down",
+        "required": true
+      },
+      "reuse_inputs": [
+        {
+          "input_id": "up-validate",
+          "producer_node_id": "n-up",
+          "evidence_kind": "PHASE_EVIDENCE",
+          "phase_id": "validate",
+          "required": true,
+          "min_trust": "PROVEN"
+        }
+      ],
+      "resources": {
+        "cpu_slots": 1
+      }
+    },
+    {
+      "node_id": "n-down2",
+      "title": "Second consumer of the same immutable upstream proof",
+      "priority": 70,
+      "depends_on": [
+        "n-up"
+      ],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Multiple consumers may reference one immutable upstream proof"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-reuse-down2",
+        "required": true
+      },
+      "reuse_inputs": [
+        {
+          "input_id": "up-validate",
+          "producer_node_id": "n-up",
+          "evidence_kind": "PHASE_EVIDENCE",
+          "phase_id": "validate",
+          "required": true,
+          "min_trust": "PROVEN"
+        }
+      ],
+      "resources": {
+        "cpu_slots": 1
+      }
+    },
+    {
+      "node_id": "n-unresolved",
+      "title": "Consumer whose mandatory upstream evidence cannot resolve",
+      "priority": 60,
+      "depends_on": [
+        "n-up"
+      ],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Unresolved mandatory reuse is never admitted or dispatched"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-reuse-unresolved",
+        "required": true
+      },
+      "reuse_inputs": [
+        {
+          "input_id": "up-absent",
+          "producer_node_id": "n-up",
+          "evidence_kind": "PHASE_EVIDENCE",
+          "phase_id": "absent",
+          "required": true,
+          "min_trust": "PROVEN"
+        }
+      ],
+      "resources": {
+        "cpu_slots": 1
+      }
+    }
+  ]
+}

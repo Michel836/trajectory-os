@@ -28,6 +28,7 @@ from typing import Any, NoReturn
 
 from trajectory_os.graph import identity as graph_identity
 from trajectory_os.graph import model as graph_model
+from trajectory_os.graph.reuse import model as reuse_model
 from trajectory_os.graph.scheduler import identity as sched_identity
 from trajectory_os.missions import model as mission_model
 from trajectory_os.runs import resources as runs_resources
@@ -63,6 +64,7 @@ E_INVALID_RESOURCE = "INVALID_RESOURCE_SPEC"
 E_INVALID_BUDGET = "INVALID_BUDGET"
 E_IDENTITY_MISMATCH = "SCHEDULER_IDENTITY_MISMATCH"
 E_GRAPH_MISMATCH = "GRAPH_IDENTITY_MISMATCH"
+E_STALE_GENERATION = "STALE_GENERATION"
 E_DUPLICATE_SELECTION = "DUPLICATE_SELECTION"
 E_CONTRADICTORY_RESERVATION = "CONTRADICTORY_RESERVATION"
 E_IMPOSSIBLE_ACCOUNTING = "IMPOSSIBLE_RESOURCE_ACCOUNTING"
@@ -92,15 +94,18 @@ R_EXCLUSIVE_CONFLICT = "EXCLUSIVE_CONFLICT"
 R_CONCURRENCY_LIMIT = "CONCURRENCY_LIMIT"
 R_BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
 R_STALE_DECISION_INPUT = "STALE_DECISION_INPUT"
+R_STALE_GENERATION = "STALE_GENERATION"
+R_REUSE_UNRESOLVED = reuse_model.RR_PRODUCER_UNRESOLVED
 
+#: Mission 014: reuse reason codes are a closed scheduler reason set too.
 REASON_CODES = frozenset({
     R_ADMITTED, R_DEPENDENCY_BLOCKED, R_UNRESOLVED_EVIDENCE,
     R_INVALID_EVIDENCE, R_MISSION_FAILED, R_ALREADY_COMPLETE,
     R_ALREADY_ACTIVE, R_ALREADY_DISPATCHED, R_MISSING_MISSION_REFERENCE,
     R_INVALID_RESOURCE_SPEC, R_CPU_CAPACITY, R_GPU_CAPACITY, R_GPU_MEMORY,
     R_EXCLUSIVE_CONFLICT, R_CONCURRENCY_LIMIT, R_BUDGET_EXHAUSTED,
-    R_STALE_DECISION_INPUT,
-})
+    R_STALE_DECISION_INPUT, R_STALE_GENERATION,
+}) | reuse_model.REASON_CODES
 
 # --- node scheduling outcomes (closed set) -----------------------------------
 
@@ -997,13 +1002,15 @@ class SchedulerState:
     last_decision_id: str | None
     decision_ids: tuple[str, ...]
     updated_at: str
+    generation_id: str | None = None
+    superseded_generations: tuple[str, ...] = ()
 
     @property
     def counter_map(self) -> dict[str, int]:
         return dict(self.dispatch_counters)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        document: dict[str, Any] = {
             "schema_version": self.schema_version,
             "scheduler_version": SCHEDULER_VERSION,
             "goal_id": self.goal_id,
@@ -1016,6 +1023,14 @@ class SchedulerState:
             "decision_ids": list(self.decision_ids),
             "updated_at": self.updated_at,
         }
+        # Mission 015: emitted only when a generation is bound, so scheduler
+        # state written before (or without) replanning stays byte-identical.
+        if self.generation_id is not None:
+            document["generation_id"] = self.generation_id
+        if self.superseded_generations:
+            document["superseded_generations"] = list(
+                self.superseded_generations)
+        return document
 
     @staticmethod
     def initial(
@@ -1024,6 +1039,7 @@ class SchedulerState:
         graph_id: str,
         policy: SchedulerPolicy,
         updated_at: str,
+        generation_id: str | None = None,
     ) -> SchedulerState:
         return SchedulerState(
             schema_version=SCHEMA_VERSION,
@@ -1036,6 +1052,7 @@ class SchedulerState:
             last_decision_id=None,
             decision_ids=(),
             updated_at=updated_at,
+            generation_id=generation_id,
         )
 
     @staticmethod
@@ -1046,7 +1063,7 @@ class SchedulerState:
             ("schema_version", "scheduler_version", "goal_id", "graph_id",
              "policy", "dispatch_records", "dispatch_counters",
              "active_node_ids", "last_decision_id", "decision_ids",
-             "updated_at"),
+             "updated_at", "generation_id", "superseded_generations"),
             path)
         _require_keys(
             mapping,
@@ -1110,6 +1127,14 @@ class SchedulerState:
             decision_ids=decision_ids,
             updated_at=_require_str(mapping["updated_at"], path, "updated_at",
                                     maximum=MAX_TIMESTAMP_LEN),
+            generation_id=_optional_str(mapping.get("generation_id"), path,
+                                        "generation_id", maximum=64),
+            superseded_generations=tuple(
+                _require_str(item, path, "superseded_generations",
+                             maximum=64)
+                for item in _require_list(
+                    mapping.get("superseded_generations", []), path,
+                    "superseded_generations")),
         )
 
 
@@ -1129,6 +1154,8 @@ class ReconstructedScheduler:
             "status": "VALID",
             "goal_id": self.state.goal_id,
             "graph_id": self.state.graph_id,
+            "generation_id": self.state.generation_id,
+            "superseded_generations": list(self.state.superseded_generations),
             "policy": self.state.policy.to_dict(),
             "policy_id": self.state.policy.policy_id,
             "last_decision_id": self.state.last_decision_id,

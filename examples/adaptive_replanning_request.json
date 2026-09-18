@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "trigger": {
+    "kind": "MISSION_FAILURE",
+    "source": "n-bad",
+    "detail": "controlled mission failure requires a deterministic node supersession",
+    "provenance": {
+      "mission_id": "m-m015-bad",
+      "blocker_code": "MISSION_FAILED"
+    }
+  },
+  "changes": [
+    {
+      "op": "SUPERSEDE_NODE",
+      "reason": "replace the failed node with a fresh mission node",
+      "node_id": "n-bad",
+      "node_spec": {
+        "node_id": "n-bad2",
+        "title": "Replacement for the failed node",
+        "priority": 60,
+        "depends_on": [],
+        "acceptance_criteria": [
+          {
+            "criterion_id": "ac-1",
+            "statement": "Replacement node completes with exact attested evidence"
+          }
+        ],
+        "mission_ref": {
+          "mission_id": "m-m015-bad2",
+          "required": true
+        },
+        "resources": {
+          "cpu_slots": 1
+        }
+      }
+    }
+  ]
+}

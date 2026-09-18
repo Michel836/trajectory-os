@@ -1,0 +1,68 @@
+{
+  "fallback_backend": "pi",
+  "note": "Mission 015 DeepSeek Harness canary. The official Python SDK (deepseek-harness-sdk / deepseek_harness) was not installed, so the canary deterministically recorded CANARY_UNAVAILABLE / SDK_MISSING. The official dsh --profile sdk runtime is present; the proven Pi backend remains the fallback. No live remote model call was made.",
+  "outcome": {
+    "agent_version": "m015.1",
+    "canary_id": "062d2c1aca0c564a17c8897c22e73392779d176022cc5bc2fb84c77b17103bcc",
+    "comparison": {
+      "backend": "deepseek-harness",
+      "completion_reliable": false,
+      "completion_source": null,
+      "fallback_from": null,
+      "fallback_probe": {
+        "available": true,
+        "backend": "pi",
+        "reason": "BACKEND_OK",
+        "runtime_version": null,
+        "schema_version": 1,
+        "sdk_version": null,
+        "transport": "subprocess"
+      },
+      "lifecycle_evidence_count": 0,
+      "primary_probe": {
+        "available": true,
+        "backend": "deepseek-harness",
+        "reason": "BACKEND_OK",
+        "runtime_version": null,
+        "schema_version": 1,
+        "sdk_version": null,
+        "transport": "runtime"
+      },
+      "primary_transport": "runtime",
+      "reason": "SDK_MISSING",
+      "repair_count": 0,
+      "runtime_available": true,
+      "runtime_ms": null,
+      "sdk_available": false,
+      "status": "UNAVAILABLE",
+      "transport": "runtime"
+    },
+    "fallback": null,
+    "fallback_backend": "pi",
+    "fallback_run_id": null,
+    "primary": {
+      "agent_version": "m015.1",
+      "backend": "deepseek-harness",
+      "completion": null,
+      "error": "official DeepSeek Harness Python SDK not installed (deepseek-harness-sdk / deepseek_harness)",
+      "events": [],
+      "exit_code": null,
+      "fallback_from": null,
+      "final_response": null,
+      "reason": "SDK_MISSING",
+      "run_id": "d7aa8b9f8fe5dce02448a688255fb484fa0b04b05a4657ec401728cf6c035c3f",
+      "runtime_ms": null,
+      "schema_version": 1,
+      "session_id": null,
+      "status": "UNAVAILABLE",
+      "transport": "runtime"
+    },
+    "primary_backend": "deepseek-harness",
+    "primary_run_id": "d7aa8b9f8fe5dce02448a688255fb484fa0b04b05a4657ec401728cf6c035c3f",
+    "reason": "SDK_MISSING",
+    "schema_version": 1,
+    "status": "CANARY_UNAVAILABLE"
+  },
+  "primary_backend": "deepseek-harness",
+  "task": "bounded representative canary (never a full mission)"
+}

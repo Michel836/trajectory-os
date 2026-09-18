@@ -23,6 +23,7 @@ from collections.abc import Mapping, Sequence
 
 from trajectory_os.graph import model as graph_model
 from trajectory_os.graph import readiness
+from trajectory_os.graph.reuse import model as reuse_model
 from trajectory_os.graph.scheduler import evidence as sched_evidence
 from trajectory_os.graph.scheduler import identity as sched_identity
 from trajectory_os.graph.scheduler import model
@@ -70,10 +71,19 @@ def input_projection_payload(
     runtime: Mapping[str, sched_evidence.MissionRuntimeEvidence],
     reservations: Sequence[model.Reservation],
     dispatch_records: Sequence[model.DispatchRecord],
+    reuse: reuse_model.ReuseProjection | None = None,
+    generation: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    """Canonical, bounded identity payload for the scheduling inputs."""
+    """Canonical, bounded identity payload for the scheduling inputs.
+
+    Mission 014: when a reuse projection is supplied its exact identity and
+    every consumer's resolution reason are bound into the scheduling input
+    identity. When no reuse is declared the payload is byte-identical to the
+    M013 payload (backward-compatible decision inputs).
+    """
     statuses = projection.by_id()
     node_map = graph.node_map()
+    reuse_by_consumer = (reuse.by_consumer() if reuse is not None else {})
     nodes: list[dict[str, object]] = []
     for node_id in projection.topological_order:
         node = node_map[node_id]
@@ -81,7 +91,7 @@ def input_projection_payload(
         mission_id = (node.mission_ref.mission_id
                       if node.mission_ref is not None else None)
         runtime_record = runtime.get(mission_id) if mission_id else None
-        nodes.append({
+        node_payload: dict[str, object] = {
             "node_id": node_id,
             "priority": node.priority,
             "m012_state": status.state,
@@ -95,8 +105,13 @@ def input_projection_payload(
             ],
             "mission": (None if runtime_record is None
                         else runtime_record.to_dict()),
-        })
-    return {
+        }
+        if reuse is not None:
+            node_payload["reuse"] = [
+                item.to_dict() for item in reuse_by_consumer.get(node_id, ())
+            ]
+        nodes.append(node_payload)
+    payload: dict[str, object] = {
         "goal_id": graph.goal_id,
         "graph_id": graph.graph_id,
         "spec_sha256": graph.spec_sha256,
@@ -105,6 +120,13 @@ def input_projection_payload(
         "reservations": [r.to_dict() for r in reservations],
         "dispatch_records": [r.to_dict() for r in dispatch_records],
     }
+    if reuse is not None:
+        payload["reuse_projection_id"] = reuse.projection_id
+    # Mission 015: bind the exact active graph generation when one exists,
+    # so a decision can never be replayed against a superseded generation.
+    if generation is not None:
+        payload["graph_generation"] = dict(generation)
+    return payload
 
 
 def compute_input_projection_id(
@@ -114,9 +136,12 @@ def compute_input_projection_id(
     runtime: Mapping[str, sched_evidence.MissionRuntimeEvidence],
     reservations: Sequence[model.Reservation],
     dispatch_records: Sequence[model.DispatchRecord],
+    reuse: reuse_model.ReuseProjection | None = None,
+    generation: Mapping[str, object] | None = None,
 ) -> str:
     return sched_identity.projection_id(input_projection_payload(
-        graph, projection, policy, runtime, reservations, dispatch_records))
+        graph, projection, policy, runtime, reservations, dispatch_records,
+        reuse, generation))
 
 
 # --- classification -----------------------------------------------------------
@@ -191,6 +216,8 @@ def plan(
     *,
     created_at: str,
     prior_active_node_ids: Sequence[str] = (),
+    reuse: reuse_model.ReuseProjection | None = None,
+    generation: Mapping[str, object] | None = None,
 ) -> model.ScheduleDecision:
     """Pure deterministic scheduling decision (see module docstring)."""
     policy.validate()
@@ -295,6 +322,14 @@ def plan(
                 status, node, demand, model.O_DEFERRED,
                 model.R_BUDGET_EXHAUSTED))
             continue
+        reuse_reason = _reuse_blocking_reason(reuse, node)
+        if reuse_reason is not None:
+            # Mission 014: a node with an unresolved mandatory reuse input is
+            # never admitted or dispatched; the stable reuse reason code is
+            # preserved and bound into the scheduling input identity.
+            deferred.append(_node_decision(
+                status, node, demand, model.O_DEFERRED, reuse_reason))
+            continue
         candidates.append(_node_decision(
             status, node, demand, model.O_DEFERRED, model.R_ADMITTED))
 
@@ -353,7 +388,8 @@ def plan(
         newly_reserved=tuple(sorted(newly, key=lambda r: r.node_id)),
     )
     projection_id = compute_input_projection_id(
-        graph, projection, policy, runtime, current, dispatch_records)
+        graph, projection, policy, runtime, current, dispatch_records, reuse,
+        generation)
     return model.ScheduleDecision.build(
         goal_id=graph.goal_id,
         graph_id=graph.graph_id,
@@ -372,6 +408,24 @@ def plan(
         budget_counters=dispatch_counters,
         created_at=created_at,
     )
+
+
+def _reuse_blocking_reason(
+    reuse: reuse_model.ReuseProjection | None,
+    node: graph_model.GraphNode,
+) -> str | None:
+    """Stable blocking reason for a consumer node (Mission 014).
+
+    A node that declares mandatory reuse inputs is only admitted when a
+    persisted reuse projection proves every required input resolved. With no
+    persisted projection at all, declared inputs fail closed as unresolved —
+    implicit evidence is never trusted.
+    """
+    if not node.reuse_inputs:
+        return None
+    if reuse is None:
+        return reuse_model.RR_PRODUCER_UNRESOLVED
+    return reuse.blocking_reason(node.node_id)
 
 
 def _invalid_demand(node: graph_model.GraphNode) -> model.NodeDemand:

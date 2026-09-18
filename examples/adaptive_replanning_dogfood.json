@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "goal_id": "g-m015-dogfood",
+  "objective": "Prove bounded deterministic adaptive replanning: explicit failure/blocker triggers create a new archived generation, stale triggers and cycles fail closed, invalidated M014 reuse blocks downstream scheduling, and the M013 scheduler only ever sees the latest validated generation.",
+  "nodes": [
+    {
+      "node_id": "n-up",
+      "title": "Upstream producer whose evidence may be invalidated",
+      "priority": 90,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Producer completes with exact attested evidence"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-m015-up",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 1
+      }
+    },
+    {
+      "node_id": "n-down",
+      "title": "Consumer of the reusable upstream proof",
+      "priority": 70,
+      "depends_on": [
+        "n-up"
+      ],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Consumer consumes only proven upstream evidence"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-m015-down",
+        "required": true
+      },
+      "reuse_inputs": [
+        {
+          "input_id": "up-validate",
+          "producer_node_id": "n-up",
+          "evidence_kind": "PHASE_EVIDENCE",
+          "phase_id": "validate",
+          "required": true,
+          "min_trust": "PROVEN"
+        }
+      ],
+      "resources": {
+        "cpu_slots": 1
+      }
+    },
+    {
+      "node_id": "n-bad",
+      "title": "Node whose mission fails and must be superseded",
+      "priority": 60,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Node is deterministically replaced after failure"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-m015-bad",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 1
+      }
+    },
+    {
+      "node_id": "n-tail",
+      "title": "Downstream node rewired by supersession",
+      "priority": 50,
+      "depends_on": [
+        "n-bad"
+      ],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Supersession preserves the dependency edge to the replacement"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-m015-tail",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 1
+      }
+    }
+  ]
+}

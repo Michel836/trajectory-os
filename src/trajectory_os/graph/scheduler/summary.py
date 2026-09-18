@@ -13,6 +13,7 @@ from typing import Any
 
 from trajectory_os.graph import readiness
 from trajectory_os.graph import store as graph_store
+from trajectory_os.graph.reuse import store as reuse_store
 from trajectory_os.graph.scheduler import arbiter, engine, model
 from trajectory_os.graph.scheduler import evidence as sched_evidence
 from trajectory_os.graph.scheduler import store as sched_store
@@ -49,6 +50,7 @@ def status_document(root: str, goal_id: str) -> dict[str, Any]:
     latest = engine.latest_decision(root, goal_id)
     dispatch_records = state.dispatch_records if state is not None else ()
     reservations = arbiter.derive_reservations(graph, runtime, dispatch_records)
+    reuse = reuse_store.load_projection(root, goal_id)
     document: dict[str, Any] = {
         "status": "OK",
         "schema_version": model.SCHEMA_VERSION,
@@ -86,6 +88,10 @@ def status_document(root: str, goal_id: str) -> dict[str, Any]:
         "history": (list(state.decision_ids) if state is not None else []),
         "m012_ready": list(projection.ready()),
         "m012_blocked": list(projection.blocked()),
+        "reuse_projection_id": (reuse.projection_id
+                                if reuse is not None else None),
+        "reuse_blocked_nodes": (list(reuse.blocked_nodes())
+                                if reuse is not None else []),
     }
     return document
 
@@ -263,13 +269,18 @@ def render_portfolio(document: Mapping[str, Any]) -> str:
     counts = document["counts"]
     policy = document["policy"]
     totals = document["reservation_totals"]
+    blocked_reuse = document.get("reuse_blocked_nodes") or []
+    reuse_text = f" reuse_blocked={len(blocked_reuse)}"
+    if blocked_reuse:
+        reuse_text += f"[{_fmt(list(blocked_reuse))}]"
     return (
         f"portfolio : {document['goal_id']} "
         f"(nodes ready={len(document['m012_ready'])} "
         f"blocked={len(document['m012_blocked'])}) "
         f"admitted={counts['admitted']} deferred={counts['deferred']} "
         f"blocked={counts['blocked']} active={counts['active']} "
-        f"completed={counts['completed']} "
+        f"completed={counts['completed']}"
+        f"{reuse_text} "
         f"gpu={totals['gpu_slots']}/{policy['gpu_slots']} "
         f"vram={totals['gpu_mem_bytes']}/{policy['gpu_mem_bytes']} "
         f"cpu={totals['cpu_slots']}/{policy['cpu_slots']} "

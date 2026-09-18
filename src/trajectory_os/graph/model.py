@@ -89,17 +89,47 @@ E_CONTRADICTORY_REFERENCE = "CONTRADICTORY_REFERENCE"
 E_EMPTY_GRAPH = "EMPTY_GRAPH"
 E_IDENTITY_MISMATCH = "GRAPH_IDENTITY_MISMATCH"
 
+# --- Mission 014 cross-mission reuse declaration error codes ----------------
+E_INVALID_REUSE = "INVALID_REUSE_INPUT"
+E_DUPLICATE_REUSE_INPUT = "DUPLICATE_REUSE_INPUT"
+E_REUSE_PRODUCER = "REUSE_PRODUCER_NOT_DEPENDENCY"
+E_REUSE_REFERENCE = "REUSE_REFERENCE_MISMATCH"
+
 #: Input spec top-level keys.
 SPEC_KEYS = ("schema_version", "goal_id", "objective", "nodes")
 
 #: Normalized node keys.
 NODE_KEYS = (
     "node_id", "title", "priority", "depends_on", "acceptance_criteria",
-    "mission_ref", "resources", "budgets",
+    "mission_ref", "resources", "budgets", "reuse_inputs",
 )
 
 #: Mission reference keys.
 MISSION_REF_KEYS = ("mission_id", "required")
+
+# --- Mission 014 cross-mission reuse declaration -----------------------------
+
+#: Hard bounded number of explicit reuse inputs one node may declare.
+MAX_REUSE_INPUTS_PER_NODE = 16
+
+#: Bounded reuse input identifier / phase identifier lengths.
+MAX_REUSE_INPUT_ID_LEN = 64
+MAX_REUSE_PHASE_ID_LEN = 64
+
+#: Supported reusable evidence kinds (closed set; unknown kinds fail closed).
+EK_PHASE_EVIDENCE = "PHASE_EVIDENCE"
+EVIDENCE_KINDS = frozenset({EK_PHASE_EVIDENCE})
+
+#: Trust levels a consumer may require of reused upstream evidence.
+TRUST_PROVEN = "PROVEN"
+TRUST_LEGACY = "LEGACY"
+TRUST_LEVELS = frozenset({TRUST_PROVEN, TRUST_LEGACY})
+
+#: Normalized reuse input keys.
+REUSE_INPUT_KEYS = (
+    "input_id", "producer_node_id", "evidence_kind", "phase_id",
+    "required", "min_trust", "producer_mission_id", "expected_sha256",
+)
 
 #: Acceptance criterion keys.
 CRITERION_KEYS = ("criterion_id", "statement", "verification")
@@ -253,6 +283,80 @@ class MissionRef:
 
 
 @dataclass(frozen=True)
+class ReuseInput:
+    """One explicit, bounded cross-mission reusable upstream evidence input.
+
+    A consumer node declares exactly which dependency's proven evidence it
+    consumes. Reuse is *input provenance only*: it never copies semantic
+    success, never proves the consumer complete, and never mutates the
+    producer's records. ``expected_sha256`` optionally pins the exact
+    artifact content identity; ``min_trust`` distinguishes freshly attested
+    (``PROVEN``) evidence from historical/legacy evidence that can never be
+    silently promoted.
+    """
+
+    input_id: str
+    producer_node_id: str
+    evidence_kind: str = EK_PHASE_EVIDENCE
+    phase_id: str = ""
+    required: bool = True
+    min_trust: str = TRUST_PROVEN
+    producer_mission_id: str | None = None
+    expected_sha256: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "input_id": self.input_id,
+            "producer_node_id": self.producer_node_id,
+            "evidence_kind": self.evidence_kind,
+            "phase_id": self.phase_id,
+            "required": self.required,
+            "min_trust": self.min_trust,
+            "producer_mission_id": self.producer_mission_id,
+            "expected_sha256": self.expected_sha256,
+        }
+
+    @staticmethod
+    def from_dict(doc: Mapping[str, Any], path: str) -> ReuseInput:
+        _known_keys(doc, REUSE_INPUT_KEYS, path)
+        _require_keys(doc, ("input_id", "producer_node_id"), path)
+        input_id = _require_id(doc["input_id"], path, "input_id")
+        producer = _require_id(doc["producer_node_id"], path,
+                               "producer_node_id")
+        evidence_kind = doc.get("evidence_kind", EK_PHASE_EVIDENCE)
+        if evidence_kind not in EVIDENCE_KINDS:
+            _fail(E_INVALID_REUSE, path, f"evidence_kind={evidence_kind!r}")
+        phase_id = doc.get("phase_id", "")
+        if phase_id == "":
+            _fail(E_INVALID_REUSE, path, "phase_id is required")
+        phase_id = _require_id(phase_id, path, "phase_id")
+        required = _require_bool(doc.get("required", True), path, "required")
+        min_trust = doc.get("min_trust", TRUST_PROVEN)
+        if min_trust not in TRUST_LEVELS:
+            _fail(E_INVALID_REUSE, path, f"min_trust={min_trust!r}")
+        producer_mission_id = _optional_str(
+            doc.get("producer_mission_id"), path, "producer_mission_id",
+            maximum=MAX_REUSE_INPUT_ID_LEN)
+        if producer_mission_id is not None:
+            _require_id(producer_mission_id, path, "producer_mission_id")
+        expected = doc.get("expected_sha256")
+        if expected is not None and (
+                not isinstance(expected, str)
+                or not graph_identity.is_valid_digest(expected)):
+            _fail(E_INVALID_REUSE, path, "expected_sha256")
+        return ReuseInput(
+            input_id=input_id,
+            producer_node_id=producer,
+            evidence_kind=evidence_kind,
+            phase_id=phase_id,
+            required=required,
+            min_trust=min_trust,
+            producer_mission_id=producer_mission_id,
+            expected_sha256=expected,
+        )
+
+
+@dataclass(frozen=True)
 class NodeResources:
     """Bounded structured resource requirement suitable for M013 arbitration.
 
@@ -372,9 +476,10 @@ class GraphNode:
     mission_ref: MissionRef | None
     resources: NodeResources
     budgets: NodeBudget
+    reuse_inputs: tuple[ReuseInput, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        document: dict[str, Any] = {
             "node_id": self.node_id,
             "title": self.title,
             "priority": self.priority,
@@ -386,14 +491,23 @@ class GraphNode:
             "resources": self.resources.to_dict(),
             "budgets": self.budgets.to_dict(),
         }
+        # Mission 014: the field is emitted only when declared so that
+        # pre-M014 graphs keep their exact M012 identity payload/digest.
+        if self.reuse_inputs:
+            document["reuse_inputs"] = [r.to_dict()
+                                        for r in self.reuse_inputs]
+        return document
 
     @staticmethod
     def from_dict(doc: Mapping[str, Any], path: str, *,
                   require_all: bool = False) -> GraphNode:
         _known_keys(doc, NODE_KEYS, path)
-        required = (NODE_KEYS if require_all else
-                    ("node_id", "title", "priority", "depends_on",
-                     "acceptance_criteria"))
+        required = (
+            ("node_id", "title", "priority", "depends_on",
+             "acceptance_criteria", "mission_ref", "resources", "budgets")
+            if require_all else
+            ("node_id", "title", "priority", "depends_on",
+             "acceptance_criteria"))
         _require_keys(doc, required, path)
         node_id = _require_id(doc["node_id"], path, "node_id")
         title = _require_str(doc["title"], path, "title",
@@ -445,6 +559,7 @@ class GraphNode:
         raw_budgets = doc.get("budgets")
         if raw_budgets is not None and not isinstance(raw_budgets, dict):
             _fail(E_INVALID_BUDGET, path, "budgets must be an object")
+        reuse_inputs = _parse_reuse_inputs(doc.get("reuse_inputs"), path)
         return GraphNode(
             node_id=node_id,
             title=title,
@@ -456,7 +571,29 @@ class GraphNode:
             resources=NodeResources.from_dict(
                 raw_resources, f"{path}[resources]"),
             budgets=NodeBudget.from_dict(raw_budgets, f"{path}[budgets]"),
+            reuse_inputs=reuse_inputs,
         )
+
+
+def _parse_reuse_inputs(raw: object, path: str) -> tuple[ReuseInput, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        _fail(E_INVALID_REUSE, path, "reuse_inputs must be a list")
+    if len(raw) > MAX_REUSE_INPUTS_PER_NODE:
+        _fail(E_OVERSIZED, path, "too many reuse inputs")
+    inputs: list[ReuseInput] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw):
+        ipath = f"{path}[reuse_inputs/{index}]"
+        if not isinstance(item, dict):
+            _fail(E_INVALID_REUSE, ipath, "reuse input object required")
+        parsed = ReuseInput.from_dict(item, ipath)
+        if parsed.input_id in seen:
+            _fail(E_DUPLICATE_REUSE_INPUT, ipath, parsed.input_id)
+        seen.add(parsed.input_id)
+        inputs.append(parsed)
+    return tuple(sorted(inputs, key=lambda r: r.input_id))
 
 
 @dataclass(frozen=True)
@@ -768,6 +905,36 @@ def _validate_references(nodes: Sequence[GraphNode], path: str) -> None:
                   f"mission {ref.mission_id!r} referenced by {previous!r} "
                   f"and {node.node_id!r}")
         mission_ids[ref.mission_id] = node.node_id
+    _validate_reuse_references(nodes, path)
+
+
+def _validate_reuse_references(nodes: Sequence[GraphNode], path: str) -> None:
+    """Fail closed on impossible/dangling/contradictory reuse declarations.
+
+    A reuse input may only name an **explicit direct dependency** of the
+    consumer node, so reuse can never introduce an implicit edge, an
+    impossible dependency relation or a cycle. When an explicit
+    ``producer_mission_id`` is declared it must match the producer node's
+    own canonical mission reference.
+    """
+    node_map = {node.node_id: node for node in nodes}
+    for node in nodes:
+        for reuse in node.reuse_inputs:
+            rpath = f"{path}[node {node.node_id} reuse {reuse.input_id}]"
+            if reuse.producer_node_id not in node.depends_on:
+                _fail(E_REUSE_PRODUCER, rpath,
+                      f"producer {reuse.producer_node_id!r} is not an "
+                      f"explicit dependency of {node.node_id!r}")
+            producer = node_map[reuse.producer_node_id]
+            if reuse.producer_mission_id is not None:
+                producer_mission = (producer.mission_ref.mission_id
+                                    if producer.mission_ref is not None
+                                    else None)
+                if producer_mission != reuse.producer_mission_id:
+                    _fail(E_REUSE_REFERENCE, rpath,
+                          f"producer_mission_id="
+                          f"{reuse.producer_mission_id!r} != "
+                          f"{producer_mission!r}")
 
 
 def normalize_spec(doc: object, *, path: str = "spec") -> NormalizedSpec:
