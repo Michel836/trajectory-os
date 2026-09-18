@@ -81,6 +81,8 @@ if cfg.get("attestation", True):
     doc["attestation"] = att
 Path(os.environ["TRAJECTORY_SUBRUN_RESULT_FILE"]).write_text(
     json.dumps(doc), encoding="utf-8")
+if cfg.get("stdout_after_meta"):
+    print("producer output written after wrapper meta")
 '''
 
 
@@ -268,6 +270,21 @@ def test_runner_rejects_stale_run_directory(tmp_path: Path):
     res = runner.ProcessPhaseRunner().run(req)
     assert res.classification == model.CR_UNPROVEN
     assert res.attestation_error == semantic.ATT_STALE
+
+
+def test_runner_accepts_fresh_attestation_when_stdout_is_newer_than_meta(
+        tmp_path: Path):
+    """stdout writes after meta creation must not manufacture STALE evidence."""
+    repo = _git_repo(tmp_path)
+    req = _req(
+        tmp_path,
+        _producer(tmp_path, stdout_after_meta=True),
+        cwd=repo,
+    )
+    res = runner.ProcessPhaseRunner().run(req)
+    assert res.classification == model.CR_COMPLETED
+    assert res.attestation == semantic.ATTESTATION_VERIFIED
+    assert res.attestation_error is None
 
 
 def test_runner_rejects_workspace_mismatch(tmp_path: Path):

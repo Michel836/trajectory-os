@@ -14,8 +14,24 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from trajectory_os.missions import model, store
+from trajectory_os.missions import model, semantic, store
 from trajectory_os.missions.store import MissionDoc
+
+# --- Mission 009: exact-execution-attestation projection -------------------
+# The three deterministic operator-visible states, derived ONLY from the
+# canonical persisted sub-run evidence (never re-derived, never inferred
+# from an exit code):
+#
+#   VERIFIED  the runner recorded an independently verified exact
+#             execution attestation for this exact sub-run;
+#   UNPROVEN  an M008 attestation outcome was recorded but is NOT verified
+#             (missing/malformed/partial/contradictory/mismatched/stale) —
+#             the stable fail-closed code is preserved for the operator;
+#   LEGACY    no M008 outcome was ever recorded (legacy M007/pre-M008
+#             evidence) — no verification claim is made.
+ATT_VERIFIED = "VERIFIED"
+ATT_UNPROVEN = "UNPROVEN"
+ATT_LEGACY = "LEGACY"
 
 
 def _parse_iso(ts: str) -> datetime.datetime:
@@ -50,11 +66,75 @@ def _phase_flags(phase: store.PhaseDoc) -> dict[str, Any]:
     }
 
 
+def _attestation_identity(record: store.SubrunDoc) -> dict[str, str] | None:
+    """Bounded identity for a recorded VERIFIED attestation (or ``None``).
+
+    The identity values (wrapper run id, repository HEAD, exact patch
+    digest) are read from the canonical per-sub-run semantic evidence the
+    runner already verified and persisted alongside the sub-run. This
+    projection never re-derives them, never invents values, and omits the
+    identity entirely when that evidence is unavailable or no longer
+    carries a complete attestation bound to this exact sub-run.
+    """
+    evidence = (Path(record.stdout_file).parent
+                / f"{record.subrun_id}.semantic.json")
+    if not evidence.is_file():
+        return None
+    doc, error = semantic.read_semantic_file(str(evidence))
+    if error is not None or doc is None:
+        return None
+    att = semantic.extract_attestation(doc)
+    if semantic.validate_attestation(att) is not None:
+        return None
+    assert isinstance(att, dict)
+    try:
+        semantic.validate_attestation_binding(att, record.subrun_id)
+    except semantic.SemanticError:
+        return None
+
+    run_id = semantic.attestation_field(att, "run_id")
+    head_before = semantic.attestation_field(att, "repo_head_before")
+    head_after = semantic.attestation_field(att, "repo_head_after")
+    patch_sha = semantic.attestation_field(att, "patch_sha256")
+    identity: dict[str, str] = {}
+    if run_id:
+        identity["run_id"] = run_id
+    if head_before and head_after and head_before == head_after:
+        identity["repo_head"] = head_after
+    if patch_sha:
+        identity["patch_sha256"] = patch_sha
+    return identity or None
+
+
+def _attestation_view(record: store.SubrunDoc) -> dict[str, Any]:
+    """Deterministic M008 attestation projection for one sub-run record.
+
+    Derived ONLY from the persisted attestation outcome pair on the
+    canonical sub-run record (single source of truth). ``identity`` is
+    attached only for proven attestations and only where the canonical
+    evidence is still readable.
+    """
+    if record.attestation == semantic.ATTESTATION_VERIFIED:
+        return {
+            "status": ATT_VERIFIED,
+            "error": None,
+            "identity": _attestation_identity(record),
+        }
+    if record.attestation_error is not None:
+        return {
+            "status": ATT_UNPROVEN,
+            "error": record.attestation_error,
+            "identity": None,
+        }
+    return {"status": ATT_LEGACY, "error": None, "identity": None}
+
+
 def _subrun_flags(mission: MissionDoc,
                   paths: dict[str, Path]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for subrun_id in mission.subruns:
         record = store.load_subrun(paths, subrun_id)
+        attestation = _attestation_view(record)
         records.append({
             "subrun_id": record.subrun_id,
             "phase_id": record.phase_id,
@@ -63,6 +143,9 @@ def _subrun_flags(mission: MissionDoc,
             "exit_code": record.exit_code,
             "classification": record.classification,
             "provider_failure": record.provider_failure,
+            "attestation": attestation["status"],
+            "attestation_error": attestation["error"],
+            "attestation_identity": attestation["identity"],
         })
     return records
 
@@ -141,9 +224,27 @@ def mission_summary(mission: MissionDoc,
             "subrun_count": len(model_heavy_subruns),
             "subruns": [
                 {"subrun_id": sub["subrun_id"], "phase_id": sub["phase_id"],
-                 "classification": sub["classification"]}
+                 "classification": sub["classification"],
+                 "attestation": sub["attestation"],
+                 "attestation_error": sub["attestation_error"],
+                 "attestation_identity": sub["attestation_identity"]}
                 for sub in model_heavy_subruns
             ],
+        },
+        # Mission 009: exact-execution-attestation projection over the
+        # model-heavy sub-runs (the only sub-runs that carry an M008
+        # outcome). Counts are derived from the same canonical records.
+        "attestation": {
+            "model_heavy_subruns": len(model_heavy_subruns),
+            "verified": sum(
+                1 for sub in model_heavy_subruns
+                if sub["attestation"] == ATT_VERIFIED),
+            "unproven": sum(
+                1 for sub in model_heavy_subruns
+                if sub["attestation"] == ATT_UNPROVEN),
+            "legacy": sum(
+                1 for sub in model_heavy_subruns
+                if sub["attestation"] == ATT_LEGACY),
         },
         "lifecycle_events": {
             "reconstruction": reconstruction_events,
@@ -210,6 +311,12 @@ def render_summary(summary: Mapping[str, Any]) -> str:
         lines.append(
             f"lifecycle : reconstruction={lifecycle['reconstruction']} "
             f"resume={lifecycle['resume']}")
+    attestation = summary.get("attestation")
+    if isinstance(attestation, Mapping):
+        lines.append(
+            f"attestation : verified={attestation['verified']} "
+            f"unproven={attestation['unproven']} "
+            f"legacy={attestation['legacy']}")
     lines.append(f"human     : interventions={summary['human_interventions']}")
     phases = summary["phases"]
     if isinstance(phases, list):

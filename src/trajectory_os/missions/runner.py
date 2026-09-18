@@ -186,6 +186,18 @@ def semantic_evidence_path(request: SubrunRequest) -> Path:
     return Path(request.stdout_file).parent / f"{request.subrun_id}.semantic.json"
 
 
+def attestation_launch_marker_path(request: SubrunRequest) -> Path:
+    """Immutable per-subrun launch-order anchor for exact attestation.
+
+    Unlike stdout/stderr, this marker is written exactly once immediately
+    before the subprocess launch and is never touched by output capture.
+    """
+    if not request.subrun_id:
+        raise ValueError("subrun_id is required (launch marker is bound "
+                         "to the exact sub-run)")
+    return Path(request.stdout_file).parent / f"{request.subrun_id}.launch"
+
+
 def process_env(request: SubrunRequest) -> dict[str, str]:
     """Child environment for one sub-run.
 
@@ -228,8 +240,8 @@ def phase_state_for_classification(classification: str) -> str:
 #   * a fresh ``git rev-parse HEAD`` in the repository (current HEAD must equal
 #     both attested heads — the wrapper never commits);
 #   * a fresh SHA-256 over the exact ``worktree.patch`` bytes;
-#   * the launch ordering (``meta.txt`` must postdate the runner's own stdout
-#     evidence file created at launch — the clock-free staleness anchor).
+#   * the launch ordering (``meta.txt`` must postdate a dedicated immutable
+#     launch marker created by the runner immediately before subprocess launch).
 # Any missing artifact, unreadable file, git failure, or disagreement fails
 # closed with a stable code. This function performs I/O by design (it is the
 # runner's job); the pure shape checks live in ``semantic``.
@@ -336,15 +348,17 @@ def verify_attestation(doc: Any,
     if not meta_path.is_file():
         return (False, semantic.ATT_STALE)
 
-    # Clock-free staleness anchor: the run's meta.txt must postdate the
-    # runner's own stdout evidence file, which was created at launch. A run
-    # directory left by a previous attempt predates it; equality fails closed.
+    # Launch-order staleness anchor: the wrapper meta must postdate the
+    # runner's dedicated immutable launch marker. stdout/stderr are unsuitable
+    # anchors because normal subprocess output updates their mtimes after the
+    # wrapper has already created meta.txt.
+    launch_path = attestation_launch_marker_path(request)
     try:
-        meta_mtime = meta_path.stat().st_mtime
-        launch_mtime = Path(request.stdout_file).stat().st_mtime
+        meta_mtime_ns = meta_path.stat().st_mtime_ns
+        launch_mtime_ns = launch_path.stat().st_mtime_ns
     except OSError:
         return (False, semantic.ATT_STALE)
-    if meta_mtime <= launch_mtime:
+    if meta_mtime_ns <= launch_mtime_ns:
         return (False, semantic.ATT_STALE)
 
     meta = _read_kv_file(meta_path)
@@ -397,11 +411,21 @@ class ProcessPhaseRunner:
         sem_path: Path | None = None
         if request.semantic_required:
             sem_path = semantic_evidence_path(request)
-            # Fail-closed hygiene: clear any stale semantic evidence left by
-            # a previous attempt/launch so ONLY this sub-run's own emission
-            # can ever serve as its completion proof.
+            launch_path = attestation_launch_marker_path(request)
+            # Fail-closed hygiene: clear any stale per-subrun artifacts before
+            # establishing this launch's unique ordering anchor.
             with contextlib.suppress(OSError):
                 sem_path.unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
+                launch_path.unlink(missing_ok=True)
+            try:
+                launch_path.touch(exist_ok=False)
+            except OSError:
+                return SubrunResult(
+                    exit_code=None,
+                    classification=model.CR_CRASHED,
+                    attestation_error=semantic.ATT_STALE,
+                )
         timed_out = False
         exit_code: int | None = None
         with out_path.open("wb") as out_fh, err_path.open("wb") as err_fh:

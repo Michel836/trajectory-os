@@ -1579,3 +1579,96 @@ def test_context_exceeded_emits_provider_failure_semantic_result(
         doc["agent_classification"]
         == "UPSTREAM_PROVIDER_CONTEXT_EXCEEDED"
     )
+
+
+def _semantic_mapping_result(
+    *,
+    classification: str,
+    mode: str,
+    readiness: str = "",
+    review_status: str = "",
+    final_verify_status: str = "",
+    head_before: str = "a",
+    head_after: str = "a",
+    semantic_index_state: str = "UNCHANGED",
+    plan_worktree_state: str = "UNCHANGED",
+) -> str:
+    """Execute only the wrapper's semantic mapping function in bash."""
+    import subprocess
+
+    text = Path("scripts/trajectory-pi").read_text(encoding="utf-8")
+    start = text.index("semantic_status_for_classification() {")
+    end = text.index(
+        "\n\nemit_semantic_subrun_result() {",
+        start,
+    )
+    function = text[start:end]
+
+    script = f"""
+{function}
+RUN_MODE={mode!r}
+READINESS={readiness!r}
+REVIEW_STATUS={review_status!r}
+FINAL_VERIFY_STATUS={final_verify_status!r}
+HEAD_BEFORE={head_before!r}
+HEAD_AFTER={head_after!r}
+SEMANTIC_INDEX_AFTER_AGENT_STATE={semantic_index_state!r}
+PLAN_WORKTREE_STATE={plan_worktree_state!r}
+semantic_status_for_classification {classification!r}
+"""
+
+    cp = subprocess.run(
+        ["bash", "-c", script],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    return cp.stdout.strip()
+
+
+def test_read_only_plan_verified_maps_to_success_when_invariants_hold() -> None:
+    assert _semantic_mapping_result(
+        classification="READ_ONLY_VERIFIED",
+        mode="PLAN",
+    ) == "SUCCESS"
+
+
+def test_read_only_review_requires_full_independent_review_proof() -> None:
+    assert _semantic_mapping_result(
+        classification="READ_ONLY_VERIFIED",
+        mode="REVIEW",
+        readiness="READY_FOR_COMMIT",
+        review_status="PASS",
+        final_verify_status="PASS",
+    ) == "SUCCESS"
+
+
+def test_read_only_review_error_cannot_be_promoted_to_success() -> None:
+    assert _semantic_mapping_result(
+        classification="READ_ONLY_VERIFIED",
+        mode="REVIEW",
+        readiness="NEEDS_REVIEW",
+        review_status="ERROR",
+        final_verify_status="NOT_RUN",
+    ) == "FAILED"
+
+
+def test_read_only_review_unproven_state_remains_unknown() -> None:
+    assert _semantic_mapping_result(
+        classification="READ_ONLY_VERIFIED",
+        mode="REVIEW",
+    ) == "UNKNOWN"
+
+
+def test_unknown_read_only_mode_never_inherits_success() -> None:
+    assert _semantic_mapping_result(
+        classification="READ_ONLY_VERIFIED",
+        mode="SOMETHING_NEW",
+    ) == "UNKNOWN"
+
+
+def test_read_only_failed_maps_to_failed() -> None:
+    assert _semantic_mapping_result(
+        classification="READ_ONLY_FAILED",
+        mode="REVIEW",
+    ) == "FAILED"
