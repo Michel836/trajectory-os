@@ -831,22 +831,50 @@ def test_v169_contract_fields_stable_under_v172(runs: Path) -> None:
 # Attributed live status: a remote agent must never be rendered as an idle
 # local Ollama/GPU workload, and local GPU telemetry names its actor.
 
+# M012 canonical compact heartbeat: attributed fields only, no legacy
+# duplication.  A remote IMPLEMENT/REPAIR agent leaves the local GPU
+# semantically idle; only an actually-active reviewer owns it.
 ATTRIBUTED_REMOTE_IMPLEMENT = (
     "[12:00:20] elapsed=00:00:20 | phase=IMPLEMENT | "
     "agent=pi/deepseek:deepseek-flash remote active | "
     "reviewer=ollama:qwen3.6:27b local idle | "
-    "local-gpu(review)=0% 21961/24576MiB | agent-gen=remote/n-a | "
-    "ollama=idle | GPU 0% | 0 W | VRAM 21961/24576 MiB | "
-    "gen_3s=unavailable | files=2 (+2)\n"
+    "local-gpu=idle 0% 21961/24576MiB | agent-gen=remote/n-a | "
+    "files=2 (+2)\n"
 )
 
 ATTRIBUTED_LOCAL_REVIEW = (
     "[12:00:20] elapsed=00:00:20 | phase=REVIEW | "
     "agent=pi/deepseek:deepseek-flash remote idle | "
     "reviewer=ollama:qwen3.6:27b local active | "
-    "local-gpu(review)=55% 18000/24576MiB | agent-gen=n/a | "
-    "ollama=active | GPU 55% | 200 W | VRAM 18000/24576 MiB | "
-    "gen_3s=36.4 tok/s | files=2 (+2)\n"
+    "local-gpu=review 55% 18000/24576MiB | agent-gen=n/a | "
+    "files=2 (+2)\n"
+)
+
+ATTRIBUTED_LOCAL_AGENT = (
+    "[12:00:20] elapsed=00:00:20 | phase=IMPLEMENT | "
+    "agent=pi/ollama:qwen3.8-dev3090 local active | "
+    "reviewer=ollama:qwen3.6:27b local idle | "
+    "local-gpu=agent 40% 9000/24576MiB | agent-gen=36.4 tok/s | "
+    "files=2 (+2)\n"
+)
+
+ATTRIBUTED_VALIDATE = (
+    "[12:00:20] elapsed=00:00:20 | phase=VALIDATE | "
+    "agent=pi/deepseek:deepseek-flash remote idle | "
+    "reviewer=ollama:qwen3.6:27b local idle | "
+    "local-gpu=n/a | agent-gen=n/a | files=2 (+2)\n"
+)
+
+# M011 historical layout (already stored on disk): the reader must keep
+# understanding it byte-for-byte, including the legacy presentation
+# tokens and the parenthesised local-gpu role.
+LEGACY_M011_REMOTE_IMPLEMENT = (
+    "[12:00:20] elapsed=00:00:20 | phase=IMPLEMENT | "
+    "agent=pi/deepseek:deepseek-flash remote active | "
+    "reviewer=ollama:qwen3.6:27b local idle | "
+    "local-gpu(review)=0% 21961/24576MiB | agent-gen=remote/n-a | "
+    "ollama=idle | GPU 0% | 0 W | VRAM 21961/24576 MiB | "
+    "gen_3s=unavailable | files=2 (+2)\n"
 )
 
 
@@ -867,15 +895,19 @@ def test_remote_agent_attribution_is_rendered_truthfully(tmp_path: Path) -> None
     assert "phase       : IMPLEMENT" in out
     assert "agent       : pi/deepseek:deepseek-flash remote active" in out
     assert "reviewer    : ollama:qwen3.6:27b local idle" in out
-    assert "local_gpu   : local-gpu(review)=0% 21961/24576MiB" in out
+    assert "local_gpu   : local-gpu=idle 0% 21961/24576MiB" in out
     assert "agent_gen   : remote/n-a" in out
+    # The remote agent must never imply a \(reviewer-owned\) local GPU.
+    assert "local-gpu(review)" not in out
 
     data = _json(tmp_path / RUN_ROOT)
     att = data["live_attribution"]
     assert att["agent_locality"] == "remote"
     assert att["agent_state"] == "active"
     assert att["reviewer_locality"] == "local"
-    assert att["gpu_role"] == "review"
+    assert att["gpu_role"] == "idle"
+    assert att["gpu_state"] == "idle"
+    assert att["gpu_format"] == "attributed"
     assert att["agent_gen"] == "remote/n-a"
 
 
@@ -886,12 +918,60 @@ def test_local_review_attribution_names_the_reviewer(tmp_path: Path) -> None:
     out = proc.stdout
     assert "phase       : REVIEW" in out
     assert "reviewer    : ollama:qwen3.6:27b local active" in out
-    assert "local_gpu   : local-gpu(review)=55% 18000/24576MiB" in out
+    assert "local_gpu   : local-gpu=review 55% 18000/24576MiB" in out
     assert "agent_gen   : n/a" in out
 
     data = _json(tmp_path / RUN_ROOT)
     assert data["live_attribution"]["reviewer_state"] == "active"
     assert data["live_attribution"]["gpu_role"] == "review"
+    assert data["live_attribution"]["gpu_state"] == "review"
+
+
+def test_local_agent_attribution_names_the_agent(tmp_path: Path) -> None:
+    _attributed_run(tmp_path, ATTRIBUTED_LOCAL_AGENT)
+    proc = run_reader(tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    assert "agent       : pi/ollama:qwen3.8-dev3090 local active" in out
+    assert "local_gpu   : local-gpu=agent 40% 9000/24576MiB" in out
+    assert "agent_gen   : 36.4 tok/s" in out
+    # The local rate is attributed throughput, not a legacy gen_3s token.
+    assert "36.4 tok/s (agent-gen @ 12:00:20)" in out
+
+    data = _json(tmp_path / RUN_ROOT)
+    assert data["live_attribution"]["gpu_role"] == "agent"
+
+
+def test_validate_attribution_has_no_gpu_actor(tmp_path: Path) -> None:
+    _attributed_run(tmp_path, ATTRIBUTED_VALIDATE)
+    proc = run_reader(tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    assert "phase       : VALIDATE" in out
+    assert "local_gpu   : local-gpu=n/a" in out
+    assert "local-gpu=agent" not in out
+    assert "local-gpu=review" not in out
+
+    data = _json(tmp_path / RUN_ROOT)
+    assert data["live_attribution"]["gpu_role"] == "n/a"
+
+
+def test_legacy_m011_heartbeat_remains_readable(tmp_path: Path) -> None:
+    # Backward compatibility: historical M011 heartbeat lines still on
+    # disk keep their exact (role, telemetry, legacy tokens) semantics.
+    _attributed_run(tmp_path, LEGACY_M011_REMOTE_IMPLEMENT)
+    proc = run_reader(tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    assert "agent       : pi/deepseek:deepseek-flash remote active" in out
+    assert "local_gpu   : local-gpu(review)=0% 21961/24576MiB" in out
+    assert "counters    : files=2 (+2) | ollama=idle" in out
+
+    data = _json(tmp_path / RUN_ROOT)
+    att = data["live_attribution"]
+    assert att["gpu_role"] == "review"
+    assert att["gpu_format"] == "legacy"
+    assert att["local_gpu"] == "0% 21961/24576MiB"
 
 
 def test_legacy_heartbeat_renders_without_attribution_rows(

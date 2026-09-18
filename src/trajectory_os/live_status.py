@@ -18,8 +18,12 @@ local GPU belongs to the (currently idle) local reviewer.
 This module is the canonical, pure attribution model.  It defines:
 
 * provider locality classification (``classify_provider``);
-* which actor owns the local GPU telemetry in a given phase
-  (``gpu_role``);
+* human-facing provider/model normalization (``normalize_model``) so an
+  explicit provider is never duplicated inside the displayed model;
+* the *semantic state* of the local GPU in a given phase
+  (``gpu_role``): ``agent``, ``review``, ``idle`` or ``n/a``.  A remote
+  agent phase with an idle local reviewer is ``idle``, never ``review``:
+  incidental desktop GPU utilization does not imply reviewer ownership;
 * whether the agent's generation throughput is remote/local
   (``agent_generation``);
 * the exact one-line heartbeat field layout (``render_heartbeat_line``)
@@ -48,6 +52,7 @@ LOCALITIES = frozenset({REMOTE, LOCAL, UNKNOWN})
 
 ACTOR_AGENT = "agent"
 ACTOR_REVIEWER = "review"
+ACTOR_IDLE = "idle"
 ACTOR_NONE = "none"
 
 # --- canonical phases ---------------------------------------------------------
@@ -116,6 +121,29 @@ def classify_provider(
     return "ollama", LOCAL
 
 
+def normalize_model(provider: str | None, model: str | None) -> str:
+    """Human-facing model name without a duplicated provider prefix (pure).
+
+    An explicit provider/model pair is displayed as ``<provider>:<model>``.
+    When the configured model already begins with ``<provider>/`` (for
+    example ``deepseek`` + ``deepseek/deepseek-flash``), the redundant
+    prefix is stripped from the *presentation* so the identity reads
+    ``pi/deepseek:deepseek-flash``.  The raw value is untouched and stays
+    available in persisted metadata.  The rule is generic: it applies to
+    any provider, not just deepseek.
+    """
+    prov = (provider or "").strip()
+    mdl = (model or "").strip()
+    if not prov or not mdl:
+        return mdl
+    prefix = prov + "/"
+    if mdl.lower().startswith(prefix.lower()):
+        remainder = mdl[len(prefix):]
+        if remainder:
+            return remainder
+    return mdl
+
+
 def _locality_of(provider: str) -> str:
     if provider in LOCAL_PROVIDERS:
         return LOCAL
@@ -128,28 +156,29 @@ def _locality_of(provider: str) -> str:
 
 
 def gpu_role(phase: str, agent_locality: str, reviewer_active: bool) -> str:
-    """Actor whose local GPU resource the telemetry describes (pure).
+    """Semantic state of the local GPU telemetry for a phase (pure).
 
-    * ``REVIEW``  -> the reviewer is the local GPU consumer;
-    * ``VALIDATE``-> no model is generating; the GPU belongs to no actor
-      (the validator is deterministic code, never a model);
-    * agent phases -> the agent when it is local, else the (idle) local
-      reviewer that owns the local GPU domain.
+    The returned value is both the ownership *and* the state the display
+    renders (``local-gpu=<state> ...``):
+
+    * ``REVIEW``   -> ``review`` only when the reviewer is actually
+      active, otherwise ``idle``;
+    * ``VALIDATE`` -> ``n/a``: deterministic validation is not a model, so
+      no actor may own the (incidentally sampled) GPU telemetry;
+    * agent phases -> ``agent`` when the agent is local; otherwise the
+      local GPU is *idle* unless the local reviewer is actually active.
+      A remote agent is never rendered as a local GPU actor.
     """
     phase_u = (phase or "").strip().upper()
-    if phase_u == PHASE_REVIEW:
-        return ACTOR_REVIEWER
     if phase_u == PHASE_VALIDATE:
         return ACTOR_NONE
+    if phase_u == PHASE_REVIEW:
+        return ACTOR_REVIEWER if reviewer_active else ACTOR_IDLE
     if phase_u in AGENT_PHASES:
         if agent_locality == LOCAL:
             return ACTOR_AGENT
-        if agent_locality == REMOTE:
-            return ACTOR_REVIEWER
-        return ACTOR_NONE
-    if reviewer_active:
-        return ACTOR_REVIEWER
-    return ACTOR_NONE
+        return ACTOR_REVIEWER if reviewer_active else ACTOR_IDLE
+    return ACTOR_REVIEWER if reviewer_active else ACTOR_IDLE
 
 
 def agent_generation(
@@ -213,9 +242,11 @@ def render_heartbeat_line(
     parts = [
         f"[{ts}] elapsed={elapsed}",
         f"phase={phase}",
-        f"agent={agent_backend}/{agent_provider}:{agent_model} "
+        f"agent={agent_backend}/{agent_provider}"
+        f":{normalize_model(agent_provider, agent_model)} "
         f"{agent_locality} {agent_state}",
-        f"reviewer={reviewer_provider}:{reviewer_model} "
+        f"reviewer={reviewer_provider}"
+        f":{normalize_model(reviewer_provider, reviewer_model)} "
         f"{reviewer_locality} {reviewer_state}",
         gpu,
         f"agent-gen={agent_gen}",
@@ -232,16 +263,17 @@ def _gpu_fragment(
     used: str | None,
     total: str | None,
 ) -> str:
-    label = f"local-gpu({role})"
+    if role == ACTOR_NONE:
+        return "local-gpu=n/a"
     if util is None and used is None and total is None:
-        return f"{label}=unavailable"
+        return f"local-gpu={role} unavailable"
     util_s = util if util is not None else "?"
     mem = (
         f" {used}/{total}MiB"
         if used is not None and total is not None
         else ""
     )
-    return f"{label}={util_s}%{mem}"
+    return f"local-gpu={role} {util_s}%{mem}"
 
 
 def render_banner(
@@ -258,11 +290,12 @@ def render_banner(
     return [
         f"Agent backend   {agent_backend}",
         f"Agent provider  {agent_provider} ({agent_locality})",
-        f"Agent model     {agent_model}",
-        f"Reviewer        {reviewer_provider}/{reviewer_model} "
+        f"Agent model     {normalize_model(agent_provider, agent_model)}",
+        f"Reviewer        {reviewer_provider}/"
+        f"{normalize_model(reviewer_provider, reviewer_model)} "
         f"({reviewer_locality})",
-        f"Local GPU       reviewer resource during REVIEW; "
-        f"unattributed during VALIDATE ({agent_locality} agent)",
+        "Local GPU       idle until local model activity; "
+        "reviewer during REVIEW",
     ]
 
 
@@ -287,11 +320,13 @@ def render_attribution(
     role = gpu_role(phase, agent_locality, reviewer_state == "active")
     return {
         "phase": phase,
-        "agent": (f"{agent_backend}/{agent_provider}:{agent_model} "
+        "agent": (f"{agent_backend}/{agent_provider}"
+                  f":{normalize_model(agent_provider, agent_model)} "
                   f"{agent_locality} {agent_state}"),
         "agent_locality": agent_locality,
         "agent_state": agent_state,
-        "reviewer": (f"{reviewer_provider}:{reviewer_model} "
+        "reviewer": (f"{reviewer_provider}"
+                     f":{normalize_model(reviewer_provider, reviewer_model)} "
                      f"{reviewer_locality} {reviewer_state}"),
         "reviewer_locality": reviewer_locality,
         "reviewer_state": reviewer_state,

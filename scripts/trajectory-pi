@@ -484,6 +484,27 @@ esac
 # ------------------------------------------------------------
 AGENT_PROVIDER_NAME=""
 AGENT_PROVIDER_LOCALITY=""
+AGENT_MODEL_DISPLAY=""
+
+# Human-facing model name without a duplicated provider prefix (mirrors
+# trajectory_os.live_status.normalize_model).  An explicit provider/model
+# pair is shown as ``<provider>:<model>``; when the configured model
+# already begins with ``<provider>/`` (deepseek + deepseek/deepseek-flash)
+# the redundant prefix is stripped from presentation only.  The raw MODEL
+# stays untouched in persisted metadata.
+normalize_model_display() {
+    local provider="$1" model="$2"
+    local provider_lc="${provider,,}" model_lc="${model,,}"
+    if [[ -n "$provider_lc" && "$model_lc" == "$provider_lc"/* ]]; then
+        local remainder="${model:${#provider}+1}"
+        if [[ -n "$remainder" ]]; then
+            printf '%s' "$remainder"
+            return 0
+        fi
+    fi
+    printf '%s' "$model"
+}
+
 resolve_agent_provider() {
     local provider="${AGENT_PROVIDER:-}"
     local model_lc="${MODEL,,}"
@@ -518,6 +539,7 @@ resolve_agent_provider() {
     esac
 }
 resolve_agent_provider
+AGENT_MODEL_DISPLAY="$(normalize_model_display "$AGENT_PROVIDER_NAME" "$MODEL")"
 if [[ "$AGENT_BACKEND" == "dsh" && -z "${AGENT_PROVIDER:-}" ]]; then
     # DSH provider/model come from its external settings; locality is not
     # knowable here, so it stays unknown rather than being assumed local.
@@ -1296,19 +1318,41 @@ ollama_model_loaded() {
     ollama ps 2>/dev/null | grep -q -- "$1"
 }
 
-# Which actor owns the local GPU telemetry in this phase (pure).
+# Semantic state of the local GPU telemetry in this phase (pure).
+# Mirrors trajectory_os.live_status.gpu_role: a remote agent phase with
+# an idle local reviewer is 'idle' — incidental desktop GPU utilization
+# must not be presented as reviewer ownership.  $2 is 1 when the local
+# reviewer is actually active.
 agent_gpu_role() {
-    case "${1^^}" in
-        REVIEW) printf 'review' ;;
+    local phase="${1^^}" reviewer_active="${2:-0}"
+    case "$phase" in
         VALIDATE) printf 'none' ;;
+        REVIEW)
+            if [[ "$reviewer_active" == "1" ]]; then
+                printf 'review'
+            else
+                printf 'idle'
+            fi
+            ;;
         IMPLEMENT|REPAIR|RECOVERY|SMOKE|PLAN)
             case "$AGENT_PROVIDER_LOCALITY" in
                 local) printf 'agent' ;;
-                remote) printf 'review' ;;
-                *) printf 'none' ;;
+                *)
+                    if [[ "$reviewer_active" == "1" ]]; then
+                        printf 'review'
+                    else
+                        printf 'idle'
+                    fi
+                    ;;
             esac
             ;;
-        *) printf 'none' ;;
+        *)
+            if [[ "$reviewer_active" == "1" ]]; then
+                printf 'review'
+            else
+                printf 'idle'
+            fi
+            ;;
     esac
 }
 
@@ -1331,30 +1375,44 @@ agent_generation_label() {
     esac
 }
 
-# ``local-gpu(role)=util% used/totalMiB`` from the last gpu_line sample.
+# ``local-gpu=<state> util% used/totalMiB`` from the last gpu_sample.
+# The state is the semantic owner (agent/review/idle) or n/a when no model
+# is generating (deterministic VALIDATE).  A missing physical sample is
+# rendered explicitly, never invented.
 live_gpu_fragment() {
     local role="$1"
+    if [[ "$role" == "none" ]]; then
+        printf 'local-gpu=n/a'
+        return 0
+    fi
     if [[ -z "$GPU_UTIL" ]]; then
-        printf 'local-gpu(%s)=unavailable' "$role"
+        printf 'local-gpu=%s unavailable' "$role"
     else
-        printf 'local-gpu(%s)=%s%% %s/%sMiB' \
+        printf 'local-gpu=%s %s%% %s/%sMiB' \
             "$role" "$GPU_UTIL" "$GPU_USED" "$GPU_TOTAL"
     fi
 }
 
 # Build the compact one-line heartbeat from the LIVE_* globals.
+#
+# Canonical attributed fields only: agent / reviewer / local-gpu (semantic
+# state) / agent-gen / files.  The historical ollama= / GPU / VRAM /
+# gen_3s= presentation tokens are deliberately NOT emitted — the raw
+# values are already represented by the attributed fields, and backward
+# compatibility for already-stored lines lives in the status reader.
 build_live_line() {
     local phase="$1" agent_state="$2" reviewer_state="$3" agent_gen="$4"
-    local role gpu_frag backend_label model_label
-    role="$(agent_gpu_role "$phase")"
+    local role gpu_frag backend_label model_label reviewer_active=0
+    [[ "$reviewer_state" == "active" ]] && reviewer_active=1
+    role="$(agent_gpu_role "$phase" "$reviewer_active")"
     gpu_frag="$(live_gpu_fragment "$role")"
     backend_label="pi"
-    model_label="$MODEL"
+    model_label="$AGENT_MODEL_DISPLAY"
     if [[ "$AGENT_BACKEND" == "dsh" ]]; then
         backend_label="dsh"
         model_label="external"
     fi
-    printf '[%s] elapsed=%s | phase=%s | agent=%s/%s:%s %s %s | reviewer=ollama:%s local %s | %s | agent-gen=%s | ollama=%s | %s | %s | files=%s' \
+    printf '[%s] elapsed=%s | phase=%s | agent=%s/%s:%s %s %s | reviewer=ollama:%s local %s | %s | agent-gen=%s | files=%s' \
         "$(date +%H:%M:%S)" \
         "$LIVE_ELAPSED_H" \
         "$phase" \
@@ -1363,9 +1421,6 @@ build_live_line() {
         "$REVIEWER_MODEL" "$reviewer_state" \
         "$gpu_frag" \
         "$agent_gen" \
-        "$LIVE_OLLAMA_STATE" \
-        "$LIVE_GPU_LEGACY" \
-        "$LIVE_GEN3S_FULL" \
         "$LIVE_CHANGED"
 }
 
@@ -1381,8 +1436,9 @@ emit_live_status() {
     LIVE_ELAPSED_H="$(human_duration "$elapsed")"
     LIVE_CHANGED="$(changed_count)"
     gpu_sample
-    LIVE_GPU_LEGACY="$(gpu_legacy_string)"
-    [[ -n "$LIVE_GPU_LEGACY" ]] || LIVE_GPU_LEGACY="GPU unavailable"
+    # The physical sample is only informational telemetry; the semantic
+    # owner/state is derived from phase + locality + whether the local
+    # reviewer is actually active, never from utilization alone.
     ollama_model="$MODEL"
     [[ "$phase" == "REVIEW" ]] && ollama_model="$REVIEWER_MODEL"
     LIVE_OLLAMA_STATE="idle"
@@ -1392,8 +1448,6 @@ emit_live_status() {
     next_epoch="$now"
     ollama_generation_throughput_line \
         "$LIVE_OLLAMA_STATE" "$next_epoch" "$START_EPOCH" >/dev/null
-    LIVE_GEN3S_FULL="$GEN3S_FULL"
-    [[ -n "$LIVE_GEN3S_FULL" ]] || LIVE_GEN3S_FULL="gen_3s=unavailable"
     [[ -n "$agent_gen" ]] || agent_gen="$(agent_generation_label "$phase")"
     local line
     line="$(build_live_line "$phase" "$agent_state" "$reviewer_state" "$agent_gen")"
@@ -2822,18 +2876,17 @@ printf "ETA            %s\n" "$ETA"
 printf "Agent backend  %s\n" "$AGENT_BACKEND"
 printf "Agent provider %s (%s)\n" "$AGENT_PROVIDER_NAME" "$AGENT_PROVIDER_LOCALITY"
 if [[ "$AGENT_BACKEND" == "pi" ]]; then
-    printf "Agent model    %s\n" "$MODEL"
+    printf "Agent model    %s\n" "$AGENT_MODEL_DISPLAY"
     printf "Thinking       %s\n" "$THINKING"
 else
     printf "Agent model    %s\n" "DSH settings (provider/model external)"
     printf "Thinking       %s\n" "DSH-managed"
 fi
 printf "Validation     %s\n" "$( [[ "${#VALIDATE_CMDS[@]}" -gt 0 ]] && echo enabled || echo not configured )"
-printf "Review         %s (reviewer=%s/%s local)\n" \
-    "$([[ "$REVIEW" -eq 1 ]] && echo enabled || echo disabled)" \
-    "ollama" "$REVIEWER_MODEL"
-printf "Local GPU      reviewer resource during REVIEW; unattributed during VALIDATE (%s agent)\n" \
-    "$AGENT_PROVIDER_LOCALITY"
+printf "Review         %s\n" \
+    "$([[ "$REVIEW" -eq 1 ]] && echo enabled || echo disabled)"
+printf "Reviewer       ollama/%s (local)\n" "$REVIEWER_MODEL"
+printf "Local GPU      idle until local model activity; reviewer during REVIEW\n"
 printf "Repair attempts %s\n" "$( [[ "$REPAIR_ATTEMPTS" -gt 0 ]] && echo "enabled ($REPAIR_ATTEMPTS max)" || echo disabled )"
 printf "Branch         %s\n" "$BRANCH"
 printf "HEAD           %.12s\n" "$HEAD_BEFORE"
@@ -3013,23 +3066,19 @@ while kill -0 "$PI_PID" 2>/dev/null; do
     LIVE_CHANGED="$CHANGED (+$AGENT_CHANGED)"
 
     gpu_sample
-    LIVE_GPU_LEGACY="$(gpu_legacy_string)"
-    [[ -n "$LIVE_GPU_LEGACY" ]] || LIVE_GPU_LEGACY="GPU unavailable"
 
-    # Mission 011: the local-model token reflects the agent's own model
-    # during agent phases (kept for legacy readers); the attributed
-    # ``agent``/``reviewer``/``local-gpu`` fields below carry the truth.
+    # The raw sample feeds the semantic local-gpu field; no legacy
+    # presentation tokens are emitted.  Local generation throughput is
+    # only sampled for a local agent (a remote agent has none here).
     LIVE_OLLAMA_STATE="idle"
     if ollama_model_loaded "$MODEL"; then
         LIVE_OLLAMA_STATE="active"
     fi
-    ollama_generation_throughput_line \
-        "$LIVE_OLLAMA_STATE" "$NOW" "$START_EPOCH" >/dev/null
-    LIVE_GEN3S_FULL="$GEN3S_FULL"
-    [[ -n "$LIVE_GEN3S_FULL" ]] || LIVE_GEN3S_FULL="gen_3s=unavailable"
-
-    if [[ "$AGENT_BACKEND" == "dsh" ]]; then
-        LIVE_GEN3S_FULL="gen_3s=unavailable"
+    if [[ "$AGENT_PROVIDER_LOCALITY" == "local" ]]; then
+        ollama_generation_throughput_line \
+            "$LIVE_OLLAMA_STATE" "$NOW" "$START_EPOCH" >/dev/null
+    else
+        GEN3S_RATE=""
     fi
 
     MINS=$((ELAPSED / 60))

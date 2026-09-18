@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# trajectory-pi-goals — goal decomposition graph operator CLI (Mission 012).
+#
+# Thin, stable shim over src/trajectory_os/graph.  It only resolves the
+# repository root, prepends the src layout to PYTHONPATH and execs the
+# operator CLI: `python3 -m trajectory_os.graph.cli "$@"`.
+#
+# Subcommands:
+#   create     create one goal graph from a bounded declarative JSON spec
+#   show       full graph state (goal, size, order, readiness, provenance)
+#   nodes      list normalized nodes with readiness state
+#   edges      list explicit dependency edges
+#   order      deterministic topological order
+#   ready      dependency-ready / eligible nodes
+#   blocked    dependency-blocked nodes with reasons
+#   why        explain one node's dependency-block state
+#   project    machine-readable M013 scheduler-facing projection
+#   validate   reconstruct + revalidate persisted graph state
+#   list       all goal graphs under the root
+#   version
+#
+# Exit codes: 0 ok, 2 usage, 3 rejected, 4 unknown goal.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+SRC="${ROOT}/src"
+
+if [[ ! -d "${SRC}/trajectory_os/graph" ]]; then
+  printf 'trajectory-pi-goals: internal error: missing trajectory_os/graph package (expected %s)\n' "${SRC}/trajectory_os/graph" >&2
+  exit 2
+fi
+
+export PYTHONPATH="${SRC}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m trajectory_os.graph.cli "$@"
