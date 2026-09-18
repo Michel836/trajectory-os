@@ -24,10 +24,13 @@ Modules (imported lazily by consumers to keep the package light):
   interface);
 * ``store``       — atomic durable graph store (strict, fail-closed);
 * ``summary``     — human/machine operator projections;
-* ``cli``         — operator CLI (``trajectory-pi-goals``).
+* ``cli``        — operator CLI (``trajectory-pi-goals``);
+* ``scheduler``  — M013 deterministic portfolio scheduler + resource
+  arbiter (capacity policy, admission, dispatch composition, durable
+  decisions).
 
-Design invariants (ADR-010): no scheduler, no execution engine, no operator
-micro-gates, no autonomous Git trust-boundary write.
+Design invariants (ADR-010, ADR-011): no second graph or execution engine,
+no operator micro-gates, no autonomous Git trust-boundary write.
 """
 
 from trajectory_os.graph.model import SCHEMA_VERSION as GRAPH_SCHEMA_VERSION  # noqa: F401

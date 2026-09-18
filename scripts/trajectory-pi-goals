@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# trajectory-pi-goals — goal decomposition graph operator CLI (Mission 012).
+# trajectory-pi-goals — goal decomposition graph + portfolio scheduler CLI
+# (Missions 012/013).
 #
 # Thin, stable shim over src/trajectory_os/graph.  It only resolves the
 # repository root, prepends the src layout to PYTHONPATH and execs the
@@ -17,6 +18,15 @@
 #   project    machine-readable M013 scheduler-facing projection
 #   validate   reconstruct + revalidate persisted graph state
 #   list       all goal graphs under the root
+#   capacity   configured scheduler capacity (+ live reservation status)
+#   preview    deterministic scheduling preview (never persists/dispatches)
+#   schedule   run one scheduling cycle and persist the decision
+#   dispatch   run one cycle and dispatch admitted work via the mission path
+#   portfolio  compact human-readable portfolio summary
+#   resources  active/reserved scheduler resources
+#   history    append-only scheduling decision history
+#   why-schedule       explain one node's scheduling outcome
+#   validate-schedule  reconstruct + revalidate scheduler state
 #   version
 #
 # Exit codes: 0 ok, 2 usage, 3 rejected, 4 unknown goal.
@@ -28,6 +38,11 @@ SRC="${ROOT}/src"
 
 if [[ ! -d "${SRC}/trajectory_os/graph" ]]; then
   printf 'trajectory-pi-goals: internal error: missing trajectory_os/graph package (expected %s)\n' "${SRC}/trajectory_os/graph" >&2
+  exit 2
+fi
+
+if [[ ! -d "${SRC}/trajectory_os/graph/scheduler" ]]; then
+  printf 'trajectory-pi-goals: internal error: missing trajectory_os/graph/scheduler package (expected %s)\n' "${SRC}/trajectory_os/graph/scheduler" >&2
   exit 2
 fi
 

@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "cpu_slots": 8,
+  "gpu_slots": 2,
+  "gpu_mem_bytes": 8589934592,
+  "global_concurrency": 6
+}

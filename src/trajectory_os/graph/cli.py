@@ -1,7 +1,8 @@
-"""Mission 012 — operator CLI for the bounded goal decomposition graph.
+"""Mission 012/013 — operator CLI for the bounded goal decomposition graph
+and the portfolio scheduler.
 
 Canonical operator surface (deterministic, fail-closed, read-only except
-for ``create``):
+where explicitly noted):
 
     create    create one goal graph from a bounded declarative JSON spec
     show      full graph state: goal, size, order, readiness, provenance
@@ -13,18 +14,25 @@ for ``create``):
     why       explain one node's dependency-block state
     project   machine-readable M013 scheduler-facing projection
     validate  reconstruct + revalidate persisted graph state (read-only)
-    list      all goal graphs under the root with state
+    list      all goal graphs under the root
+    capacity  configured scheduler capacity (+ live reservation status)
+    preview   deterministic scheduling preview (never persists/dispatches)
+    schedule  run one scheduling cycle and persist the decision
+    dispatch  run one cycle and dispatch admitted work via the mission path
+    portfolio compact human-readable portfolio summary
+    resources active/reserved scheduler resources
+    history   append-only scheduling decision history
+    why-schedule  explain one node's scheduling outcome
+    validate-schedule  reconstruct + revalidate scheduler state (read-only)
     version   CLI version
 
-No command performs a Git trust-boundary write. ``create`` validates the
-required mission references read-only and never launches, schedules or
-mutates a mission. No operator micro-gate is introduced for ordinary graph
-operations.
+No command performs a Git trust-boundary write. Scheduling/admission/
+dispatch introduce no operator micro-gate.
 
 Exit codes:
     0  OK
     2  usage error
-    3  graph rejected (malformed / references / identity mismatch)
+    3  graph/scheduler rejected (malformed / references / identity mismatch)
     4  graph not found
 
 Root resolution: ``--root PATH`` > ``$TRAJECTORY_GOALS_ROOT`` >
@@ -43,6 +51,10 @@ from typing import Any
 
 from trajectory_os import __version__
 from trajectory_os.graph import evidence, identity, model, readiness, store, summary
+from trajectory_os.graph.scheduler import engine as scheduler_engine
+from trajectory_os.graph.scheduler import model as scheduler_model
+from trajectory_os.graph.scheduler import summary as scheduler_summary
+from trajectory_os.missions import model as mission_model
 from trajectory_os.missions import orchestrator
 
 EXIT_OK = 0
@@ -397,6 +409,279 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+#: Hard byte cap for a capacity policy document (before JSON parsing).
+MAX_POLICY_BYTES = 65536
+
+
+def _load_policy(path: str | None) -> tuple[scheduler_model.SchedulerPolicy,
+                                           str]:
+    """Strictly load an explicit capacity policy (fail closed).
+
+    A missing ``--policy`` selects the bounded documented default; a
+    supplied but malformed document is always rejected.
+    """
+    if path is None:
+        return scheduler_model.DEFAULT_POLICY, "default"
+    p = Path(path)
+    if not p.is_file():
+        raise UsageError(f"policy missing or not a regular file: {path}")
+    try:
+        with p.open("rb") as handle:
+            raw = handle.read(MAX_POLICY_BYTES + 1)
+    except OSError as exc:
+        raise UsageError(f"policy unreadable: {exc}") from exc
+    if len(raw) > MAX_POLICY_BYTES:
+        raise UsageError(
+            f"policy exceeds the hard cap of {MAX_POLICY_BYTES} bytes")
+    try:
+        obj = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise UsageError(f"policy is not valid JSON: {exc}") from exc
+    try:
+        return scheduler_model.SchedulerPolicy.from_dict(obj), "file"
+    except scheduler_model.SchedulerValidationError as exc:
+        raise UsageError(f"policy rejected: {exc}") from exc
+
+
+def _cmd_capacity(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        policy, source = _load_policy(args.policy)
+    except UsageError as exc:
+        return _fail(f"policy: {exc}")
+    payload: dict[str, Any] = {
+        "status": "OK",
+        "policy": policy.to_dict(),
+        "policy_id": policy.policy_id,
+        "source": source,
+    }
+    if args.goal_id:
+        try:
+            document = scheduler_summary.status_document(root, args.goal_id)
+        except store.GraphNotFound as exc:
+            return _fail(str(exc), EXIT_NOT_FOUND)
+        except model.GraphValidationError as exc:
+            return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+        except scheduler_model.SchedulerValidationError as exc:
+            return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+        payload["goal_id"] = args.goal_id
+        payload["reservation_totals"] = document["reservation_totals"]
+        payload["reservations"] = document["reservations"]
+    if args.json:
+        _print_json(payload)
+        return EXIT_OK
+    print(f"capacity  : cpu={policy.cpu_slots} gpu={policy.gpu_slots} "
+          f"vram={policy.gpu_mem_bytes} "
+          f"concurrency={policy.global_concurrency}")
+    print(f"policy    : {policy.policy_id} ({source})")
+    if args.goal_id:
+        totals = payload["reservation_totals"]
+        print(f"reserved  : cpu={totals['cpu_slots']} gpu={totals['gpu_slots']} "
+              f"vram={totals['gpu_mem_bytes']} count={totals['count']}")
+    return EXIT_OK
+
+
+def _cmd_preview(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        policy, _ = _load_policy(args.policy)
+        decision = scheduler_engine.build_decision(
+            root, args.goal_id, policy,
+            created_at=orchestrator.utc_now_iso())
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except UsageError as exc:
+        return _fail(f"policy: {exc}")
+    except scheduler_model.SchedulerValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(decision.to_dict())
+    else:
+        print(scheduler_summary.render_decision(decision))
+    return EXIT_OK
+
+
+def _cmd_schedule(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        policy, _ = _load_policy(args.policy)
+        result = scheduler_engine.run_cycle(
+            root, args.goal_id, policy, dispatch=False,
+            created_at=orchestrator.utc_now_iso(),
+            expected_decision_id=args.decision_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except UsageError as exc:
+        return _fail(f"policy: {exc}")
+    except scheduler_model.SchedulerValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    _emit_cycle(result, args.json)
+    return EXIT_OK
+
+
+def _cmd_dispatch(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        policy, _ = _load_policy(args.policy)
+        result = scheduler_engine.run_cycle(
+            root, args.goal_id, policy, dispatch=True,
+            dispatcher=scheduler_engine.MissionPathDispatcher(
+                session_subruns=(
+                    args.session_subruns
+                    if args.session_subruns is not None
+                    else scheduler_engine.DEFAULT_SESSION_SUBRUNS)),
+            created_at=orchestrator.utc_now_iso(),
+            expected_decision_id=args.decision_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except UsageError as exc:
+        return _fail(f"policy: {exc}")
+    except scheduler_model.SchedulerValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    _emit_cycle(result, args.json)
+    return EXIT_OK
+
+
+def _emit_cycle(result: scheduler_engine.CycleResult, as_json: bool) -> None:
+    if as_json:
+        _print_json(result.to_dict())
+        return
+    decision = result.decision
+    counts = decision.counts()
+    print(f"status    : {result.status} (persisted={result.persisted})")
+    print(f"goal      : {decision.goal_id} graph={decision.graph_id}")
+    print(f"decision  : {decision.decision_id}")
+    print(f"input     : {decision.input_projection_id}")
+    print(f"order     : "
+          f"{' '.join(decision.candidate_order) or '-'}")
+    print(f"admitted  : {counts['admitted']} "
+          f"[{' '.join(n.node_id for n in decision.admitted) or '-'}]")
+    for node in decision.admitted:
+        print(f"  + {node.node_id} exec={node.demand.execution} "
+              f"cpu={node.demand.cpu_slots} gpu={node.demand.gpu_slots} "
+              f"vram={node.demand.gpu_mem_bytes} "
+              f"mission={node.mission_id}")
+    print(f"deferred  : {counts['deferred']} "
+          f"[{' '.join(n.node_id for n in decision.deferred) or '-'}]")
+    for node in decision.deferred:
+        print(f"  - {node.node_id} {node.reason}")
+    print(f"blocked   : {counts['blocked']} "
+          f"[{' '.join(n.node_id for n in decision.blocked) or '-'}]")
+    for node in decision.blocked:
+        print(f"  ! {node.node_id} {node.reason}")
+    if result.dispatched:
+        print("dispatched:")
+        for record in result.dispatched:
+            print(f"  > {record.node_id} mission={record.mission_id} "
+                  f"state={record.mission_state} stop={record.stop}")
+    for error in result.dispatch_errors:
+        print(f"dispatch-error: {error['node_id']} {error['error']}")
+
+
+def _cmd_portfolio(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = scheduler_summary.status_document(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except scheduler_model.SchedulerValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+    else:
+        print(scheduler_summary.render_portfolio(document))
+    return EXIT_OK
+
+
+def _cmd_resources(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = scheduler_summary.status_document(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except scheduler_model.SchedulerValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json({
+            "status": "OK", "goal_id": args.goal_id,
+            "policy": document["policy"],
+            "policy_id": document["policy_id"],
+            "reservations": document["reservations"],
+            "reservation_totals": document["reservation_totals"],
+        })
+    else:
+        print(scheduler_summary.render_resources(document))
+    return EXIT_OK
+
+
+def _cmd_history(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = scheduler_summary.history_document(root, args.goal_id)
+    except scheduler_model.SchedulerValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+    else:
+        print(scheduler_summary.render_history(document))
+    return EXIT_OK
+
+
+def _cmd_why_schedule(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        document = scheduler_summary.explain_document(
+            root, args.goal_id, args.node_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except scheduler_model.SchedulerValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(document)
+        return EXIT_OK
+    if document["node"] is None:
+        return _fail(f"node not found in scheduler decision: {args.node_id}")
+    print(scheduler_summary.render_explain(document))
+    return EXIT_OK
+
+
+def _cmd_validate_schedule(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    try:
+        read = scheduler_engine.reconstruct(root, args.goal_id)
+    except store.GraphNotFound as exc:
+        return _fail(str(exc), EXIT_NOT_FOUND)
+    except model.GraphValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    except scheduler_model.SchedulerValidationError as exc:
+        return _fail(f"error(rejected): {exc}", EXIT_REJECTED)
+    if args.json:
+        _print_json(read.to_dict())
+        return EXIT_OK
+    print(f"valid     : {args.goal_id} scheduler "
+          f"decisions={len(read.reconstructed.decisions)}")
+    latest = read.latest_decision
+    if latest is not None:
+        print(f"decision  : {latest.decision_id}")
+        print(f"input     : {latest.input_projection_id}")
+    totals = scheduler_model.ReservationTotals.of(read.reservations)
+    print(f"reserved  : cpu={totals.cpu_slots} gpu={totals.gpu_slots} "
+          f"vram={totals.gpu_mem_bytes} count={totals.count}")
+    return EXIT_OK
+
+
 def _cmd_version() -> int:
     print(f"trajectory-pi-goals {__version__}")
     return EXIT_OK
@@ -465,6 +750,63 @@ def build_parser(prog: str = "trajectory-pi-goals") -> argparse.ArgumentParser:
 
     p = sub.add_parser("list", help="all goal graphs under the root")
     _add_shared_flags(p)
+
+    # --- Mission 013 portfolio scheduler ------------------------------------
+    p = sub.add_parser(
+        "capacity",
+        help="configured scheduler capacity (+ live reservation status)")
+    _add_shared_flags(p)
+    p.add_argument("goal_id", nargs="?", default=None,
+                   help="optional goal id for live reservation status")
+    p.add_argument("--policy", default=None,
+                   help="bounded JSON capacity policy file "
+                        "(default: built-in bounded policy)")
+
+    p = sub.add_parser(
+        "preview",
+        help="deterministic scheduling preview (never persists/dispatches)")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+    p.add_argument("--policy", default=None, help="capacity policy file")
+
+    p = sub.add_parser(
+        "schedule",
+        help="run one scheduling cycle and persist the decision")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+    p.add_argument("--policy", default=None, help="capacity policy file")
+    p.add_argument("--decision-id", default=None,
+                   help="fail closed (STALE_DECISION_INPUT) unless the "
+                        "recomputed decision matches this id")
+
+    p = sub.add_parser(
+        "dispatch",
+        help="run one cycle and dispatch admitted work via the mission path")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+    p.add_argument("--policy", default=None, help="capacity policy file")
+    p.add_argument("--decision-id", default=None,
+                   help="fail closed unless the recomputed decision matches")
+    p.add_argument("--session-subruns", type=int, default=None,
+                   help=f"bounded sub-runs per dispatched session "
+                        f"(1..{mission_model.MAX_SESSION_SUBRUNS})")
+
+    for name, help_text in (
+        ("portfolio", "compact human-readable portfolio summary"),
+        ("resources", "active/reserved scheduler resources"),
+        ("history", "append-only scheduling decision history"),
+        ("validate-schedule", "reconstruct + revalidate scheduler state"),
+    ):
+        p = sub.add_parser(name, help=help_text)
+        _add_shared_flags(p)
+        p.add_argument("goal_id")
+
+    p = sub.add_parser("why-schedule",
+                       help="explain one node's scheduling outcome")
+    _add_shared_flags(p)
+    p.add_argument("goal_id")
+    p.add_argument("node_id")
+
     sub.add_parser("version", help="CLI version")
     return parser
 
@@ -496,6 +838,15 @@ def main(argv: list[str] | None = None) -> int:
         "project": _cmd_project,
         "validate": _cmd_validate,
         "list": _cmd_list,
+        "capacity": _cmd_capacity,
+        "preview": _cmd_preview,
+        "schedule": _cmd_schedule,
+        "dispatch": _cmd_dispatch,
+        "portfolio": _cmd_portfolio,
+        "resources": _cmd_resources,
+        "history": _cmd_history,
+        "why-schedule": _cmd_why_schedule,
+        "validate-schedule": _cmd_validate_schedule,
     }[args.command]
     return int(handler(args))
 

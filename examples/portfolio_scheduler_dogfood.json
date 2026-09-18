@@ -1,0 +1,251 @@
+{
+  "schema_version": 1,
+  "goal_id": "g-m013-dogfood",
+  "objective": "Prove deterministic portfolio scheduling, resource arbitration, persistence and reconstruction on top of the M012 goal graph.",
+  "nodes": [
+    {
+      "node_id": "n-cpu-a",
+      "title": "CPU-only work A (high priority)",
+      "priority": 95,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "CPU work A completes with canonical evidence"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-ps-cpu-a",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 2
+      },
+      "budgets": {
+        "subruns": 8,
+        "max_attempts": 2
+      }
+    },
+    {
+      "node_id": "n-cpu-b",
+      "title": "CPU-only work B (same priority as A)",
+      "priority": 95,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "CPU work B completes with canonical evidence"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-ps-cpu-b",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 2
+      }
+    },
+    {
+      "node_id": "n-remote",
+      "title": "Remote model-heavy work (never reserves local GPU)",
+      "priority": 90,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Remote model-heavy work is admitted without local GPU"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-ps-remote",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 1,
+        "model_heavy": true
+      }
+    },
+    {
+      "node_id": "n-gpu",
+      "title": "Local GPU work with explicit VRAM requirement",
+      "priority": 85,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Local GPU work reserves explicit VRAM"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-ps-gpu",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 1,
+        "gpu": true,
+        "gpu_mem_bytes": 6442450944,
+        "model_heavy": true
+      }
+    },
+    {
+      "node_id": "n-excl",
+      "title": "Exclusive local GPU work",
+      "priority": 84,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Exclusive work is deferred when anything is active"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-ps-excl",
+        "required": true
+      },
+      "resources": {
+        "gpu": true,
+        "gpu_mem_bytes": 1073741824,
+        "exclusive": true
+      }
+    },
+    {
+      "node_id": "n-vram",
+      "title": "Local GPU work over VRAM capacity",
+      "priority": 80,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "VRAM overflow is deferred with GPU_MEMORY"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-ps-vram",
+        "required": true
+      },
+      "resources": {
+        "gpu": true,
+        "gpu_mem_bytes": 4294967296
+      }
+    },
+    {
+      "node_id": "n-gpu2",
+      "title": "Local GPU work over GPU slot capacity",
+      "priority": 75,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "GPU slot overflow is deferred with GPU_CAPACITY"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-ps-gpu2",
+        "required": true
+      },
+      "resources": {
+        "gpu": true,
+        "gpu_mem_bytes": 1073741824
+      }
+    },
+    {
+      "node_id": "n-cpu-c",
+      "title": "CPU work over CPU slot capacity",
+      "priority": 70,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "CPU overflow is deferred with CPU_CAPACITY"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-ps-cpu-c",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 4
+      }
+    },
+    {
+      "node_id": "n-cpu-d",
+      "title": "CPU work admitted within remaining capacity",
+      "priority": 60,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Safe concurrency above one is admitted"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-ps-cpu-d",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 1
+      }
+    },
+    {
+      "node_id": "n-cpu-e",
+      "title": "CPU work over the global concurrency limit",
+      "priority": 55,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Global concurrency limit is enforced"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-ps-cpu-e",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 1
+      }
+    },
+    {
+      "node_id": "n-blocked",
+      "title": "Dependent work unlocked only by authoritative completion",
+      "priority": 86,
+      "depends_on": [
+        "n-cpu-a"
+      ],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "Downstream readiness changes only after proven upstream completion"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-ps-blocked",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 1
+      }
+    },
+    {
+      "node_id": "n-chain",
+      "title": "GPU-dependent work unlocked by GPU completion evidence",
+      "priority": 30,
+      "depends_on": [
+        "n-gpu"
+      ],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-1",
+          "statement": "GPU downstream readiness follows authoritative evidence"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-ps-chain",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 1
+      }
+    }
+  ]
+}
