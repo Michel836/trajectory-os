@@ -445,11 +445,13 @@ def test_heartbeat_reports_recent_native_generation_rate(tp: TPContext) -> None:
 
     status = _latest_status_log(tp)
 
-    assert "ollama=active" in status
-    assert "GPU 99%" in status
-    assert "350.00 W" in status
-    assert "VRAM 22800/24576 MiB" in status
-    assert "gen_3s=36.37 tok/s" in status
+    assert "local-gpu=agent 99% 22800/24576MiB" in status
+    assert "agent-gen=36.37 tok/s" in status
+    # M012: the canonical line carries no duplicated legacy tokens.
+    assert "ollama=" not in status
+    assert "GPU " not in status
+    assert "VRAM " not in status
+    assert "gen_3s=" not in status
 
 
 def test_heartbeat_rejects_stale_generation_rate(tp: TPContext) -> None:
@@ -482,13 +484,11 @@ def test_heartbeat_rejects_stale_generation_rate(tp: TPContext) -> None:
 
     status = _latest_status_log(tp)
 
-    assert "ollama=active" in status
-    assert "gen_3s=unavailable" in status
-    assert "last_gen=36.37 tok/s" in status
-
-    age_fragment = status.split("age=", 1)[1].split("s", 1)[0]
-    age = int(age_fragment)
-    assert 30 <= age <= 35
+    assert "agent-gen=local/unavailable" in status
+    # A stale native sample is rejected, not reported as live throughput.
+    assert "36.37" not in status
+    assert "last_gen=" not in status
+    assert "gen_3s=" not in status
 
 
 def test_heartbeat_rejects_malformed_generation_rate(tp: TPContext) -> None:
@@ -520,7 +520,8 @@ def test_heartbeat_rejects_malformed_generation_rate(tp: TPContext) -> None:
     assert result.returncode == 0
 
     status = _latest_status_log(tp)
-    assert "gen_3s=unavailable" in status
+    assert "agent-gen=local/unavailable" in status
+    assert "gen_3s=" not in status
 
 
 def test_heartbeat_does_not_report_rate_when_model_inactive(tp: TPContext) -> None:
@@ -553,9 +554,10 @@ def test_heartbeat_does_not_report_rate_when_model_inactive(tp: TPContext) -> No
 
     status = _latest_status_log(tp)
 
-    assert "ollama=idle" in status
-    assert "gen_3s=unavailable" in status
+    assert "local-gpu=agent 99% 22800/24576MiB" in status
+    assert "agent-gen=local/unavailable" in status
     assert "99.99 tok/s" not in status
+    assert "ollama=" not in status
 
 
 def test_heartbeat_survives_journalctl_failure(tp: TPContext) -> None:
@@ -603,8 +605,8 @@ exit 9
     assert "AGENT_COMPLETED" in result.stdout
 
     status = _latest_status_log(tp)
-    assert "ollama=active" in status
-    assert "gen_3s=unavailable" in status
+    assert "agent-gen=local/unavailable" in status
+    assert "gen_3s=" not in status
 
 
 def test_heartbeat_is_written_to_status_log(tp: TPContext) -> None:
@@ -632,10 +634,15 @@ def test_heartbeat_is_written_to_status_log(tp: TPContext) -> None:
     assert heartbeat_lines
     assert all("elapsed=" in line for line in heartbeat_lines)
     assert all("files=" in line for line in heartbeat_lines)
-    assert all("ollama=" in line for line in heartbeat_lines)
-    assert all("GPU " in line for line in heartbeat_lines)
-    assert all("VRAM " in line for line in heartbeat_lines)
-    assert all("gen_3s=" in line for line in heartbeat_lines)
+    assert all("agent=" in line for line in heartbeat_lines)
+    assert all("reviewer=" in line for line in heartbeat_lines)
+    assert all("local-gpu=" in line for line in heartbeat_lines)
+    assert all("agent-gen=" in line for line in heartbeat_lines)
+    # M012: no new-producer duplication of the legacy presentation fields.
+    assert all("ollama=" not in line for line in heartbeat_lines)
+    assert all("GPU " not in line for line in heartbeat_lines)
+    assert all("VRAM " not in line for line in heartbeat_lines)
+    assert all("gen_3s=" not in line for line in heartbeat_lines)
 
 
 def test_completion_semantics_unchanged_with_telemetry(tp: TPContext) -> None:
@@ -750,7 +757,8 @@ def test_fresh_generation_rate_is_not_duplicated_as_last_gen(tp: TPContext) -> N
 
     status = _latest_status_log(tp)
 
-    assert "gen_3s=36.37 tok/s" in status
+    assert "agent-gen=36.37 tok/s" in status
+    assert "gen_3s=" not in status
     assert "last_gen=" not in status
     assert "age=" not in status
 
@@ -1692,15 +1700,35 @@ def test_live_banner_and_heartbeat_attribution_for_remote_agent(
     assert "Agent backend  pi" in result.stdout
     assert "Agent provider deepseek (remote)" in result.stdout
     assert "Agent model    deepseek-flash" in result.stdout
-    assert "reviewer=ollama/qwen3.6:27b local" in result.stdout
+    assert "Reviewer       ollama/qwen3.6:27b (local)" in result.stdout
+    assert ("Local GPU      idle until local model activity; "
+            "reviewer during REVIEW" in result.stdout)
 
-    # Heartbeat: the remote agent is active; the local GPU belongs to the
-    # (idle) local reviewer; generation is remote (not local telemetry).
+    # Heartbeat: the remote agent is active; the local GPU is semantically
+    # idle (the idle local reviewer does not own incidental GPU activity);
+    # generation is remote (not local telemetry).
     status = _latest_status_log(tp)
     assert "agent=pi/deepseek:deepseek-flash remote active" in status
     assert "reviewer=ollama:qwen3.6:27b local idle" in status
-    assert "local-gpu(review)=99% 22800/24576MiB" in status
+    assert "local-gpu=idle 99% 22800/24576MiB" in status
+    assert "local-gpu(review)" not in status
     assert "agent-gen=remote/n-a" in status
+    assert "ollama=" not in status
+    assert "gen_3s=" not in status
+
+
+def test_live_provider_prefix_is_not_duplicated(tp: TPContext) -> None:
+    tp.scenario(rc=0, output="Handoff\nTRAJECTORY_PI_TEST_COMPLETE\n")
+    _install_telemetry_fakes(tp, ollama_active=False, journal_body="")
+
+    result = tp.run(*SMOKE_ARGS, "--model", "deepseek/deepseek-flash",
+                    "--", "normalized model display")
+    assert result.returncode == 0, result.stderr
+
+    assert "Agent model    deepseek-flash" in result.stdout
+    status = _latest_status_log(tp)
+    assert "agent=pi/deepseek:deepseek-flash remote active" in status
+    assert "deepseek/deepseek-flash" not in status
 
 
 def test_live_heartbeat_attribution_for_local_agent(tp: TPContext) -> None:
@@ -1723,7 +1751,7 @@ def test_live_heartbeat_attribution_for_local_agent(tp: TPContext) -> None:
 
     status = _latest_status_log(tp)
     assert "agent=pi/ollama:qwen3.8-dev3090 local active" in status
-    assert "local-gpu(agent)=99% 22800/24576MiB" in status
+    assert "local-gpu=agent 99% 22800/24576MiB" in status
     assert "agent-gen=36.37 tok/s" in status
 
 
@@ -1739,5 +1767,7 @@ def test_live_validation_status_never_describes_the_validator(
     status = _latest_status_log(tp)
     assert "phase=VALIDATE" in status
     # Deterministic validation is not a model: no GPU/gen actor.
-    assert "local-gpu(none)=" in status
+    assert "local-gpu=n/a" in status
+    assert "local-gpu(agent)" not in status
+    assert "local-gpu(review)" not in status
     assert "agent-gen=n/a" in status

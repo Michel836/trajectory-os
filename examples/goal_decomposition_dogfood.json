@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "goal_id": "g-m012-dogfood",
+  "objective": "Decompose the persistent goal graph objective into dependent mission nodes.",
+  "nodes": [
+    {
+      "node_id": "n-spec",
+      "title": "Define the goal decomposition schema and ADR",
+      "priority": 90,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-schema",
+          "statement": "Schema and invariants are documented in ADR-010",
+          "verification": "docs/adr/ADR-010-goal-decomposition-graph.md exists"
+        },
+        {
+          "criterion_id": "ac-domain",
+          "statement": "Graph/spec identity domains are distinct from M010 patch domains",
+          "verification": "domain test asserts distinctness"
+        }
+      ],
+      "resources": {
+        "cpu_slots": 1,
+        "model_heavy": true
+      },
+      "budgets": {
+        "time_budget_s": 1800,
+        "repair_budget": 1,
+        "max_attempts": 2
+      }
+    },
+    {
+      "node_id": "n-model",
+      "title": "Implement the pure bounded graph model",
+      "priority": 85,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-normalize",
+          "statement": "Normalization is deterministic and order independent",
+          "verification": "reconstruction equality test"
+        },
+        {
+          "criterion_id": "ac-failclosed",
+          "statement": "Cycles, self and missing dependencies and duplicates are rejected"
+        }
+      ],
+      "resources": {
+        "cpu_slots": 2
+      },
+      "budgets": {
+        "subruns": 8,
+        "time_budget_s": 3600,
+        "repair_budget": 2,
+        "max_attempts": 3
+      }
+    },
+    {
+      "node_id": "n-store",
+      "title": "Persist the graph atomically and reconstruct strictly",
+      "priority": 70,
+      "depends_on": ["n-model"],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-roundtrip",
+          "statement": "Persistence round-trip preserves identity, nodes, edges and order"
+        }
+      ],
+      "resources": {
+        "cpu_slots": 1
+      },
+      "budgets": {
+        "subruns": 4,
+        "time_budget_s": 1800
+      }
+    },
+    {
+      "node_id": "n-readiness",
+      "title": "Project deterministic dependency readiness",
+      "priority": 60,
+      "depends_on": ["n-model"],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-ready",
+          "statement": "Ready and blocked nodes are distinguished deterministically"
+        },
+        {
+          "criterion_id": "ac-proven",
+          "statement": "A dependency-blocked node is never eligible"
+        }
+      ],
+      "resources": {
+        "cpu_slots": 1
+      },
+      "budgets": {
+        "subruns": 4,
+        "time_budget_s": 1800
+      }
+    },
+    {
+      "node_id": "n-cli",
+      "title": "Expose the operator surface and the M013 projection",
+      "priority": 45,
+      "depends_on": ["n-spec", "n-store", "n-readiness"],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-cli",
+          "statement": "Operator can inspect order, ready, blocked and reasons"
+        },
+        {
+          "criterion_id": "ac-m013",
+          "statement": "Machine projection exposes trusted bounded structure for M013"
+        }
+      ],
+      "resources": {
+        "cpu_slots": 2,
+        "model_heavy": true
+      },
+      "budgets": {
+        "subruns": 6,
+        "time_budget_s": 3600,
+        "repair_budget": 1
+      }
+    },
+    {
+      "node_id": "n-dogfood",
+      "title": "Prove the production dogfood end to end",
+      "priority": 30,
+      "depends_on": ["n-cli"],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-dogfood",
+          "statement": "Reconstruction yields identical order and readiness"
+        },
+        {
+          "criterion_id": "ac-refusal",
+          "statement": "Malformed and cyclic graphs are rejected fail-closed"
+        }
+      ],
+      "resources": {
+        "gpu": true,
+        "gpu_mem_bytes": 8589934592,
+        "exclusive": true,
+        "model_heavy": true
+      },
+      "budgets": {
+        "subruns": 2,
+        "time_budget_s": 1200,
+        "repair_budget": 0,
+        "max_attempts": 1
+      }
+    }
+  ]
+}

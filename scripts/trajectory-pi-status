@@ -125,7 +125,12 @@ AGENT_FIELD_RE = re.compile(
     r"\bagent=([^|]+?)\s+(remote|local|unknown)\s+(active|idle)")
 REVIEWER_FIELD_RE = re.compile(
     r"\breviewer=([^|]+?)\s+(remote|local|unknown)\s+(active|idle)")
-LOCAL_GPU_FIELD_RE = re.compile(r"\blocal-gpu\(([a-z]+)\)=([^|]+)")
+# Mission 011 historical layout: local-gpu(role)=util% used/totalMiB.
+LOCAL_GPU_LEGACY_RE = re.compile(r"\blocal-gpu\(([a-z]+)\)=([^|]+)")
+# Mission 012 canonical layout: local-gpu=<state> util% used/totalMiB
+# (state in idle/review/agent/n/a/unavailable).  A legacy line never
+# matches this because ``local-gpu`` is followed by ``(`` not ``=``.
+LOCAL_GPU_FIELD_RE = re.compile(r"\blocal-gpu=([^|]+)")
 AGENT_GEN_RE = re.compile(r"\bagent-gen=([^|]+?)(?:\s*\||$)")
 # A cumulative counter is only valid when the producer has emitted this
 # native, monotonic measurement.  It is deliberately distinct from gen_3s:
@@ -238,10 +243,29 @@ def parse_heartbeat(line: str) -> dict[str, Any] | None:
         rec["reviewer"] = rm.group(1).strip()
         rec["reviewer_locality"] = rm.group(2)
         rec["reviewer_state"] = rm.group(3)
-    gm = LOCAL_GPU_FIELD_RE.search(line)
+    gm = LOCAL_GPU_LEGACY_RE.search(line)
     if gm:
-        rec["gpu_role"] = gm.group(1)
-        rec["local_gpu"] = gm.group(2).strip()
+        role = gm.group(1)
+        value = gm.group(2).strip()
+        rec["gpu_role"] = role
+        rec["local_gpu"] = value
+        rec["gpu_format"] = "legacy"
+        rec["gpu_display"] = f"local-gpu({role})={value}"
+    else:
+        gm = LOCAL_GPU_FIELD_RE.search(line)
+        if gm:
+            value = gm.group(1).strip()
+            state, _, telemetry = value.partition(" ")
+            state = state or MISSING
+            telemetry = telemetry.strip()
+            rec["gpu_role"] = state
+            rec["gpu_state"] = state
+            rec["local_gpu"] = telemetry
+            rec["gpu_format"] = "attributed"
+            rec["gpu_display"] = (
+                f"local-gpu={state}"
+                + (f" {telemetry}" if telemetry else "")
+            )
     agm = AGENT_GEN_RE.search(line)
     if agm:
         rec["agent_gen"] = agm.group(1).strip()
@@ -545,6 +569,16 @@ def compute_speed(beats: list[dict[str, Any]]) -> str:
     if prior:
         return (f"{prior[0]['gen_3s']} tok/s (gen_3s @ {prior[0]['ts']}) — "
                 f"most recent sample unavailable")
+    # Mission 012 canonical layout: the attributed ``agent-gen`` field is the
+    # only generation telemetry; surface a local rate when present.  A
+    # remote agent (remote/n-a) or n/a never becomes a local rate.
+    for beat in reversed(beats):
+        match = re.fullmatch(
+            r"([0-9]+(?:\.[0-9]+)?)\s+tok/s",
+            str(beat.get("agent_gen", "")),
+        )
+        if match:
+            return f"{match.group(1)} tok/s (agent-gen @ {beat['ts']})"
     return UNAVAILABLE
 
 
@@ -708,7 +742,8 @@ def collect(
         for key in (
             "agent", "agent_locality", "agent_state",
             "reviewer", "reviewer_locality", "reviewer_state",
-            "gpu_role", "local_gpu", "agent_gen",
+            "gpu_role", "gpu_state", "gpu_format", "gpu_display",
+            "local_gpu", "agent_gen",
         )
     }
 
@@ -976,7 +1011,10 @@ def render_text(state: dict[str, Any]) -> str:
         reviewer_state = attribution.get("reviewer_state") or MISSING
         row("reviewer",
             f"{attribution['reviewer']} {locality} {reviewer_state}")
-    if attribution.get("local_gpu"):
+    gpu_display = attribution.get("gpu_display")
+    if gpu_display:
+        row("local_gpu", gpu_display)
+    elif attribution.get("local_gpu"):
         role = attribution.get("gpu_role") or "none"
         row("local_gpu", f"local-gpu({role})={attribution['local_gpu']}")
     if attribution.get("agent_gen"):
