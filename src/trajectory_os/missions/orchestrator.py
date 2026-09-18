@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from trajectory_os.missions import flow, model, store
+from trajectory_os.missions import flow, identity, model, store
 from trajectory_os.missions.runner import (
     FakeRunner,
     PhaseRunner,
@@ -369,7 +369,15 @@ def worktree_identity(repo_root: str) -> dict[str, Any]:
     patch_sha = (
         hashlib.sha256(diff).hexdigest() if diff is not None else None
     )
-    return {"head": head, "worktree_patch_sha256": patch_sha}
+    # Mission 010: label the domain explicitly. This digest is the mission
+    # worktree domain and must NEVER be compared with the wrapper snapshot
+    # digest (``attestation.patch_sha256``); they are independent.
+    return {
+        "head": head,
+        "worktree_patch_sha256": patch_sha,
+        "domain": identity.MISSION_WORKTREE_DOMAIN,
+        "field": identity.MISSION_WORKTREE_FIELD,
+    }
 
 
 def admit_phase_resources(
@@ -662,6 +670,7 @@ def finalize_subrun(
         result.semantic_agent_classification is not None,
         result.semantic_readiness is not None,
         result.semantic_reason is not None,
+        result.semantic_require_changes is not None,
     ))
     if semantic_observed:
         record.semantic_aware = True
@@ -671,6 +680,7 @@ def finalize_subrun(
             result.semantic_agent_classification)
         record.semantic_readiness = result.semantic_readiness
         record.semantic_reason = result.semantic_reason
+        record.semantic_require_changes = result.semantic_require_changes
 
     # Mission 008: persist the exact-attestation outcome when the runner
     # observed one. Deterministic phases and legacy runners never set it, so

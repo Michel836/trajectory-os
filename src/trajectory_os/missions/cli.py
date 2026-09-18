@@ -62,7 +62,15 @@ from pathlib import Path
 from typing import Any
 
 from trajectory_os import __version__
-from trajectory_os.missions import adapter, flow, model, orchestrator, store, summary
+from trajectory_os.missions import (
+    adapter,
+    flow,
+    identity,
+    model,
+    orchestrator,
+    store,
+    summary,
+)
 
 EXIT_OK = 0
 EXIT_USAGE = 2
@@ -671,12 +679,24 @@ def _cmd_evidence(args: argparse.Namespace) -> int:
         if isinstance(worktree, dict):
             print(f"head   : {worktree.get('head')}")
             print(f"patch  : {worktree.get('worktree_patch_sha256')}")
+            print(f"domain : {worktree.get('domain', identity.MISSION_WORKTREE_DOMAIN)}"
+                  f" (field {worktree.get('field', identity.MISSION_WORKTREE_FIELD)})"
+                  " — independent from the wrapper snapshot digest; never "
+                  "compared")
     else:
         print("evidence: not persisted (phase did not pass) — sub-run "
               "records below are the canonical evidence")
     for subrun in payload["subruns"]:
         print(f"subrun : {subrun['subrun_id']} exit={subrun['exit_code']} "
               f"-> {subrun['classification']}")
+        require_changes = subrun.get("semantic_require_changes")
+        if require_changes is not None:
+            print(f"  require-changes: {require_changes}")
+        if subrun.get("attestation") is not None or subrun.get(
+                "attestation_error") is not None:
+            print(f"  patch-domain   : {identity.WRAPPER_SNAPSHOT_DOMAIN} "
+                  f"(field {identity.WRAPPER_SNAPSHOT_FIELD}) — independent "
+                  "from the mission worktree digest; never compared")
     return EXIT_OK
 
 

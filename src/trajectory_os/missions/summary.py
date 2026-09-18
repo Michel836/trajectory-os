@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from trajectory_os.missions import model, semantic, store
+from trajectory_os.missions import identity, model, semantic, store
 from trajectory_os.missions.store import MissionDoc
 
 # --- Mission 009: exact-execution-attestation projection -------------------
@@ -143,6 +143,14 @@ def _subrun_flags(mission: MissionDoc,
             "exit_code": record.exit_code,
             "classification": record.classification,
             "provider_failure": record.provider_failure,
+            "semantic_require_changes": record.semantic_require_changes,
+            # Mission 010: only model-heavy sub-runs carry the wrapper
+            # snapshot digest; label its domain explicitly (None for
+            # deterministic sub-runs, which have no patch identity).
+            "patch_identity_domain": (
+                identity.WRAPPER_SNAPSHOT_DOMAIN
+                if record.kind in model.MODEL_HEAVY_KINDS else None),
+
             "attestation": attestation["status"],
             "attestation_error": attestation["error"],
             "attestation_identity": attestation["identity"],
@@ -225,11 +233,21 @@ def mission_summary(mission: MissionDoc,
             "subruns": [
                 {"subrun_id": sub["subrun_id"], "phase_id": sub["phase_id"],
                  "classification": sub["classification"],
+                 "semantic_require_changes": sub["semantic_require_changes"],
+                 "patch_identity_domain": sub["patch_identity_domain"],
                  "attestation": sub["attestation"],
                  "attestation_error": sub["attestation_error"],
                  "attestation_identity": sub["attestation_identity"]}
                 for sub in model_heavy_subruns
             ],
+        },
+        # Mission 010: expose both patch identity domains distinctly. The
+        # two digests are independent and MUST never be compared for
+        # equality; the domain id + authoritative field make that explicit
+        # in operator-visible output.
+        "patch_identity": {
+            "wrapper_snapshot": dict(identity.DOMAIN_DESCRIPTORS[0]),
+            "mission_worktree": dict(identity.DOMAIN_DESCRIPTORS[1]),
         },
         # Mission 009: exact-execution-attestation projection over the
         # model-heavy sub-runs (the only sub-runs that carry an M008
@@ -317,6 +335,16 @@ def render_summary(summary: Mapping[str, Any]) -> str:
             f"attestation : verified={attestation['verified']} "
             f"unproven={attestation['unproven']} "
             f"legacy={attestation['legacy']}")
+    patch_identity = summary.get("patch_identity")
+    if isinstance(patch_identity, Mapping):
+        wrapper = patch_identity.get("wrapper_snapshot")
+        mission_worktree = patch_identity.get("mission_worktree")
+        if isinstance(wrapper, Mapping) and isinstance(mission_worktree, Mapping):
+            lines.append(
+                f"patch-id  : wrapper_snapshot={wrapper['domain']} "
+                f"({wrapper['field']}) | mission_worktree="
+                f"{mission_worktree['domain']} ({mission_worktree['field']}) "
+                "[independent domains; never compared]")
     lines.append(f"human     : interventions={summary['human_interventions']}")
     phases = summary["phases"]
     if isinstance(phases, list):

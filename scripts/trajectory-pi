@@ -942,6 +942,27 @@ semantic_status_for_classification() {
         base="UNKNOWN"
     fi
 
+    # Mission 010 — mandatory writable-mode semantic promotion contract.
+    # For writable modes (IMPLEMENT/REPAIR/RECOVERY/SMOKE), a bare
+    # AGENT_COMPLETED classification proves only that the agent process
+    # exited cleanly; it does NOT imply semantic SUCCESS by itself. SUCCESS
+    # requires a deterministically proven green repository readiness:
+    #   READY_FOR_COMMIT / READY_FOR_REVIEW -> SUCCESS
+    #   NEEDS_REVIEW / BLOCKED              -> FAILED
+    #   absent / unrecognized readiness     -> UNKNOWN (fail closed)
+    # Non-SUCCESS classifications keep their existing fail-closed mapping.
+    case "${RUN_MODE:-}" in
+        IMPLEMENT|REPAIR|RECOVERY|SMOKE)
+            if [[ "$base" == "SUCCESS" ]]; then
+                case "${READINESS:-}" in
+                    READY_FOR_COMMIT|READY_FOR_REVIEW) base="SUCCESS" ;;
+                    NEEDS_REVIEW|BLOCKED)              base="FAILED" ;;
+                    *)                                 base="UNKNOWN" ;;
+                esac
+            fi
+            ;;
+    esac
+
     echo "$base"
 }
 
@@ -958,6 +979,14 @@ emit_semantic_subrun_result() {
     local reason;   reason="$(tp_json_escape "${READINESS_REASON:-}")";   reason="${reason:0:512}"
     local agent_cl; agent_cl="$(tp_json_escape "${CLASSIFICATION:-UNKNOWN}")"; agent_cl="${agent_cl:0:512}"
     local readiness; readiness="$(tp_json_escape "${READINESS:-UNKNOWN}")"; readiness="${readiness:0:512}"
+    # Mission 010 — optional --require-changes provenance. Bounded enum;
+    # an unrecognized value fails closed to UNPROVEN (never silently
+    # coerced into a success/failure claim).
+    local require_changes="${REQUIRE_CHANGES_STATE:-NOT_REQUIRED}"
+    case "$require_changes" in
+        NOT_REQUIRED|SATISFIED|UNSATISFIED|UNPROVEN) ;;
+        *) require_changes="UNPROVEN" ;;
+    esac
     # Mission 008 — exact execution attestation.
     # Bind the semantic result to the exact wrapper execution identity
     # (run_id), the exact repository HEAD before/after, and the exact patch
@@ -988,6 +1017,7 @@ emit_semantic_subrun_result() {
         printf ' "status":"%s",'     "$status"
         printf ' "agent_classification":"%s",' "$agent_cl"
         printf ' "readiness":"%s",'   "$readiness"
+        printf ' "require_changes":"%s",' "$require_changes"
         printf ' "reason":"%s"'       "$reason"
         printf '%s' "$attestation"
         printf '}\n'

@@ -75,6 +75,10 @@ class SubrunResult:
     semantic_agent_classification: str | None = None
     semantic_readiness: str | None = None
     semantic_reason: str | None = None
+    # Mission 010 — optional ``--require-changes`` provenance carried by the
+    # producer's semantic document (``NOT_REQUIRED``/``SATISFIED``/
+    # ``UNSATISFIED``/``UNPROVEN``). ``None`` on legacy evidence.
+    semantic_require_changes: str | None = None
     # Mission 008 — exact execution attestation outcome.  ``attestation`` is
     # :data:`semantic.ATTESTATION_VERIFIED` only after the runner has
     # independently re-derived every identity; otherwise ``None`` and
@@ -132,6 +136,8 @@ def classify_subrun(exit_code: int | None,
                     semantic_agent_classification: str | None = None,
                     semantic_readiness: str | None = None,
                     semantic_reason: str | None = None,
+                    semantic_require_changes: str | None = None,
+                    semantic_mode: str | None = None,
                     attestation: str | None = None,
                     attestation_error: str | None = None) -> SubrunResult:
     """Deterministic, fail-closed sub-run classification (pure).
@@ -144,11 +150,20 @@ def classify_subrun(exit_code: int | None,
       exact sub-run says SUCCESS **and** the exact execution attestation was
       independently verified (Mission 008). Any missing/malformed/stale/
       partial/contradictory/mismatched attestation — or a non-SUCCESS
-      status — classifies fail closed (never COMPLETED).
+      status — classifies fail closed (never COMPLETED);
+    * Mission 010 defense-in-depth: a persisted SUCCESS with a KNOWN
+      non-green readiness (``NEEDS_REVIEW``/``BLOCKED``) fails closed
+      (FAILED); for writable modes an unrecognized readiness is UNPROVEN.
+      A legacy record with absent readiness stays readable (unchanged).
     """
     base = classify_exit(exit_code, timed_out=timed_out)
+    readiness_override = _readiness_override(
+        semantic_mode, semantic_status, semantic_readiness)
     if base != model.CR_COMPLETED:
         classification = base
+    elif readiness_override is not None:
+        # Mission 010: a known non-green readiness can never be COMPLETED.
+        classification = readiness_override
     elif semantic_status is None:
         classification = model.CR_UNPROVEN
     elif (semantic_status in semantic.SUCCESS_STATUSES
@@ -168,9 +183,38 @@ def classify_subrun(exit_code: int | None,
         semantic_agent_classification=semantic_agent_classification,
         semantic_readiness=semantic_readiness,
         semantic_reason=semantic_reason,
+        semantic_require_changes=semantic_require_changes,
         attestation=attestation,
         attestation_error=attestation_error,
     )
+
+
+def _readiness_override(mode: str | None,
+                        status: str | None,
+                        readiness: str | None) -> str | None:
+    """Mission 010 consumer rule (pure, fail closed).
+
+    Returns the classification a persisted SUCCESS must take when its
+    recorded readiness proves it is not green, or ``None`` when the normal
+    attested-success path may proceed. Absent readiness is legacy evidence
+    and is deliberately left to the normal path (readable, not re-derived).
+
+    A KNOWN non-green readiness (``NEEDS_REVIEW``/``BLOCKED``) fails closed
+    for every mode (defense-in-depth). An unrecognized readiness fails
+    closed only for writable modes, matching the mandatory promotion
+    contract; read-only modes keep their producer-derived status.
+    """
+    if status not in semantic.SUCCESS_STATUSES:
+        return None
+    if readiness is None:
+        return None  # legacy evidence: no readiness claim to contradict
+    if readiness in semantic.READINESS_FAILED:
+        return model.CR_FAILED
+    if readiness in semantic.READINESS_SUCCESS:
+        return None
+    if mode in semantic.WRITABLE_MODES:
+        return model.CR_UNPROVEN  # unrecognized readiness: fail closed
+    return None
 
 
 def semantic_evidence_path(request: SubrunRequest) -> Path:
@@ -470,12 +514,14 @@ class ProcessPhaseRunner:
             agent_classification = None
             readiness = None
             reason = None
+            require_changes = None
         else:
             status, error = semantic.interpret_semantic(doc, request.subrun_id)
             if error is None and doc is not None:
                 agent_classification = doc.get("agent_classification")
                 readiness = doc.get("readiness")
                 reason = doc.get("reason")
+                require_changes = doc.get("require_changes")
                 # Mission 008: independently verify the exact execution
                 # attestation. Verification is attempted for every valid
                 # document (so the outcome is recorded even for non-SUCCESS
@@ -489,6 +535,7 @@ class ProcessPhaseRunner:
                 agent_classification = None
                 readiness = None
                 reason = None
+                require_changes = None
         return classify_subrun(
             exit_code,
             timed_out=timed_out,
@@ -497,6 +544,8 @@ class ProcessPhaseRunner:
             semantic_agent_classification=agent_classification,
             semantic_readiness=readiness,
             semantic_reason=reason,
+            semantic_require_changes=require_changes,
+            semantic_mode=request.mode,
             attestation=attestation,
             attestation_error=attestation_error,
         )
