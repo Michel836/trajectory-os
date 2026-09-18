@@ -101,4 +101,5 @@ def comparison_summary(result: model.AgentResult) -> Mapping[str, Any]:
         "repair_count": 0,
         "runtime_ms": result.runtime_ms,
         "fallback_from": result.fallback_from,
+        "error": result.error,
     }

@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "goal_id": "g-m016-program",
+  "objective": "Prove the complete M008-M016 adaptive goal-execution program end to end: one strategic goal, a persistent mission graph, dependency/resource scheduling, explicit cross-mission evidence reuse, a controlled failure, a bounded deterministic replan, preserved historical evidence, interruption/reconstruction, and a goal-level proof that is COMPLETE only when every acceptance criterion is satisfied by exact proven evidence.",
+  "nodes": [
+    {
+      "node_id": "n-foundation",
+      "title": "Foundation: persistent graph and exact execution evidence",
+      "priority": 90,
+      "depends_on": [],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-graph",
+          "statement": "The strategic goal is represented by a persistent, reconstructible goal graph"
+        },
+        {
+          "criterion_id": "ac-evidence",
+          "statement": "Exact execution attestation is independently verified for the producer work",
+          "verification": "validate"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-m016-foundation",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 2,
+        "model_heavy": true
+      },
+      "budgets": {
+        "time_budget_s": 1800,
+        "repair_budget": 0,
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "n-runtime",
+      "title": "Runtime: consume explicitly proven upstream evidence",
+      "priority": 80,
+      "depends_on": [
+        "n-foundation"
+      ],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-reuse",
+          "statement": "Downstream work consumes exactly the proven upstream evidence it declares"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-m016-runtime",
+        "required": true
+      },
+      "reuse_inputs": [
+        {
+          "input_id": "foundation-validate",
+          "producer_node_id": "n-foundation",
+          "evidence_kind": "PHASE_EVIDENCE",
+          "phase_id": "validate",
+          "required": true,
+          "min_trust": "PROVEN"
+        }
+      ],
+      "resources": {
+        "cpu_slots": 1
+      },
+      "budgets": {
+        "time_budget_s": 1800,
+        "repair_budget": 0,
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "n-failing",
+      "title": "Controlled failure node (superseded by a bounded replan)",
+      "priority": 70,
+      "depends_on": [
+        "n-foundation"
+      ],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-risk",
+          "statement": "A controlled failure is detected, blocked and deterministically replanned"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-m016-failing",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 1
+      },
+      "budgets": {
+        "time_budget_s": 1800,
+        "repair_budget": 0,
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "n-integration",
+      "title": "Integration: dependency- and resource-aware scheduling",
+      "priority": 50,
+      "depends_on": [
+        "n-runtime",
+        "n-failing"
+      ],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-integration",
+          "statement": "Only dependency-ready and resource-admissible work is scheduled"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-m016-integration",
+        "required": true
+      },
+      "resources": {
+        "cpu_slots": 2,
+        "model_heavy": true
+      },
+      "budgets": {
+        "time_budget_s": 1800,
+        "repair_budget": 0,
+        "max_attempts": 1
+      }
+    },
+    {
+      "node_id": "n-proof",
+      "title": "Final goal-level proof and operator control",
+      "priority": 30,
+      "depends_on": [
+        "n-integration"
+      ],
+      "acceptance_criteria": [
+        {
+          "criterion_id": "ac-goal",
+          "statement": "The goal is COMPLETE only when every acceptance criterion is bound to exact proven evidence"
+        }
+      ],
+      "mission_ref": {
+        "mission_id": "m-m016-proof",
+        "required": true
+      },
+      "resources": {
+        "gpu": true,
+        "gpu_mem_bytes": 1073741824,
+        "exclusive": true,
+        "model_heavy": true
+      },
+      "budgets": {
+        "time_budget_s": 1800,
+        "repair_budget": 0,
+        "max_attempts": 1
+      }
+    }
+  ]
+}

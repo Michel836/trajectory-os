@@ -333,11 +333,21 @@ class DeepSeekHarnessBackend:
             if _cancel_requested(cancel):
                 return self._finish(client, proc, events, model.RS_CANCELLED,
                                     model.R_CANCELLED, started, final_text)
-            idle, texts = self._await_idle(client, session_id, deadline, emit)
+            idle, texts, turn_error = self._await_idle(client, session_id,
+                                                       deadline, emit)
             final_text = texts or final_text
             if not idle:
                 return self._finish(client, proc, events, model.RS_TIMEOUT,
                                     model.R_TIMEOUT, started, final_text)
+            if turn_error is not None:
+                reason = _turn_error_reason(turn_error)
+                status = (model.RS_UNAVAILABLE
+                          if reason == model.R_CREDENTIALS_MISSING
+                          else model.RS_FAILED)
+                emit(model.LK_ERROR, "session.event", session_id=session_id,
+                     payload={"turn_error": turn_error[:model.MAX_DETAIL_LEN]})
+                return self._finish(client, proc, events, status, reason,
+                                    started, final_text)
             completion = model.CompletionEvidence.build(
                 source=model.CS_LIFECYCLE_IDLE, reliable=True,
                 detail="session.status idle observed over structured JSON-RPC",
@@ -386,21 +396,25 @@ class DeepSeekHarnessBackend:
     def _await_idle(
         self, client: _RuntimeClient, session_id: str, deadline: float,
         emit: Callable[..., None],
-    ) -> tuple[bool, str]:
+    ) -> tuple[bool, str, str | None]:
         texts: list[str] = []
+        turn_error: str | None = None
         while True:
             frame = client.next_frame(deadline)
             if frame is None:
-                return False, "\n".join(texts).strip()
+                return False, "\n".join(texts).strip(), turn_error
             kind, payload = _classify_notification(frame)
             if kind is None:
                 continue
             if kind == model.LK_MESSAGE:
                 texts.extend(_extract_text(payload))
+                detected = _turn_error(payload)
+                if detected is not None:
+                    turn_error = detected
             emit(kind, str(frame.get("method")), session_id=session_id,
                  payload=_bounded_payload(payload))
             if kind == model.LK_IDLE:
-                return True, "\n".join(texts).strip()
+                return True, "\n".join(texts).strip(), turn_error
 
     def _finish(self, client: _RuntimeClient | None, proc: ProcLike | None,
                 events: Sequence[model.AgentEvent], status: str, reason: str,
@@ -450,6 +464,43 @@ def _handle_notification(frame: Mapping[str, Any],
     emit(kind, str(frame.get("method")), session_id=session_id,
          payload=_bounded_payload(payload))
     return True
+
+
+def _turn_error_reason(code: str) -> str:
+    """Map a structured turn error code to a stable backend reason code."""
+    if code in ("MISSING_CREDENTIAL", "MISSING_API_KEY", "UNAUTHORIZED",
+                "AUTHENTICATION_ERROR", "INVALID_API_KEY"):
+        return model.R_CREDENTIALS_MISSING
+    return model.R_RPC_ERROR
+
+
+def _turn_error(payload: Mapping[str, Any]) -> str | None:
+    """Detect a structured ``turn/end`` error notification (fail closed).
+
+    A session that reaches an ``idle`` status after an explicitly errored
+    turn is *not* a reliable completion: the DeepSeek Harness runtime emits
+    ``turn/end`` with a structured ``reason.kind == "error"`` (for example
+    ``MISSING_CREDENTIAL``). Structured lifecycle evidence therefore takes
+    precedence over the idle transition, and the run fails closed with the
+    stable reason code instead of a false completion.
+    """
+    event = payload.get("event")
+    if not isinstance(event, Mapping) or event.get("type") != "turn/end":
+        return None
+    data = event.get("data")
+    if not isinstance(data, Mapping):
+        return None
+    reason = data.get("reason")
+    if not isinstance(reason, Mapping):
+        return None
+    if reason.get("kind") != "error" and "error" not in reason:
+        return None
+    error = reason.get("error")
+    if isinstance(error, Mapping):
+        code = error.get("code")
+        if isinstance(code, str) and code:
+            return code
+    return "TURN_ERROR"
 
 
 def _classify_notification(
