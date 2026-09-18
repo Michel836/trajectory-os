@@ -74,6 +74,80 @@ SUCCESS_STATUSES = frozenset({STATUS_SUCCESS})
 #: All string fields are non-empty and bounded (fail closed on runaway).
 _MAX_STR_LEN = 512
 
+# ---------------------------------------------------------------------------
+# Mission 010 — mandatory writable-mode semantic promotion contract
+# ---------------------------------------------------------------------------
+# The wrapper terminal classification for a successful writable run is
+# ``AGENT_COMPLETED``. That classification alone proves only that the agent
+# process exited cleanly; it does NOT prove the repository reached a green
+# readiness state. For the writable modes below the producer and the consumer
+# both require a deterministically proven readiness before SUCCESS:
+#
+#   AGENT_COMPLETED does NOT imply SUCCESS by itself
+#   READY_FOR_COMMIT / READY_FOR_REVIEW -> SUCCESS
+#   NEEDS_REVIEW / BLOCKED               -> FAILED
+#   absent / unrecognized readiness      -> UNKNOWN
+#
+# No new semantic status is introduced and the schema/version stays frozen:
+# the promotion only ever selects among the existing statuses.
+
+#: Wrapper classification that signals a clean agent process (not success).
+AGENT_COMPLETED = "AGENT_COMPLETED"
+
+#: Modes whose success is gated on a proven green readiness.
+WRITABLE_MODES = frozenset({"IMPLEMENT", "REPAIR", "RECOVERY", "SMOKE"})
+
+#: Readiness states that support writable-mode SUCCESS.
+READINESS_SUCCESS = frozenset({"READY_FOR_COMMIT", "READY_FOR_REVIEW"})
+
+#: Readiness states that deterministically fail writable-mode promotion.
+READINESS_FAILED = frozenset({"NEEDS_REVIEW", "BLOCKED"})
+
+#: Optional Mission 010 provenance for the operator ``--require-changes``
+#: contract. Absent on legacy evidence (readable as ``NOT_REQUIRED`` by
+#: operators, never re-derived).
+REQUIRE_CHANGES_NOT_REQUIRED = "NOT_REQUIRED"
+REQUIRE_CHANGES_SATISFIED = "SATISFIED"
+REQUIRE_CHANGES_UNSATISFIED = "UNSATISFIED"
+REQUIRE_CHANGES_UNPROVEN = "UNPROVEN"
+
+REQUIRE_CHANGES_VALUES = frozenset({
+    REQUIRE_CHANGES_NOT_REQUIRED,
+    REQUIRE_CHANGES_SATISFIED,
+    REQUIRE_CHANGES_UNSATISFIED,
+    REQUIRE_CHANGES_UNPROVEN,
+})
+
+
+def promote_writable_status(mode: str | None,
+                            status: str | None,
+                            agent_classification: str | None,
+                            readiness: str | None) -> str | None:
+    """Apply the writable-mode promotion contract to a raw status (pure).
+
+    Non-writable modes and non-SUCCESS statuses are returned unchanged
+    (fail closed on whatever the producer already claimed). For writable
+    modes a raw SUCCESS is re-derived from the classification + readiness:
+
+    * ``AGENT_COMPLETED`` + green readiness  -> ``SUCCESS``;
+    * ``AGENT_COMPLETED`` + non-green readiness -> ``FAILED``;
+    * ``AGENT_COMPLETED`` + absent/unrecognized readiness -> ``UNKNOWN``;
+    * any other classification -> ``UNKNOWN`` (never promoted).
+
+    ``None`` status stays ``None`` (no evidence, no guess).
+    """
+    if status is None or mode not in WRITABLE_MODES:
+        return status
+    if status not in SUCCESS_STATUSES:
+        return status
+    if agent_classification != AGENT_COMPLETED:
+        return STATUS_UNKNOWN
+    if readiness in READINESS_SUCCESS:
+        return STATUS_SUCCESS
+    if readiness in READINESS_FAILED:
+        return STATUS_FAILED
+    return STATUS_UNKNOWN
+
 
 class SemanticError(Exception):
     """The semantic result file violates the contract (fail closed).
@@ -113,7 +187,10 @@ def validate_semantic(doc: Any) -> str:
     * ``status``: required, one of :data:`ALL_STATUSES`;
     * optional provenance fields (``reason``, ``agent_classification``,
       ``readiness``, ``ts``): if present, MUST be bounded non-empty
-      strings (``null``/oversized/non-string is a contract violation).
+      strings (``null``/oversized/non-string is a contract violation);
+    * optional ``require_changes`` (Mission 010): if present, MUST be one
+      of :data:`REQUIRE_CHANGES_VALUES` (a malformed value is a contract
+      violation, never silently coerced).
     """
     if not isinstance(doc, dict):
         raise SemanticError("MALFORMED", "top-level must be an object")
@@ -139,6 +216,15 @@ def validate_semantic(doc: Any) -> str:
     for field in ("reason", "agent_classification", "readiness", "ts"):
         if field in doc:
             _ = _require_bounded_str(doc, field)
+
+    if "require_changes" in doc:
+        require_changes = doc["require_changes"]
+        if (not isinstance(require_changes, str)
+                or require_changes not in REQUIRE_CHANGES_VALUES):
+            raise SemanticError(
+                "REQUIRE_CHANGES_INVALID",
+                f"require_changes={require_changes!r} not in "
+                f"{sorted(REQUIRE_CHANGES_VALUES)}")
 
     return status
 

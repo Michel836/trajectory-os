@@ -231,6 +231,9 @@ _SUBRUN_KEYS = (
     # persist the complete bounded outcome/provenance shape explicitly.
     "semantic_status", "semantic_error",
     "semantic_agent_classification", "semantic_readiness", "semantic_reason",
+    # Mission 010. Optional ``--require-changes`` provenance; absent on
+    # legacy evidence (readable as-is, never re-derived).
+    "semantic_require_changes",
     # Mission 008. Optional exact-attestation outcome; absent on legacy M007
     # records (readable as-is, never silently promoted).
     "attestation", "attestation_error",
@@ -271,6 +274,10 @@ class SubrunDoc:
     semantic_agent_classification: str | None = None
     semantic_readiness: str | None = None
     semantic_reason: str | None = None
+    # --- Mission 010: optional ``--require-changes`` provenance ---
+    # One of ``semantic.REQUIRE_CHANGES_VALUES`` or None. Absent on legacy
+    # records (readable without re-derivation).
+    semantic_require_changes: str | None = None
     semantic_aware: bool = False
     # --- Mission 008: exact execution attestation outcome (optional) ---
     # ``attestation``: ``semantic.ATTESTATION_VERIFIED`` when the runner
@@ -318,6 +325,10 @@ class SubrunDoc:
                 self.semantic_agent_classification)
             doc["semantic_readiness"] = self.semantic_readiness
             doc["semantic_reason"] = self.semantic_reason
+            # Mission 010: written only when recorded, so pre-M010 aware
+            # records keep their exact old shape (optional/legacy-safe).
+            if self.semantic_require_changes is not None:
+                doc["semantic_require_changes"] = self.semantic_require_changes
         if self.attestation is not None or self.attestation_error is not None:
             # Mission 008: written only when an attestation outcome exists;
             # legacy M007 records keep their exact old shape (no key).
@@ -343,6 +354,7 @@ class SubrunDoc:
         semantic_agent_classification: str | None = None
         semantic_readiness: str | None = None
         semantic_reason: str | None = None
+        semantic_require_changes: str | None = None
         aware = False
         semantic_keys = {
             "semantic_status",
@@ -367,6 +379,11 @@ class SubrunDoc:
                 model.R_MALFORMED_STATE,
                 path,
                 "attestation evidence without semantic evidence")
+        if "semantic_require_changes" in doc and not present_semantic_keys:
+            raise MalformedMissionError(
+                model.R_MALFORMED_STATE,
+                path,
+                "require-changes evidence without semantic evidence")
         if present_semantic_keys:
             if present_semantic_keys != semantic_keys:
                 raise MalformedMissionError(
@@ -407,6 +424,19 @@ class SubrunDoc:
                         model.R_MALFORMED_STATE,
                         path,
                         f"{field_name} invalid")
+            # Mission 010: optional ``--require-changes`` provenance. Readable
+            # only when the core semantic evidence shape is present; a
+            # malformed/unrecognized value fails closed.
+            if "semantic_require_changes" in doc:
+                semantic_require_changes = doc.get("semantic_require_changes")
+                if semantic_require_changes is not None:
+                    _chk(
+                        isinstance(semantic_require_changes, str)
+                        and semantic_require_changes
+                        in semantic.REQUIRE_CHANGES_VALUES,
+                        model.R_MALFORMED_STATE,
+                        path,
+                        "semantic_require_changes invalid")
             # Mission 008: optional exact-attestation outcome. Readable only
             # as a complete pair; absent on legacy M007 records (backward
             # readable, never silently promoted).
@@ -424,6 +454,17 @@ class SubrunDoc:
                         and attestation_error in semantic.ATTESTATION_REASON_CODES,
                         model.R_MALFORMED_STATE, path,
                         f"attestation_error={attestation_error!r}")
+            # Mission 010 defense-in-depth: a persisted SUCCESS with a KNOWN
+            # non-green readiness (NEEDS_REVIEW/BLOCKED) is never a valid
+            # COMPLETED for new evidence. Legacy evidence with absent
+            # readiness keeps its historical readability (no contradiction).
+            if (doc["classification"] == model.CR_COMPLETED
+                    and semantic_status == semantic.STATUS_SUCCESS
+                    and semantic_readiness in semantic.READINESS_FAILED):
+                raise MalformedMissionError(
+                    model.R_CONTRADICTION, path,
+                    "COMPLETED with SUCCESS but non-green readiness "
+                    f"{semantic_readiness!r} (fail closed)")
             # Fail closed: an aware record may only claim COMPLETED when its
             # persisted evidence is exactly SUCCESS. Missing, contradictory,
             # malformed, or absent evidence never reads as a proven pass.
@@ -466,6 +507,7 @@ class SubrunDoc:
             semantic_agent_classification=semantic_agent_classification,
             semantic_readiness=semantic_readiness,
             semantic_reason=semantic_reason,
+            semantic_require_changes=semantic_require_changes,
             semantic_aware=aware,
             attestation=attestation,
             attestation_error=attestation_error,

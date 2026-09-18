@@ -583,6 +583,72 @@ def test_require_changes_reason_is_deterministic_across_runs(
 
 
 # ---------------------------------------------------------------------------
+# Mission 010 — semantic result emission (status + require_changes)
+# ---------------------------------------------------------------------------
+
+
+def _run_with_semantic(repo: Path,
+                       env: dict[str, str] | None = None,
+                       *args: str) -> tuple[
+        subprocess.CompletedProcess, dict[str, object]]:
+    result_file = repo.parent / "m010.semantic.json"
+    result_file.unlink(missing_ok=True)
+    full_env = {
+        "TRAJECTORY_SUBRUN_ID": "implement-a1",
+        "TRAJECTORY_SUBRUN_RESULT_FILE": str(result_file),
+    }
+    if env:
+        full_env.update(env)
+    proc = run(repo, full_env, *args)
+    assert proc.returncode == 0, proc.stdout
+    return proc, json.loads(result_file.read_text(encoding="utf-8"))
+
+
+def test_semantic_emission_require_changes_unsatisfied_fails_closed(
+    repo: Path,
+) -> None:
+    """--require-changes with zero new delta emits a non-SUCCESS status and
+    UNSATISFIED provenance (writable promotion contract)."""
+    _, doc = _run_with_semantic(
+        repo, None,
+        "--class", "smoke", "--interval", "1", "--no-notify",
+        "--no-review", "--require-changes", "--", "implement the feature",
+    )
+    assert doc["status"] == "FAILED"
+    assert doc["status"] != "SUCCESS"
+    assert doc["require_changes"] == "UNSATISFIED"
+    assert doc["readiness"] == "NEEDS_REVIEW"
+
+
+def test_semantic_emission_require_changes_satisfied_promotes(
+    repo: Path,
+) -> None:
+    """--require-changes satisfied by a genuine new file emits SUCCESS and
+    SATISFIED provenance."""
+    _, doc = _run_with_semantic(
+        repo,
+        {"FAKE_PI_CREATE_FILE": "src/m010.py"},
+        "--class", "feature", "--interval", "1", "--no-notify",
+        "--no-review", "--require-changes", "--", "implement the feature",
+    )
+    assert doc["status"] == "SUCCESS"
+    assert doc["require_changes"] == "SATISFIED"
+    assert doc["readiness"] == "READY_FOR_REVIEW"
+
+
+def test_semantic_emission_without_flag_is_not_required(repo: Path) -> None:
+    """A default zero-diff run emits SUCCESS and NOT_REQUIRED provenance."""
+    _, doc = _run_with_semantic(
+        repo, None,
+        "--class", "smoke", "--interval", "1", "--no-notify",
+        "--no-review", "--", "inspect the repository",
+    )
+    assert doc["status"] == "SUCCESS"
+    assert doc["require_changes"] == "NOT_REQUIRED"
+    assert doc["readiness"] == "READY_FOR_REVIEW"
+
+
+# ---------------------------------------------------------------------------
 # Wrapper source invariants
 # ---------------------------------------------------------------------------
 
@@ -597,3 +663,7 @@ def test_source_contract_invariants() -> None:
     assert "REQUIRE_CHANGES=1" in text
     assert "require_changes_state=" in text
     assert "require_changes_delta_files=" in text
+    # Mission 010: the semantic result carries bounded require-changes
+    # provenance and applies the writable promotion contract.
+    assert '"require_changes":"%s"' in text
+    assert "IMPLEMENT|REPAIR|RECOVERY|SMOKE)" in text
