@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from trajectory_os.missions import flow, identity, model, store
+from trajectory_os.missions import flow, gate, identity, model, store
 from trajectory_os.missions.runner import (
     FakeRunner,
     PhaseRunner,
@@ -1055,6 +1055,9 @@ class ReconstructionReport:
     pending: list[str]
     next: dict[str, Any] | None
     summary: dict[str, Any] | None
+    # Mission 011: the exact current human gate, reconstructed from the
+    # same persisted evidence (never guessed, never replayed).
+    operator_gate: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1068,6 +1071,7 @@ class ReconstructionReport:
             "pending": self.pending,
             "next": self.next,
             "summary": self.summary,
+            "operator_gate": self.operator_gate,
         }
 
 
@@ -1116,6 +1120,7 @@ def reconstruct(root: str, mission_id: str,
             pending=[],
             next=None,
             summary=_summary.mission_summary(mission, paths),
+            operator_gate=gate.gate_view(mission),
         )
 
     for phase in mission.phases:
@@ -1217,6 +1222,7 @@ def reconstruct(root: str, mission_id: str,
                  if p.state == model.PS_PENDING],
         next=nxt,
         summary=_summary.mission_summary(mission, paths),
+        operator_gate=gate.gate_view(mission),
     )
 
 
@@ -1236,6 +1242,74 @@ def record_human_note(root: str, mission_id: str, note: str) -> store.MissionDoc
     _persist(mission, paths)
     store.append_event(paths, {"ts": now, "event": "human_note",
                                "note_len": len(note)})
+    return mission
+
+
+# --- Mission 011 — human trust-boundary approvals ------------------------------
+#
+# The system NEVER performs the Git write itself. The human commits/merges
+# externally and records the decision here; the persisted timestamp then
+# advances the operator gate (GO COMMIT -> GO MERGE -> DONE). Both actions
+# fail closed unless the mission is at exactly the right gate: an approval
+# can never skip REVIEW/VALIDATE (the mission must be COMPLETE) or be
+# replayed (idempotent-safe rejection once recorded).
+
+
+def approve_commit(
+    root: str,
+    mission_id: str,
+    revision: str | None = None,
+    *,
+    clock: Clock = utc_now_iso,
+) -> store.MissionDoc:
+    """Record the human GO COMMIT trust-boundary decision (no Git write).
+
+    Only valid at the ``GO_COMMIT`` gate (green COMPLETE, not yet approved).
+    The optional ``revision`` is the committed revision the human produced;
+    it is bounded and persisted as evidence, never used to run anything.
+    """
+    if revision is not None and not (
+            1 <= len(revision) <= model.MAX_REVISION_LEN):
+        raise ConfigError("COMMIT_REVISION_INVALID", repr(revision))
+    mission, paths = _load(root, mission_id)
+    current = gate.derive_gate(mission)
+    if current != gate.GATE_GO_COMMIT:
+        raise MissionGuardBlocked(
+            model.R_ILLEGAL_TRANSITION,
+            f"mission {mission_id!r} gate is {current!r}, not GO_COMMIT")
+    now = clock()
+    mission.commit_approved_at = now
+    mission.commit_revision = revision
+    mission.updated_at = now
+    _persist(mission, paths)
+    store.append_event(paths, {"ts": now, "event": "commit_approved",
+                               "revision": revision,
+                               "gate": gate.GATE_GO_MERGE})
+    return mission
+
+
+def approve_merge(
+    root: str,
+    mission_id: str,
+    *,
+    clock: Clock = utc_now_iso,
+) -> store.MissionDoc:
+    """Record the human GO MERGE trust-boundary decision (no Git write).
+
+    Only valid at the ``GO_MERGE`` gate (commit already approved).
+    """
+    mission, paths = _load(root, mission_id)
+    current = gate.derive_gate(mission)
+    if current != gate.GATE_GO_MERGE:
+        raise MissionGuardBlocked(
+            model.R_ILLEGAL_TRANSITION,
+            f"mission {mission_id!r} gate is {current!r}, not GO_MERGE")
+    now = clock()
+    mission.merge_approved_at = now
+    mission.updated_at = now
+    _persist(mission, paths)
+    store.append_event(paths, {"ts": now, "event": "merge_approved",
+                               "gate": gate.GATE_DONE})
     return mission
 
 

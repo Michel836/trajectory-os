@@ -23,6 +23,8 @@ deterministic, fail-closed, no hidden state):
     reconstruct deterministic reconstruction (never guesses)
     evidence    phase evidence (proven sub-run identity + worktree)
     summary     human/machine summary of one mission
+    approve-commit  record the human GO COMMIT decision (no Git write)
+    approve-merge   record the human GO MERGE decision (no Git write)
     note        record a bounded human intervention (operator note)
     list        all missions under the root with state
     version     CLI version
@@ -65,6 +67,7 @@ from trajectory_os import __version__
 from trajectory_os.missions import (
     adapter,
     flow,
+    gate,
     identity,
     model,
     orchestrator,
@@ -129,6 +132,13 @@ def _print_report(report: orchestrator.MissionReport, as_json: bool) -> int:
             heavy = report.summary["model_heavy"]
             print(f"model    : heavy_subruns={heavy['subrun_count']} "
                   f"heavy_phases={heavy['phase_count']}")
+            operator_gate = report.summary.get("operator_gate")
+            if isinstance(operator_gate, dict):
+                print(f"gate     : {operator_gate['gate']} "
+                      f"({operator_gate['reason']}) "
+                      f"human_action={operator_gate['human_action_required']}")
+                if operator_gate.get("next_human_action"):
+                    print(f"next     : {operator_gate['next_human_action']}")
     return _state_exit(report.mission_state)
 
 
@@ -204,6 +214,12 @@ def _print_reconstruction(recon: orchestrator.ReconstructionReport,
     print(f"  unproven      : {recon.explicit_unproven}")
     print(f"  failed        : {recon.failed}")
     print(f"  pending       : {recon.pending}")
+    if recon.operator_gate is not None:
+        print(f"  gate          : {recon.operator_gate['gate']} "
+              f"({recon.operator_gate['reason']})")
+        action = recon.operator_gate.get("next_human_action")
+        if action:
+            print(f"  next action   : {action}")
     if recon.next is not None:
         print(f"  next          : {recon.next}")
 
@@ -720,6 +736,60 @@ def _cmd_summary(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_approve_commit(args: argparse.Namespace) -> int:
+    """Record the human GO COMMIT decision (no Git write is performed)."""
+    root = _root_from(args.root)
+    try:
+        mission = orchestrator.approve_commit(root, args.id, args.revision)
+    except store.MissionNotFound:
+        return _not_found(root, args.id)
+    except store.MalformedMissionError as exc:
+        print(f"error(malformed): {exc}", file=sys.stderr)
+        return EXIT_REJECTED
+    except (orchestrator.MissionGuardBlocked,
+            orchestrator.ConfigError) as exc:
+        code = getattr(exc, "code", "GATE_REJECTED")
+        print(f"error(gate): {code}: {exc}", file=sys.stderr)
+        return EXIT_REJECTED
+    return _print_approval(mission, "COMMIT_APPROVED", args.json)
+
+
+def _cmd_approve_merge(args: argparse.Namespace) -> int:
+    """Record the human GO MERGE decision (no Git write is performed)."""
+    root = _root_from(args.root)
+    try:
+        mission = orchestrator.approve_merge(root, args.id)
+    except store.MissionNotFound:
+        return _not_found(root, args.id)
+    except store.MalformedMissionError as exc:
+        print(f"error(malformed): {exc}", file=sys.stderr)
+        return EXIT_REJECTED
+    except orchestrator.MissionGuardBlocked as exc:
+        print(f"error(gate): {exc.code}: {exc}", file=sys.stderr)
+        return EXIT_REJECTED
+    return _print_approval(mission, "MERGE_APPROVED", args.json)
+
+
+def _print_approval(mission: store.MissionDoc, status: str,
+                    as_json: bool) -> int:
+    block = gate.gate_view(mission)
+    if as_json:
+        _print_json({
+            "status": status,
+            "mission_id": mission.mission_id,
+            "commit_approved_at": mission.commit_approved_at,
+            "commit_revision": mission.commit_revision,
+            "merge_approved_at": mission.merge_approved_at,
+            "operator_gate": block,
+        })
+        return EXIT_OK
+    print(f"approved : {mission.mission_id} -> {status}")
+    print(f"gate     : {block['gate']} ({block['reason']})")
+    if block.get("next_human_action"):
+        print(f"next     : {block['next_human_action']}")
+    return EXIT_OK
+
+
 def _cmd_note(args: argparse.Namespace) -> int:
     root = _root_from(args.root)
     text = args.text.strip()
@@ -758,6 +828,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
                 "mission_id": mission.mission_id,
                 "state": mission.mission_state,
                 "reason": mission.mission_reason,
+                "gate": gate.derive_gate(mission),
                 "phases_total": len(mission.phases),
                 "phases_passed": sum(
                     1 for p in mission.phases if p.state == model.PS_PASSED),
@@ -772,6 +843,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         return EXIT_OK
     for entry in entries:
         print(f"{entry['mission_id']}  {entry['state']} ({entry['reason']}) "
+              f"gate={entry.get('gate')} "
               f"phases={entry['phases_passed']}/{entry['phases_total']} "
               f"subruns={entry['subruns']} terminal={entry['terminal']}")
     return EXIT_OK
@@ -905,6 +977,22 @@ def build_parser(prog: str = "trajectory-pi-missions") -> argparse.ArgumentParse
     _add_shared_flags(p)
     p.add_argument("id")
 
+    p = sub.add_parser(
+        "approve-commit",
+        help="record the human GO COMMIT trust-boundary decision "
+             "(never performs a Git write)")
+    _add_shared_flags(p)
+    p.add_argument("id")
+    p.add_argument("--revision", default=None,
+                   help="committed revision recorded as evidence (optional)")
+
+    p = sub.add_parser(
+        "approve-merge",
+        help="record the human GO MERGE trust-boundary decision "
+             "(never performs a Git write)")
+    _add_shared_flags(p)
+    p.add_argument("id")
+
     p = sub.add_parser("note", help="record a bounded human intervention")
     _add_shared_flags(p)
     p.add_argument("id")
@@ -942,6 +1030,8 @@ def main(argv: list[str] | None = None) -> int:
         "resume": _cmd_resume,
         "status": _cmd_status,
         "reconstruct": _cmd_reconstruct,
+        "approve-commit": _cmd_approve_commit,
+        "approve-merge": _cmd_approve_merge,
         "evidence": _cmd_evidence,
         "summary": _cmd_summary,
         "note": _cmd_note,

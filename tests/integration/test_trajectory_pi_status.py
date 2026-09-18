@@ -825,3 +825,83 @@ def test_v169_contract_fields_stable_under_v172(runs: Path) -> None:
         "updated_source", "elapsed",
     }
     assert "control" in data
+
+
+# ------------------------------------------------------------ Mission 011
+# Attributed live status: a remote agent must never be rendered as an idle
+# local Ollama/GPU workload, and local GPU telemetry names its actor.
+
+ATTRIBUTED_REMOTE_IMPLEMENT = (
+    "[12:00:20] elapsed=00:00:20 | phase=IMPLEMENT | "
+    "agent=pi/deepseek:deepseek-flash remote active | "
+    "reviewer=ollama:qwen3.6:27b local idle | "
+    "local-gpu(review)=0% 21961/24576MiB | agent-gen=remote/n-a | "
+    "ollama=idle | GPU 0% | 0 W | VRAM 21961/24576 MiB | "
+    "gen_3s=unavailable | files=2 (+2)\n"
+)
+
+ATTRIBUTED_LOCAL_REVIEW = (
+    "[12:00:20] elapsed=00:00:20 | phase=REVIEW | "
+    "agent=pi/deepseek:deepseek-flash remote idle | "
+    "reviewer=ollama:qwen3.6:27b local active | "
+    "local-gpu(review)=55% 18000/24576MiB | agent-gen=n/a | "
+    "ollama=active | GPU 55% | 200 W | VRAM 18000/24576 MiB | "
+    "gen_3s=36.4 tok/s | files=2 (+2)\n"
+)
+
+
+def _attributed_run(tmp_path: Path, heartbeat: str) -> Path:
+    run = tmp_path / RUN_ROOT / "20260101-120000"
+    _write(run / "meta.txt",
+           "started_at=2026-01-01T12:00:00+00:00\n"
+           "model=deepseek-flash\n")
+    _write(run / "status.log", heartbeat)
+    return run
+
+
+def test_remote_agent_attribution_is_rendered_truthfully(tmp_path: Path) -> None:
+    _attributed_run(tmp_path, ATTRIBUTED_REMOTE_IMPLEMENT)
+    proc = run_reader(tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    assert "phase       : IMPLEMENT" in out
+    assert "agent       : pi/deepseek:deepseek-flash remote active" in out
+    assert "reviewer    : ollama:qwen3.6:27b local idle" in out
+    assert "local_gpu   : local-gpu(review)=0% 21961/24576MiB" in out
+    assert "agent_gen   : remote/n-a" in out
+
+    data = _json(tmp_path / RUN_ROOT)
+    att = data["live_attribution"]
+    assert att["agent_locality"] == "remote"
+    assert att["agent_state"] == "active"
+    assert att["reviewer_locality"] == "local"
+    assert att["gpu_role"] == "review"
+    assert att["agent_gen"] == "remote/n-a"
+
+
+def test_local_review_attribution_names_the_reviewer(tmp_path: Path) -> None:
+    _attributed_run(tmp_path, ATTRIBUTED_LOCAL_REVIEW)
+    proc = run_reader(tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    assert "phase       : REVIEW" in out
+    assert "reviewer    : ollama:qwen3.6:27b local active" in out
+    assert "local_gpu   : local-gpu(review)=55% 18000/24576MiB" in out
+    assert "agent_gen   : n/a" in out
+
+    data = _json(tmp_path / RUN_ROOT)
+    assert data["live_attribution"]["reviewer_state"] == "active"
+    assert data["live_attribution"]["gpu_role"] == "review"
+
+
+def test_legacy_heartbeat_renders_without_attribution_rows(
+        runs: Path, tmp_path: Path) -> None:
+    # Backward compatibility: a legacy heartbeat has no attributed fields,
+    # so no agent/reviewer/local_gpu rows are fabricated.
+    proc = run_reader(runs.parent, "--run", str(runs / LIVE))
+    assert proc.returncode == 0, proc.stderr
+    out = proc.stdout
+    assert "agent       :" not in out
+    assert "reviewer    :" not in out
+    assert "local_gpu   :" not in out
+    assert "phase       : within expected startup" in out

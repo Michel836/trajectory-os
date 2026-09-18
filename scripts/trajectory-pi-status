@@ -114,8 +114,19 @@ HB_RE = re.compile(
 )
 ETA_RE = re.compile(r"^(\d+(?:\.\d+)?)\s*(?:-|~|en)\s*(\d+(?:\.\d+)?)\s*min$")
 FILES_RE = re.compile(r"files=(\d+)(?:\s*\(([-+]\d+)\))?")
-OLLAMA_RE = re.compile(r"ollama=([A-Za-z]+)")
+OLLAMA_RE = re.compile(r"\bollama=([A-Za-z]+)")
 GEN3S_RE = re.compile(r"gen_3s=([0-9]+(?:\.[0-9]+)?|unavailable)\s*tok/s")
+# Mission 011 — attributed live status fields emitted by trajectory-pi.
+# The legacy ollama=/gen_3s= tokens remain for backward compatibility; the
+# attributed fields below make the *actor* explicit so a remote agent is
+# never rendered as an idle local Ollama/GPU workload.
+PHASE_FIELD_RE = re.compile(r"\bphase=([A-Za-z_]+)")
+AGENT_FIELD_RE = re.compile(
+    r"\bagent=([^|]+?)\s+(remote|local|unknown)\s+(active|idle)")
+REVIEWER_FIELD_RE = re.compile(
+    r"\breviewer=([^|]+?)\s+(remote|local|unknown)\s+(active|idle)")
+LOCAL_GPU_FIELD_RE = re.compile(r"\blocal-gpu\(([a-z]+)\)=([^|]+)")
+AGENT_GEN_RE = re.compile(r"\bagent-gen=([^|]+?)(?:\s*\||$)")
 # A cumulative counter is only valid when the producer has emitted this
 # native, monotonic measurement.  It is deliberately distinct from gen_3s:
 # the reader must never synthesize a total from rate and elapsed time.
@@ -201,6 +212,9 @@ def parse_heartbeat(line: str) -> dict[str, Any] | None:
         "elapsed": f"{eh}:{em}:{es}",
         "phase": phase.strip() or MISSING,
     }
+    pf = PHASE_FIELD_RE.search(line)
+    if pf:
+        rec["phase"] = pf.group(1)
     fm = FILES_RE.search(line)
     if fm:
         rec["files"] = int(fm.group(1))
@@ -214,6 +228,23 @@ def parse_heartbeat(line: str) -> dict[str, Any] | None:
     fm = GEN_TOTAL_RE.search(line)
     if fm:
         rec["gen_total"] = int(fm.group(1))
+    am = AGENT_FIELD_RE.search(line)
+    if am:
+        rec["agent"] = am.group(1).strip()
+        rec["agent_locality"] = am.group(2)
+        rec["agent_state"] = am.group(3)
+    rm = REVIEWER_FIELD_RE.search(line)
+    if rm:
+        rec["reviewer"] = rm.group(1).strip()
+        rec["reviewer_locality"] = rm.group(2)
+        rec["reviewer_state"] = rm.group(3)
+    gm = LOCAL_GPU_FIELD_RE.search(line)
+    if gm:
+        rec["gpu_role"] = gm.group(1)
+        rec["local_gpu"] = gm.group(2).strip()
+    agm = AGENT_GEN_RE.search(line)
+    if agm:
+        rec["agent_gen"] = agm.group(1).strip()
     return rec
 
 
@@ -664,6 +695,23 @@ def collect(
     counters = compute_counters(beats)
     phase = beats[-1]["phase"] if beats else MISSING
 
+    # Mission 011 — attribution from the most recent heartbeat that
+    # carries the explicit actor fields. ``None`` fields are simply not
+    # rendered; nothing is ever invented for legacy heartbeat lines.
+    attributed = next(
+        (b for b in reversed(beats)
+         if b.get("agent") or b.get("reviewer")),
+        None,
+    )
+    live_attribution: dict[str, Any] = {
+        key: (attributed or {}).get(key)
+        for key in (
+            "agent", "agent_locality", "agent_state",
+            "reviewer", "reviewer_locality", "reviewer_state",
+            "gpu_role", "local_gpu", "agent_gen",
+        )
+    }
+
     # ---- staleness ----------------------------------------------------
     if beats:
         if started is not None:
@@ -846,6 +894,7 @@ def collect(
         "tokens": tokens,
         "counters": counters,
         "phase": phase,
+        "live_attribution": live_attribution,
         "pi_state": pi_state,
         "pi_state_detail": pi_detail,
         "last_event": last_event or MISSING,
@@ -917,6 +966,21 @@ def render_text(state: dict[str, Any]) -> str:
     row("tokens", state["tokens"])
     row("counters", state["counters"])
     row("phase", state["phase"])
+    attribution = state.get("live_attribution") or {}
+    if attribution.get("agent"):
+        locality = attribution.get("agent_locality") or MISSING
+        agent_state = attribution.get("agent_state") or MISSING
+        row("agent", f"{attribution['agent']} {locality} {agent_state}")
+    if attribution.get("reviewer"):
+        locality = attribution.get("reviewer_locality") or MISSING
+        reviewer_state = attribution.get("reviewer_state") or MISSING
+        row("reviewer",
+            f"{attribution['reviewer']} {locality} {reviewer_state}")
+    if attribution.get("local_gpu"):
+        role = attribution.get("gpu_role") or "none"
+        row("local_gpu", f"local-gpu({role})={attribution['local_gpu']}")
+    if attribution.get("agent_gen"):
+        row("agent_gen", attribution["agent_gen"])
     row("last_event", state["last_event"])
     if wt["state"] in {MISSING, UNAVAILABLE}:
         row("worktree", wt["state"])

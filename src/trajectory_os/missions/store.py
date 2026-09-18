@@ -133,6 +133,16 @@ def _str_list(v: Any, path: str, detail: str = "") -> list[str]:
     return list(v)
 
 
+def _opt_revision(v: Any, path: str, detail: str = "revision") -> str | None:
+    """Optional bounded revision string (fail closed when oversized)."""
+    if v is None:
+        return None
+    rev = _str(v, path, detail)
+    if len(rev) > model.MAX_REVISION_LEN:
+        raise MalformedMissionError(model.R_MALFORMED_STATE, path, detail)
+    return rev
+
+
 def _opt_dict(v: Any, path: str, detail: str = "") -> dict[str, Any] | None:
     if v is None:
         return None
@@ -543,6 +553,10 @@ _MISSION_KEYS = (
     "subrun_started", "subrun_completed", "repairs_used",
     "mission_state", "mission_reason",
     "phases", "subruns", "human_notes", "updated_at",
+    # Mission 011 — additive human trust-boundary approvals. Absent on
+    # legacy documents (readable as None; the gate then derives from the
+    # mission state alone, exactly as before).
+    "commit_approved_at", "commit_revision", "merge_approved_at",
 )
 
 
@@ -569,6 +583,13 @@ class MissionDoc:
     phases: list[PhaseDoc] = field(default_factory=list)
     subruns: list[str] = field(default_factory=list)
     human_notes: list[HumanNote] = field(default_factory=list)
+    # --- Mission 011: human trust-boundary approvals (optional) ---
+    # Canonical timestamps recording explicit human GO COMMIT / GO MERGE
+    # decisions. They advance only the operator gate; they never perform a
+    # Git write. Absent (None) on legacy evidence.
+    commit_approved_at: str | None = None
+    commit_revision: str | None = None
+    merge_approved_at: str | None = None
     updated_at: str = ""
 
     def phase(self, phase_id: str) -> PhaseDoc:
@@ -606,6 +627,9 @@ class MissionDoc:
             "phases": [p.to_dict() for p in self.phases],
             "subruns": list(self.subruns),
             "human_notes": [n.to_dict() for n in self.human_notes],
+            "commit_approved_at": self.commit_approved_at,
+            "commit_revision": self.commit_revision,
+            "merge_approved_at": self.merge_approved_at,
             "updated_at": self.updated_at,
         }
 
@@ -664,6 +688,12 @@ class MissionDoc:
                 HumanNote.from_dict(n, f"{path}[human_notes/{i}]")
                 for i, n in enumerate(notes_raw)
             ],
+            commit_approved_at=_opt_str(
+                doc.get("commit_approved_at"), path, "commit_approved_at"),
+            commit_revision=_opt_revision(
+                doc.get("commit_revision"), path),
+            merge_approved_at=_opt_str(
+                doc.get("merge_approved_at"), path, "merge_approved_at"),
             updated_at=_str(doc["updated_at"], path, "updated_at"),
         )
 
