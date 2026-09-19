@@ -349,6 +349,67 @@ runtime-control components write to Git:
 Durable evidence lives under `docs/missions/m036-m039/`. See
 `docs/adr/ADR-024-human-gated-release-bundle.md`.
 
+## Self-hosting operator platform (M040-M047)
+
+M040-M047 consolidate M017-M039 into one operator product that can develop
+and release TrajectoryOS itself, without introducing a competing lifecycle,
+readiness, mission identity, release identity, observability or trust model
+(`mission_id == run_id` remains authoritative).
+
+One unified entrypoint supersedes the ad-hoc invocations while every prior
+script remains a compatible thin entrypoint:
+
+    scripts/trajectory start     --objective "..." --workspace DIR --profile release
+    scripts/trajectory status    --mission-id MISSION_ID --json
+    scripts/trajectory dashboard --mission-id MISSION_ID
+    scripts/trajectory follow    --mission-id MISSION_ID --iterations 3
+    scripts/trajectory pause     --mission-id MISSION_ID
+    scripts/trajectory request-stop --mission-id MISSION_ID
+    scripts/trajectory cancel    --mission-id MISSION_ID
+    scripts/trajectory resume    --mission-id MISSION_ID
+    scripts/trajectory recover   --mission-id MISSION_ID
+    scripts/trajectory handoff   --mission-id MISSION_ID
+    scripts/trajectory go-commit --mission-id MISSION_ID --authorize-commit TOKEN
+    scripts/trajectory bind-pr   --mission-id MISSION_ID
+    scripts/trajectory pr-status --mission-id MISSION_ID
+    scripts/trajectory watch-ci  --mission-id MISSION_ID
+    scripts/trajectory merge-handoff --mission-id MISSION_ID
+    scripts/trajectory go-merge  --mission-id MISSION_ID --authorize-merge TOKEN
+    scripts/trajectory closure   --mission-id MISSION_ID --issue 240
+    scripts/trajectory reconstruct --mission-id MISSION_ID
+    scripts/trajectory dogfood   --json
+    scripts/trajectory acceptance --out acceptance.json
+
+* **M040** true self-release dogfood runs the production path with the
+  deterministic fixtures for the full chain and the current implementation
+  over the real repository up to (but never through) the human GO COMMIT
+  gate; fixture proof and live dogfood evidence are separated;
+* **M041** one control plane reuses assembly, observability, runtime control
+  and release; observation is strictly read-only and mutations are explicit;
+* **M042** full-lifecycle recovery discovers already-completed
+  commit/push/PR/merge/closure instead of repeating them, fails closed on any
+  local/remote contradiction and is idempotent;
+* **M043** one additive, append-only, replayable event envelope spans mission
+  and release without replacing `status.json` / `closure.json` / release
+  artifacts;
+* **M044** a small deterministic policy layer with `safe`, `fast-local`,
+  `benchmark` and `release` profiles; the release profile always retains both
+  human gates and exact-head CI, resolution is persisted and deterministic and
+  the environment can never mutate policy;
+* **M045** consolidated routing persists the exact implementation, inline
+  reviewer and final reviewer identities (final reviewer remains
+  `qwen3.8:27b-q4_K_M`), fails closed on an unavailable backend and records a
+  deterministic fallback reason when one is used;
+* **M046** a read-only one-screen operator state projection derived from the
+  canonical artifacts;
+* **M047** a deterministic 35-case product acceptance matrix proves the full
+  happy path, trust boundaries, crash/recovery idempotence, exact-head CI,
+  human merge authorization, event replay, semantic identity and that no
+  success is inferred from prose.
+
+Durable evidence lives under `docs/missions/m040-m047/`. See
+`docs/adr/ADR-025-self-hosting-operator-platform.md`.
+
 ## Current status
 
 TrajectoryOS is under active experimental development.

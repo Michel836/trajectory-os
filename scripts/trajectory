@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# trajectory — M040-M047 unified self-hosting operator platform CLI.
+#
+# One primary operator-facing surface over mission + release. It is a thin,
+# stable shim over src/trajectory_os/operator: it resolves the repository
+# root, prepends the src layout to PYTHONPATH and execs the CLI.
+#
+# Observation commands are read-only. Mutation commands are explicit. Git
+# release writes (go-commit / go-merge) require the existing human
+# --authorize-commit / --authorize-merge tokens.
+#
+# Commands:
+#   start status dashboard follow
+#   pause request-stop cancel resume recover
+#   handoff go-commit bind-pr pr-status watch-ci
+#   merge-handoff go-merge closure reconstruct
+#   dogfood acceptance version
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+SRC="${ROOT}/src"
+
+if [[ ! -d "${SRC}/trajectory_os/operator" ]]; then
+  printf 'trajectory: internal error: missing trajectory_os/operator package (expected %s)\n' "${SRC}/trajectory_os/operator" >&2
+  exit 2
+fi
+
+export PYTHONPATH="${SRC}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m trajectory_os.operator.cli "$@"

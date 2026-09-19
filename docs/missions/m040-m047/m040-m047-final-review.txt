@@ -1,0 +1,11 @@
+VERDICT: PASS
+BLOCKERS:
+- none
+MAJORS:
+- none
+MINORS:
+- `acceptance.py` defines `_force_review_crash` (lines ~870-885) which is never called anywhere in the codebase; it is dead code that could be removed or integrated into `_case_review_resume` (which inlines its own crashing reviewer).
+- `policy.py` defines `FORBIDDEN_ENVIRONMENT_KEYS` but it is never referenced by any runtime check; the environment-mutation guard is enforced solely via the `source` parameter in `resolve_policy`. The constant is misleading dead surface.
+- `mission040_047_dogfood.py` declares `--reset` with `action="store_true", default=True`, making the flag a no-op (it is always True and cannot be disabled). A `store_false`/`--no-reset` pair would be more honest.
+- `routing.py` performs local `from pathlib import Path` and `from trajectory_os.assembly import store as assembly_store` imports inside `persist_routing`, `load_routing`, and `routing_history` rather than at module top-level; this is functionally correct but inconsistent with the rest of the package and slightly obscures the dependency graph.
+FINAL RECOMMENDATION: GO COMMIT

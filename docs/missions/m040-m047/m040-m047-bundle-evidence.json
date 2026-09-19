@@ -1,0 +1,654 @@
+{
+  "acceptance": {
+    "cases": [
+      {
+        "case": "1",
+        "checks": [
+          "complete mission + release happy path closes",
+          "release closure carries the exact reviewed patch"
+        ],
+        "ok": true,
+        "title": "Complete mission + release happy path"
+      },
+      {
+        "case": "2",
+        "checks": [
+          "self-hosting fixture proof completes the whole path",
+          "live dogfood reaches READY_FOR_COMMIT safely",
+          "durable self-hosting evidence is persisted"
+        ],
+        "ok": true,
+        "title": "Self-hosting dogfood path"
+      },
+      {
+        "case": "3",
+        "checks": [
+          "stale review blocks GO COMMIT"
+        ],
+        "ok": true,
+        "title": "Stale review blocks release"
+      },
+      {
+        "case": "4",
+        "checks": [
+          "changed semantic patch blocks GO COMMIT"
+        ],
+        "ok": true,
+        "title": "Changed semantic patch blocks GO COMMIT"
+      },
+      {
+        "case": "5",
+        "checks": [
+          "moved branch blocks GO COMMIT"
+        ],
+        "ok": true,
+        "title": "Moved branch blocks GO COMMIT"
+      },
+      {
+        "case": "6",
+        "checks": [
+          "moved HEAD blocks GO COMMIT"
+        ],
+        "ok": true,
+        "title": "Moved HEAD blocks GO COMMIT"
+      },
+      {
+        "case": "7",
+        "checks": [
+          "unavailable backend fails closed"
+        ],
+        "ok": true,
+        "title": "Unavailable backend fails closed"
+      },
+      {
+        "case": "8",
+        "checks": [
+          "explicit deterministic fallback is used",
+          "fallback decision is persisted with its reason"
+        ],
+        "ok": true,
+        "title": "Explicit fallback works and is persisted"
+      },
+      {
+        "case": "9",
+        "checks": [
+          "a disabled reviewer never carries a phantom model",
+          "the legacy phantom reviewer is refused"
+        ],
+        "ok": true,
+        "title": "Phantom reviewer cannot appear"
+      },
+      {
+        "case": "10",
+        "checks": [
+          "reviewer routing identity is explicit and exact"
+        ],
+        "ok": true,
+        "title": "Reviewer routing identity is explicit"
+      },
+      {
+        "case": "11",
+        "checks": [
+          "execution interruption resumes at execution",
+          "resumed execution reaches READY_FOR_COMMIT"
+        ],
+        "ok": true,
+        "title": "Execution crash resumes safely"
+      },
+      {
+        "case": "12",
+        "checks": [
+          "review interruption resumes safely",
+          "review resume reaches READY_FOR_COMMIT"
+        ],
+        "ok": true,
+        "title": "Review crash resumes safely"
+      },
+      {
+        "case": "13",
+        "checks": [
+          "handoff interruption is discovered, not repeated",
+          "rebuilt handoff carries the identical patch"
+        ],
+        "ok": true,
+        "title": "Handoff crash resumes safely"
+      },
+      {
+        "case": "14",
+        "checks": [
+          "a commit-result crash never duplicates the commit"
+        ],
+        "ok": true,
+        "title": "Commit-result crash does not duplicate commit"
+      },
+      {
+        "case": "15",
+        "checks": [
+          "a PR-bind crash never duplicates the pull request"
+        ],
+        "ok": true,
+        "title": "PR-bind crash does not duplicate PR"
+      },
+      {
+        "case": "16",
+        "checks": [
+          "CI watch is exact-head only"
+        ],
+        "ok": true,
+        "title": "CI watch is exact-head only"
+      },
+      {
+        "case": "17",
+        "checks": [
+          "missing exact-head CI blocks merge"
+        ],
+        "ok": true,
+        "title": "Missing CI blocks merge"
+      },
+      {
+        "case": "18",
+        "checks": [
+          "failed exact-head CI blocks merge"
+        ],
+        "ok": true,
+        "title": "Failed CI blocks merge"
+      },
+      {
+        "case": "19",
+        "checks": [
+          "moved PR head blocks merge"
+        ],
+        "ok": true,
+        "title": "Moved PR head blocks merge"
+      },
+      {
+        "case": "20",
+        "checks": [
+          "merge requires explicit human authorization"
+        ],
+        "ok": true,
+        "title": "Merge requires human authorization"
+      },
+      {
+        "case": "21",
+        "checks": [
+          "a merge is never duplicated after recovery"
+        ],
+        "ok": true,
+        "title": "Merge is not duplicated after recovery"
+      },
+      {
+        "case": "22",
+        "checks": [
+          "release closure reconstructs exact identities"
+        ],
+        "ok": true,
+        "title": "Release closure reconstructs exact identities"
+      },
+      {
+        "case": "23",
+        "checks": [
+          "event replay reconstructs the unified projection"
+        ],
+        "ok": true,
+        "title": "Event replay reconstructs unified projection"
+      },
+      {
+        "case": "24",
+        "checks": [
+          "repeated event replay is idempotent"
+        ],
+        "ok": true,
+        "title": "Repeated replay is idempotent"
+      },
+      {
+        "case": "25",
+        "checks": [
+          "observation commands are read-only"
+        ],
+        "ok": true,
+        "title": "Observation is read-only"
+      },
+      {
+        "case": "26",
+        "checks": [
+          "operator controls remain isolated from release evidence",
+          "control actions are recorded in their own log"
+        ],
+        "ok": true,
+        "title": "Operator controls remain isolated"
+      },
+      {
+        "case": "27",
+        "checks": [
+          "runtime control cannot perform release writes"
+        ],
+        "ok": true,
+        "title": "Runtime control cannot perform release writes"
+      },
+      {
+        "case": "28",
+        "checks": [
+          "implementation/review modules never write Git",
+          "agents cannot mint a release authorization"
+        ],
+        "ok": true,
+        "title": "Implementation/review agents cannot write Git"
+      },
+      {
+        "case": "29",
+        "checks": [
+          "release profile preserves both human gates",
+          "release human/CI gates cannot be disabled"
+        ],
+        "ok": true,
+        "title": "Release profile preserves both human gates"
+      },
+      {
+        "case": "30",
+        "checks": [
+          "policy resolution is deterministic",
+          "the environment cannot mutate policy"
+        ],
+        "ok": true,
+        "title": "Policy resolution is deterministic"
+      },
+      {
+        "case": "31",
+        "checks": [
+          "legacy M030-M039 artifacts remain readable"
+        ],
+        "ok": true,
+        "title": "Legacy M030-M039 artifacts remain readable"
+      },
+      {
+        "case": "32",
+        "checks": [
+          "dashboard state matches the canonical artifacts"
+        ],
+        "ok": true,
+        "title": "Dashboard status matches canonical artifacts"
+      },
+      {
+        "case": "33",
+        "checks": [
+          "terminal lifecycle stays distinct from readiness"
+        ],
+        "ok": true,
+        "title": "Terminal lifecycle remains distinct from readiness"
+      },
+      {
+        "case": "34",
+        "checks": [
+          "semantic staging identity remains authoritative"
+        ],
+        "ok": true,
+        "title": "Semantic staging identity remains authoritative"
+      },
+      {
+        "case": "35",
+        "checks": [
+          "no success is inferred from prose or status alone"
+        ],
+        "ok": true,
+        "title": "No success is inferred from prose"
+      }
+    ],
+    "status": "PASS",
+    "summary": {
+      "cases": 35,
+      "checks": 47,
+      "passed_cases": 35,
+      "passed_checks": 47
+    }
+  },
+  "authoritative_artifacts": {
+    "acceptance_json": "docs/missions/m040-m047/m040-m047-acceptance-report.json",
+    "acceptance_txt": "docs/missions/m040-m047/m040-m047-acceptance-report.txt",
+    "dogfood": "docs/missions/m040-m047/m040-m047-dogfood-evidence.json",
+    "final_review": "docs/missions/m040-m047/m040-m047-final-review.json"
+  },
+  "baseline": "d39f42aade4c28340f6e2814b99ea82ec7af9451",
+  "dogfood": {
+    "built_at": "2026-09-19T15:29:46Z",
+    "fixture_proof": {
+      "ci_head_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+      "ci_state": "success",
+      "commit_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+      "durable_linkage": {
+        "ci_head_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+        "commit_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+        "merge_sha": "72af73376152c7a74b706cd7990df96febfc7251",
+        "mission_id": "m040-fixture-proof",
+        "pr_head_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+        "pr_number": 1,
+        "reviewed_patch_sha256": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1"
+      },
+      "merge_method": "squash",
+      "merge_sha": "72af73376152c7a74b706cd7990df96febfc7251",
+      "mission_id": "m040-fixture-proof",
+      "ok": true,
+      "pr_head_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+      "pr_number": 1,
+      "recovery_action": "ALREADY_COMPLETE",
+      "release_stage": {
+        "base_branch": "main",
+        "branch": "m040-fixture-proof",
+        "ci_state": "success",
+        "commit_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+        "merge_sha": "72af73376152c7a74b706cd7990df96febfc7251",
+        "mission_id": "m040-fixture-proof",
+        "pr_head_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+        "pr_number": 1,
+        "reason": "OK",
+        "release_version": "m039.1",
+        "schema_version": 1,
+        "stage": "RELEASED",
+        "updated_at": "2026-09-21T00:00:44Z"
+      },
+      "release_status": "CLOSED",
+      "remote_branch": "m040-fixture-proof",
+      "reviewed_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+      "target_branch_verified": true
+    },
+    "fixture_proof_separated_from_live": true,
+    "generated_at": "2026-09-19T15:29:46Z",
+    "generator": "trajectory_os.operator.dogfood",
+    "guardrails": {
+      "agent_git_writes": 0,
+      "crossed_human_gate": false,
+      "real_go_commit": false,
+      "real_go_merge": false,
+      "runtime_control_git_writes": 0
+    },
+    "human_gates": "GO_COMMIT+GO_MERGE",
+    "linkage": {
+      "commit_handoff_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+      "fixture_reviewed_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+      "mission_id": "m040-live-dogfood",
+      "reviewed_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+      "run_id": "m040-live-dogfood"
+    },
+    "live_dogfood": {
+      "commit_handoff": {
+        "base_branch": "main",
+        "baseline_head": "d39f42aade4c28340f6e2814b99ea82ec7af9451",
+        "branch": "bundle/m040-m047-self-hosting-operator-platform",
+        "created_at": "2026-09-19T15:29:46Z",
+        "current_head": "d39f42aade4c28340f6e2814b99ea82ec7af9451",
+        "gate": "GO_COMMIT",
+        "gate_reason": "OK",
+        "mission_id": "m040-live-dogfood",
+        "objective": "Self-hosting dogfood: prove the M040-M047 operator platform can carry one objective from intake to release closure over the real canonical product path while stopping at every human Git trust gate.",
+        "patch_sha256": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+        "proposed_commit_message": "Self-hosting dogfood: prove the M040-M047 operator platform can carry...\n\nMission: m040-live-dogfood\nReviewed-Patch: 756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1\nCloses #240\n",
+        "release_version": "m039.1",
+        "review_evidence": {
+          "attempts": 1,
+          "current_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+          "final_review_enabled": true,
+          "final_reviewer_active": true,
+          "final_reviewer_model": "qwen3.8:27b-q4_K_M",
+          "fresh_review": true,
+          "lifecycle": "COMPLETE",
+          "mission_id": "m040-live-dogfood",
+          "readiness": "READY_FOR_COMMIT",
+          "ready": true,
+          "reason": "OK",
+          "repairs": 0,
+          "require_review": true,
+          "review_at": "2026-09-19T15:29:46Z",
+          "review_outcome": "VALID_PASS",
+          "review_reason": "PASS_GO_COMMIT_NO_BLOCKING_FINDINGS",
+          "reviewed_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+          "run_id": "m040-live-dogfood",
+          "semantic_patch_identity": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1"
+        },
+        "reviewed_patch_sha256": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+        "run_id": "m040-live-dogfood",
+        "schema_version": 1,
+        "scope_summary": {
+          "attempts": 1,
+          "constraints": [],
+          "current_patch_sha256": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+          "definition_of_done": [
+            "the deterministic validation gate passes on the exact current patch",
+            "an independent final review PASS is recorded on the exact current patch",
+            "automation stops at READY_FOR_COMMIT without a Git trust-boundary write"
+          ],
+          "final_reviewer_model": "qwen3.8:27b-q4_K_M",
+          "mission_id": "m040-live-dogfood",
+          "objective": "Self-hosting dogfood: prove the M040-M047 operator platform can carry one objective from intake to release closure over the real canonical product path while stopping at every human Git trust gate.",
+          "repairs": 0,
+          "review_outcome": "VALID_PASS",
+          "review_reason": "PASS_GO_COMMIT_NO_BLOCKING_FINDINGS",
+          "review_results": [
+            {
+              "active": true,
+              "at": "2026-09-19T15:29:46Z",
+              "attempt": 0,
+              "outcome": "VALID_PASS",
+              "patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+              "reason": "PASS_GO_COMMIT_NO_BLOCKING_FINDINGS",
+              "result": "PASS",
+              "reviewer": "qwen3.8:27b-q4_K_M"
+            }
+          ],
+          "reviewed_patch_sha256": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+          "steps_executed": [
+            "intake",
+            "preflight",
+            "plan",
+            "implement",
+            "validate",
+            "review",
+            "human_gate",
+            "closure"
+          ],
+          "validation_results": [
+            {
+              "at": "2026-09-19T15:29:46Z",
+              "attempt": 0,
+              "command": [
+                "{python} -c from calc import add; assert add(2, 3) == 5, add(2, 3); assert add(10, 4) == 14, add(10, 4); assert add(-1, 1) == 0, add(-1, 1); print('ADD_OK')"
+              ],
+              "exit_code": 0,
+              "patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+              "reason": "OK",
+              "result": "PASS"
+            }
+          ]
+        },
+        "semantic_patch_identity": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1"
+      },
+      "current_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+      "dashboard": {
+        "attempt": 0,
+        "baseline_head": "d39f42aade4c28340f6e2814b99ea82ec7af9451",
+        "branch": "bundle/m040-m047-self-hosting-operator-platform",
+        "ci_conclusion": null,
+        "ci_run_id": null,
+        "ci_status": null,
+        "commit_sha": null,
+        "current_head": "d39f42aade4c28340f6e2814b99ea82ec7af9451",
+        "current_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+        "final_reviewer": {
+          "active": true,
+          "display_model": "qwen3.8:27b-q4_K_M",
+          "enabled": true,
+          "provider": "ollama",
+          "reason": "OK"
+        },
+        "heartbeat": "2026-09-19T15:29:46Z",
+        "implementation": {
+          "backend": "pi",
+          "model": "deepseek-flash",
+          "provider": "deepseek"
+        },
+        "inline_reviewer": {
+          "active": false,
+          "display_model": null,
+          "enabled": false,
+          "provider": null,
+          "reason": "inline review disabled by operator"
+        },
+        "last_event_type": "MISSION_STATUS",
+        "last_meaningful_event": "2026-09-19T15:29:46Z",
+        "lifecycle": "COMPLETE",
+        "merge_sha": null,
+        "mission_id": "m040-live-dogfood",
+        "next_action": "operator: commit the reviewed patch",
+        "objective": "Self-hosting dogfood: prove the M040-M047 operator platform can carry one objective from intake to release closure over the real canonical product path while stopping at every human Git trust gate.",
+        "operator_version": "m047.1",
+        "pending_human_gate": "GO_COMMIT",
+        "phase": "DONE",
+        "policy_id": "6d5c59e84d55408cd192ea3f07d35b67233b450ee6a8d001e7b79c572f5f8408",
+        "policy_profile": "release",
+        "pr_base_branch": null,
+        "pr_head_sha": null,
+        "pr_number": null,
+        "readiness": "READY_FOR_COMMIT",
+        "recovery_action": "AWAIT_GO_COMMIT",
+        "recovery_stage": "GO_COMMIT",
+        "release_closure": null,
+        "remote_branch": null,
+        "review_fresh": true,
+        "review_reason": "PASS_GO_COMMIT_NO_BLOCKING_FINDINGS",
+        "review_status": "VALID_PASS",
+        "reviewed_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+        "run_id": "m040-live-dogfood",
+        "schema_version": 1,
+        "stage": "DONE",
+        "validation": {
+          "failed": 0,
+          "latest_reason": "OK",
+          "passed": 1,
+          "runs": 1
+        }
+      },
+      "git_writes": 0,
+      "human_gates": "GO_COMMIT+GO_MERGE",
+      "lifecycle": "COMPLETE",
+      "mission_id": "m040-live-dogfood",
+      "objective": "Self-hosting dogfood: prove the M040-M047 operator platform can carry one objective from intake to release closure over the real canonical product path while stopping at every human Git trust gate.",
+      "pending_human_gate": "GO_COMMIT",
+      "policy_id": "6d5c59e84d55408cd192ea3f07d35b67233b450ee6a8d001e7b79c572f5f8408",
+      "policy_profile": "release",
+      "readiness": "READY_FOR_COMMIT",
+      "ready_for_commit": true,
+      "recovery": {
+        "action": "AWAIT_GO_COMMIT",
+        "already_done": [],
+        "artifacts": {
+          "closure.json": ".artifacts/m040-m047/dogfood/m040-live-dogfood/closure.json",
+          "commit-handoff.json": ".artifacts/m040-m047/dogfood/m040-live-dogfood/commit-handoff.json",
+          "mission.json": ".artifacts/m040-m047/dogfood/m040-live-dogfood/mission.json",
+          "policy.json": ".artifacts/m040-m047/dogfood/m040-live-dogfood/policy.json",
+          "release-state.json": ".artifacts/m040-m047/dogfood/m040-live-dogfood/release-state.json",
+          "routing.json": ".artifacts/m040-m047/dogfood/m040-live-dogfood/routing.json"
+        },
+        "contradictions": [],
+        "decided_at": "2026-09-19T15:29:46Z",
+        "idempotent": false,
+        "mission_id": "m040-live-dogfood",
+        "next_step": "trajectory go-commit --authorize-commit <token>",
+        "operator_version": "m047.1",
+        "reason": "commit handoff present; awaiting the human GO COMMIT gate",
+        "resume_point": "HUMAN_GATE",
+        "schema_version": 1,
+        "stage": "GO_COMMIT",
+        "terminal": false
+      },
+      "recovery_action": "AWAIT_GO_COMMIT",
+      "reviewed_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+      "routing": {
+        "capabilities": {
+          "pi": {
+            "available": true,
+            "backend": "pi",
+            "declared": "resolved",
+            "detail": "",
+            "model": "deepseek-flash",
+            "provider": "deepseek",
+            "reason": "policy-declared implementation route",
+            "supports_implementation": true,
+            "supports_review": false
+          }
+        },
+        "decided_at": "2026-09-19T15:29:46Z",
+        "fallback_from": null,
+        "fallback_reason": null,
+        "fallback_to": null,
+        "fallback_used": false,
+        "final_review": {
+          "backend": "ollama",
+          "display_model": "qwen3.8:27b-q4_K_M",
+          "enabled": true,
+          "model": "qwen3.8:27b-q4_K_M",
+          "provider": "ollama",
+          "role": "FINAL_REVIEW",
+          "route_id": "81bca43a7085a6a01c25a1010be8e95c1a6806071e086aadd0617abaf38757d0"
+        },
+        "implementation": {
+          "backend": "pi",
+          "display_model": "deepseek-flash",
+          "enabled": true,
+          "model": "deepseek-flash",
+          "provider": "deepseek",
+          "role": "IMPLEMENTATION",
+          "route_id": "40f0e3ec68312fdc3f4c03dc016c23f9025a935b87a33fe567ccf011081e8850"
+        },
+        "inline_review": {
+          "backend": null,
+          "display_model": null,
+          "enabled": false,
+          "model": null,
+          "provider": null,
+          "role": "INLINE_REVIEW",
+          "route_id": ""
+        },
+        "mission_id": "m040-live-dogfood",
+        "operator_version": "m047.1",
+        "policy_id": "6d5c59e84d55408cd192ea3f07d35b67233b450ee6a8d001e7b79c572f5f8408",
+        "profile": "release",
+        "schema_version": 1
+      },
+      "stopped_at": "HUMAN_GO_COMMIT_GATE"
+    },
+    "marker": "M040_M047_SELF_HOSTING_OPERATOR_PLATFORM_COMPLETE",
+    "operator_version": "m047.1",
+    "production_code_path": true,
+    "repo": "/home/chu/Projects/trajectory-os",
+    "root": ".artifacts/m040-m047/dogfood",
+    "schema_version": 1,
+    "self_hosting": true,
+    "status": "PASS"
+  },
+  "final_independent_review": {
+    "blocking_count": 0,
+    "generated_at": "2026-09-19T16:56:12Z",
+    "minors": [
+      "`acceptance.py` defines `_force_review_crash` (lines ~870-885) which is never called anywhere in the codebase; it is dead code that could be removed or integrated into `_case_review_resume` (which inlines its own crashing reviewer).",
+      "`policy.py` defines `FORBIDDEN_ENVIRONMENT_KEYS` but it is never referenced by any runtime check; the environment-mutation guard is enforced solely via the `source` parameter in `resolve_policy`. The constant is misleading dead surface.",
+      "`mission040_047_dogfood.py` declares `--reset` with `action=\"store_true\", default=True`, making the flag a no-op (it is always True and cannot be disabled). A `store_false`/`--no-reset` pair would be more honest.",
+      "`routing.py` performs local `from pathlib import Path` and `from trajectory_os.assembly import store as assembly_store` imports inside `persist_routing`, `load_routing`, and `routing_history` rather than at module top-level; this is functionally correct but inconsistent with the rest of the package and slightly obscures the dependency graph."
+    ],
+    "outcome": "VALID_PASS",
+    "present": true,
+    "reason": "PASS_GO_COMMIT_NO_BLOCKING_FINDINGS",
+    "reviewed_patch_sha256": "79a33aa95b0323ed27b06a9abcc2586197165e7be5d123394cb9051c9da6858c",
+    "reviewed_patch_still_current": true,
+    "reviewer_model": "qwen3.8:27b-q4_K_M"
+  },
+  "generated_at": "2026-09-19T16:57:11Z",
+  "issue": 240,
+  "marker": "M040_M047_SELF_HOSTING_OPERATOR_PLATFORM_COMPLETE",
+  "operator_version": "m047.1",
+  "program": "M040-M047",
+  "trust_boundary": {
+    "clean": true,
+    "offenders": [],
+    "runtime_control_subprocess_free": true,
+    "scanned_files": 79
+  }
+}
