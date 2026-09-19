@@ -854,6 +854,24 @@ def test_parser_canonical_lowercase_still_passes(tmp_path: Path) -> None:
     assert _run_parse_review_verdict(tmp_path, text)["RESULT"] == "PASS"
 
 
+def test_reviewer_output_contract_is_recency_anchored_after_patch() -> None:
+    """The strict protocol must be repeated AFTER the patch body.
+
+    On large worktree patches the leading instruction is far from the
+    reviewer's next-token context, so it drifts into a JSON change-summary
+    that the strict parser fail-closes as REJECTED. The output contract is
+    therefore re-stated after the patch; the parser is unchanged, so a real
+    blocker or major still forces FAIL.
+    """
+    script = WRAPPER.read_text()
+    patch_marker = "=== EXACT REVIEWED WORKTREE PATCH ==="
+    contract = "CRITICAL OUTPUT CONTRACT"
+    assert patch_marker in script
+    assert contract in script
+    assert script.index(patch_marker) < script.index(contract)
+    assert "Do NOT emit JSON" in script
+
+
 def test_parser_pass_with_real_blocker_never_passes(tmp_path: Path) -> None:
     # 2. PASS + real BLOCKER + GO COMMIT -> never PASS
     text = _CANONICAL_PASS.replace(

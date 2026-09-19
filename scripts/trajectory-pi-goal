@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# trajectory-pi-goal — unified operator CLI for the visible goal-execution
+# product layer (Missions 017-019).
+#
+# Thin, stable shim over src/trajectory_os/goals. It resolves the repository
+# root, prepends the src layout to PYTHONPATH and execs the unified operator
+# CLI: `python3 -m trajectory_os.goals.cli "$@"`.
+#
+# Subcommands:
+#   start      create the goal graph (provisioning missions first) and run
+#   resume     clear a safe-stop request and continue a goal (bounded)
+#   stop       request a safe stop (never kills an in-flight sub-run)
+#   status     concise canonical state (human + JSON)
+#   inspect    full canonical snapshot (human + JSON)
+#   explain    deterministic why/explain for the goal or one node (alias why)
+#   dashboard  compact goal-proof dashboard
+#   evidence   acceptance criteria plus the exact per-phase mission evidence
+#   proof      derived goal proof + reconstruction validation
+#   tui        live one-screen terminal dashboard
+#   list       all goal graphs under the root
+#   portfolio  multi-goal portfolio status
+#   portfolio-run  run one portfolio cycle
+#   daemon     persistent daemon status
+#   daemon-start   run a bounded persistent daemon session
+#   daemon-resume  clear safe-stop and resume the daemon
+#   daemon-stop    request a daemon safe stop
+#   resource-status live local CPU/GPU/VRAM resource state
+#   artifacts  workspace + artifact provenance/lineage
+#   events     authoritative event/notification projection (--refresh)
+#   web        local/private operator web dashboard (loopback only)
+#   lifeos     LifeOS integration exchange ledger
+#   lifeos-export  run a scoped, idempotent LifeOS exchange
+#   version    CLI version
+#
+# No command performs a Git trust-boundary write.
+#
+# Exit codes: 0 ok, 2 usage, 3 rejected/blocked, 4 unknown goal.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+SRC="${ROOT}/src"
+
+if [[ ! -d "${SRC}/trajectory_os/goals" ]]; then
+  printf 'trajectory-pi-goal: internal error: missing trajectory_os/goals package (expected %s)\n' "${SRC}/trajectory_os/goals" >&2
+  exit 2
+fi
+
+export PYTHONPATH="${SRC}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m trajectory_os.goals.cli "$@"

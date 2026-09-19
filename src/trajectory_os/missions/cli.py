@@ -71,6 +71,7 @@ from trajectory_os.missions import (
     identity,
     model,
     orchestrator,
+    review_protocol,
     store,
     summary,
 )
@@ -849,6 +850,29 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_review_protocol(args: argparse.Namespace) -> int:
+    """Classify one reviewer response (no mission/state mutation)."""
+    try:
+        assessment = review_protocol.assess_file(args.response)
+    except OSError as exc:
+        return _fail(f"reviewer response unreadable: {exc}", EXIT_USAGE)
+    except review_protocol.ReviewProtocolError as exc:
+        return _fail(f"reviewer response rejected: {exc}", EXIT_REJECTED)
+    payload = assessment.to_dict()
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        print(f"outcome   : {assessment.outcome}")
+        print(f"reason    : {assessment.reason}")
+        print(f"verdict   : {assessment.verdict or '-'} "
+              f"recommendation={assessment.recommendation or '-'}")
+        print(f"findings  : blockers={len(assessment.blockers)} "
+              f"majors={len(assessment.majors)} "
+              f"minors={len(assessment.minors)}")
+        print(f"commit    : {assessment.permits_commit}")
+    return EXIT_OK if assessment.valid else EXIT_REJECTED
+
+
 def _cmd_version() -> int:
     print(f"trajectory-pi-missions {__version__}")
     return EXIT_OK
@@ -1000,6 +1024,15 @@ def build_parser(prog: str = "trajectory-pi-missions") -> argparse.ArgumentParse
 
     p = sub.add_parser("list", help="all missions under the root")
     _add_shared_flags(p)
+
+    p = sub.add_parser(
+        "review-protocol",
+        help="normalize a reviewer response to the strict semantic "
+             "distinction (VALID_PASS / VALID_REJECT / "
+             "REVIEW_PROTOCOL_INVALID); never a Git write")
+    _add_shared_flags(p)
+    p.add_argument("response", help="reviewer response text file")
+
     sub.add_parser("version", help="CLI version")
     return parser
 
@@ -1036,6 +1069,7 @@ def main(argv: list[str] | None = None) -> int:
         "summary": _cmd_summary,
         "note": _cmd_note,
         "list": _cmd_list,
+        "review-protocol": _cmd_review_protocol,
     }[args.command]
     return int(handler(args))
 

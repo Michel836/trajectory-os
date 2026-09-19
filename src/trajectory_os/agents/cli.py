@@ -95,6 +95,39 @@ def _cmd_qualify(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_qualify_isolated(args: argparse.Namespace) -> int:
+    from trajectory_os.agents import harness_qualification
+
+    outcome = harness_qualification.qualify_isolated(
+        workspace=args.workspace or os.getcwd(), timeout_s=args.timeout,
+        allow_runtime=args.allow_runtime)
+    payload = outcome.to_dict()
+    if args.save:
+        Path(args.save).write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8")
+    _print(payload, args.json)
+    return EXIT_OK
+
+
+def _cmd_usage(args: argparse.Namespace) -> int:
+    from trajectory_os.agents import telemetry
+
+    document = telemetry.reconstruct(args.root)
+    if args.json:
+        _print(document, args.json)
+    else:
+        print(f"telemetry : records={document['count']}")
+        for record in document["records"][-16:]:
+            print(f"  - {record.get('backend')} "
+                  f"provider={record.get('provider')} "
+                  f"model={record.get('model')} "
+                  f"prompt={record.get('prompt_tokens')} "
+                  f"completion={record.get('completion_tokens')} "
+                  f"runtime_ms={record.get('runtime_ms')}")
+    return EXIT_OK
+
+
 def _cmd_version() -> int:
     print(f"trajectory-agent {__version__}")
     return EXIT_OK
@@ -147,6 +180,22 @@ def build_parser(prog: str = "trajectory-agent") -> argparse.ArgumentParser:
     p.add_argument("--save", default=None)
     p.add_argument("--json", action="store_true")
 
+    p = sub.add_parser(
+        "qualify-isolated",
+        help="M023 isolated-SDK DeepSeek Harness qualification")
+    p.add_argument("--workspace", default=None)
+    p.add_argument("--timeout", type=int, default=120)
+    p.add_argument("--allow-runtime", action="store_true",
+                   help="allow the runtime transport without the SDK")
+    p.add_argument("--save", default=None)
+    p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser(
+        "usage", help="provider-grounded token/context telemetry ledger")
+    p.add_argument("--root", required=True,
+                   help="state root holding telemetry/usage.jsonl")
+    p.add_argument("--json", action="store_true")
+
     sub.add_parser("version", help="CLI version")
     return parser
 
@@ -166,6 +215,8 @@ def main(argv: list[str] | None = None) -> int:
         "canary": _cmd_canary,
         "compare": _cmd_compare,
         "qualify": _cmd_qualify,
+        "qualify-isolated": _cmd_qualify_isolated,
+        "usage": _cmd_usage,
     }[args.command]
     try:
         return int(handler(args))

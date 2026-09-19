@@ -34,9 +34,30 @@ EVIDENCE_DOMAIN = "trajectory-os.agent-completion-evidence.v1"
 #: Domain id for one canary comparison outcome digest.
 CANARY_DOMAIN = "trajectory-os.agent-backend-canary.v1"
 
+#: Domain id for one exact provider/model route identity (M022).
+ROUTE_DOMAIN = "trajectory-os.agent-provider-route.v1"
+
+#: Domain id for one backend capability report (M022).
+CAPABILITY_DOMAIN = "trajectory-os.agent-capabilities.v1"
+
+#: Domain id for one normalized lifecycle summary (M022).
+LIFECYCLE_DOMAIN = "trajectory-os.agent-lifecycle.v1"
+
+#: Domain id for one isolated DeepSeek Harness SDK environment (M023).
+HARNESS_ENVIRONMENT_DOMAIN = "trajectory-os.agent-harness-environment.v1"
+
+#: Domain id for one isolated SDK/runtime identity probe (M023).
+HARNESS_IDENTITY_DOMAIN = "trajectory-os.agent-harness-identity.v1"
+
+#: Domain id for one provider-grounded usage/telemetry record (M026).
+TELEMETRY_DOMAIN = "trajectory-os.agent-telemetry.v1"
+
 #: Every agent-backend identity domain id (closed set).
 DOMAIN_IDS = frozenset({
     PROBE_DOMAIN, RUN_DOMAIN, EVIDENCE_DOMAIN, CANARY_DOMAIN,
+    ROUTE_DOMAIN, CAPABILITY_DOMAIN, LIFECYCLE_DOMAIN,
+    HARNESS_ENVIRONMENT_DOMAIN, HARNESS_IDENTITY_DOMAIN,
+    TELEMETRY_DOMAIN,
 })
 
 
@@ -84,3 +105,27 @@ def evidence_id(payload: object) -> str:
 
 def canary_id(payload: object) -> str:
     return digest(CANARY_DOMAIN, payload)
+
+
+def route_id(payload: object) -> str:
+    return digest(ROUTE_DOMAIN, payload)
+
+
+def capability_id(payload: object) -> str:
+    return digest(CAPABILITY_DOMAIN, payload)
+
+
+def lifecycle_id(payload: object) -> str:
+    return digest(LIFECYCLE_DOMAIN, payload)
+
+
+def harness_environment_id(payload: object) -> str:
+    return digest(HARNESS_ENVIRONMENT_DOMAIN, payload)
+
+
+def harness_identity_id(payload: object) -> str:
+    return digest(HARNESS_IDENTITY_DOMAIN, payload)
+
+
+def telemetry_id(payload: object) -> str:
+    return digest(TELEMETRY_DOMAIN, payload)

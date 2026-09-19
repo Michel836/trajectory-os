@@ -8,6 +8,9 @@
 #   probe    deterministic backend capability probe (pi, deepseek-harness)
 #   canary   one bounded DeepSeek Harness canary with Pi fallback evidence
 #   compare  run one bounded task on both backends and compare
+#   qualify  M016 bounded DeepSeek Harness qualification
+#   qualify-isolated M023 isolated-SDK DeepSeek Harness qualification
+#   usage    M026 provider-grounded token/context telemetry ledger
 #   version
 #
 # No backend may commit, push, merge, reset, restore, clean, stash, rebase,
