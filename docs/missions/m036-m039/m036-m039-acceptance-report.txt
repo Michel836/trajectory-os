@@ -1,0 +1,56 @@
+========================================================================
+TRAJECTORY-OS RELEASE ACCEPTANCE (m039.1)
+status : PASS
+root   : .artifacts/m036-m039/bundle/acceptance
+at     : 2026-09-19T14:22:09Z
+------------------------------------------------------------------------
+[PASS] 1: READY_FOR_COMMIT -> deterministic commit handoff
+    ok   READY_FOR_COMMIT produces a deterministic handoff
+    ok   handoff records branch, baseline and HEAD
+    ok   commit handoff is deterministic in content
+    ok   handoff artifact persists and is self-consistent
+[PASS] 2: Stale patch blocks GO COMMIT
+    ok   a stale patch blocks GO COMMIT
+[PASS] 3: Moved HEAD blocks GO COMMIT
+    ok   a moved HEAD blocks GO COMMIT
+[PASS] 4: Wrong branch blocks GO COMMIT
+    ok   a moved branch blocks GO COMMIT
+[PASS] 5: Authorized commit/push records the exact commit SHA
+    ok   authorized commit/push records the exact commit SHA
+    ok   commit result binds the reviewed semantic patch
+    ok   unauthorized commit is refused before any Git write
+[PASS] 6: PR bound to the exact head SHA
+    ok   exactly one PR is bound to the exact head SHA
+    ok   repeated PR binding is idempotent
+[PASS] 7: Queued CI blocks merge
+    ok   queued exact-head CI blocks merge
+[PASS] 8: In-progress CI blocks merge
+    ok   in-progress exact-head CI blocks merge
+[PASS] 9: Failed CI blocks merge
+    ok   failed exact-head CI blocks merge
+[PASS] 10: Cancelled CI blocks merge
+    ok   cancelled exact-head CI blocks merge
+[PASS] 11: Missing CI blocks merge
+    ok   missing exact-head CI blocks merge
+[PASS] 12: Moved PR head blocks merge
+    ok   a moved PR head blocks merge
+[PASS] 13: Green exact-head CI + explicit GO MERGE permits merge
+    ok   green exact-head CI + explicit GO MERGE permits merge
+    ok   unauthorized merge is refused
+[PASS] 14: Target branch verification after merge
+    ok   target branch is verified after merge
+[PASS] 15: Release closure links mission/patch/commit/PR/CI/merge
+    ok   closure links mission/patch/commit/PR/CI/merge
+    ok   closure records the GO COMMIT and GO MERGE gates
+[PASS] 16: Status/watch/reconstruct are read-only
+    ok   watch/status/reconstruct are read-only
+[PASS] 17: Repeated release reconstruction is idempotent
+    ok   repeated release reconstruction is idempotent
+[PASS] 18: Agent/runtime-control trust boundary remains intact
+    ok   non-release modules never perform a Git trust-boundary write
+    ok   agent actor cannot mint a release authorization
+    ok   the unauthorized sentinel never validates
+    ok   runtime control remains release-write free
+------------------------------------------------------------------------
+18/18 cases, 29/29 checks
+========================================================================

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# trajectory-release — M036-M039 human-gated release bundle CLI.
+#
+# Thin, stable shim over src/trajectory_os/release. It resolves the
+# repository root, prepends the src layout to PYTHONPATH and execs the CLI.
+#
+# Commands:
+#   handoff       emit the deterministic GO COMMIT handoff (read-only Git)
+#   go-commit     authorized stage/commit/push (explicit --authorize-commit)
+#   bind-pr       create or discover exactly one PR for the exact commit
+#   watch-ci      read the exact-head CI state (read-only)
+#   merge-handoff verify merge preconditions and emit the GO MERGE gate
+#   go-merge      authorized merge (explicit --authorize-merge, default squash)
+#   closure       record the release closure after a confirmed merge
+#   reconstruct   read-only reconstruction of the release chain
+#   status        read-only release progression view
+#   acceptance    run the deterministic M036-M039 acceptance matrix
+#   version       CLI version
+#
+# Only `go-commit` and `go-merge` perform a Git/GitHub write, and only after
+# an explicit operator authorization token.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+SRC="${ROOT}/src"
+
+if [[ ! -d "${SRC}/trajectory_os/release" ]]; then
+  printf 'trajectory-release: internal error: missing trajectory_os/release package (expected %s)\n' "${SRC}/trajectory_os/release" >&2
+  exit 2
+fi
+
+export PYTHONPATH="${SRC}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m trajectory_os.release.cli "$@"
