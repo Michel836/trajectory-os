@@ -1,0 +1,435 @@
+{
+  "auto_publish": false,
+  "drafts": [
+    {
+      "angle": "Why TrajectoryOS exists: turning unstructured intent into a structured, auditable portfolio.",
+      "evidence_metrics": [
+        {
+          "evidence": true,
+          "name": "time_to_usable_deliverable_s",
+          "source": "dogfood timing",
+          "unit": "seconds",
+          "value": 0.2253
+        },
+        {
+          "evidence": true,
+          "name": "evidence_coverage",
+          "source": "acceptance matrix",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "source_coverage",
+          "source": "ingestion manifest",
+          "unit": "sources",
+          "value": 16
+        },
+        {
+          "evidence": true,
+          "name": "output_completeness",
+          "source": "workflow artifacts",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "prediction_error",
+          "source": "outcome ledger",
+          "unit": "mean_absolute_error",
+          "value": 720.65
+        },
+        {
+          "evidence": true,
+          "name": "outcome_capture_completeness",
+          "source": "outcome ledger",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "unresolved_unknowns",
+          "source": "workflow unknowns",
+          "unit": "count",
+          "value": 5
+        },
+        {
+          "evidence": true,
+          "name": "corrections_required",
+          "source": "review findings",
+          "unit": "count",
+          "value": 0
+        },
+        {
+          "evidence": true,
+          "name": "reuse_across_workflow_families",
+          "source": "workflow families",
+          "unit": "families",
+          "value": 3
+        }
+      ],
+      "published": false,
+      "status": "DRAFT",
+      "title": "project origin"
+    },
+    {
+      "angle": "Why the agent proposes but the human decides, and how the trust boundaries are enforced in code.",
+      "evidence_metrics": [
+        {
+          "evidence": true,
+          "name": "time_to_usable_deliverable_s",
+          "source": "dogfood timing",
+          "unit": "seconds",
+          "value": 0.2253
+        },
+        {
+          "evidence": true,
+          "name": "evidence_coverage",
+          "source": "acceptance matrix",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "source_coverage",
+          "source": "ingestion manifest",
+          "unit": "sources",
+          "value": 16
+        },
+        {
+          "evidence": true,
+          "name": "output_completeness",
+          "source": "workflow artifacts",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "prediction_error",
+          "source": "outcome ledger",
+          "unit": "mean_absolute_error",
+          "value": 720.65
+        },
+        {
+          "evidence": true,
+          "name": "outcome_capture_completeness",
+          "source": "outcome ledger",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "unresolved_unknowns",
+          "source": "workflow unknowns",
+          "unit": "count",
+          "value": 5
+        },
+        {
+          "evidence": true,
+          "name": "corrections_required",
+          "source": "review findings",
+          "unit": "count",
+          "value": 0
+        },
+        {
+          "evidence": true,
+          "name": "reuse_across_workflow_families",
+          "source": "workflow families",
+          "unit": "families",
+          "value": 3
+        }
+      ],
+      "published": false,
+      "status": "DRAFT",
+      "title": "trusted agents"
+    },
+    {
+      "angle": "How GO COMMIT / exact-head CI / GO MERGE keep consequential decisions with the human.",
+      "evidence_metrics": [
+        {
+          "evidence": true,
+          "name": "time_to_usable_deliverable_s",
+          "source": "dogfood timing",
+          "unit": "seconds",
+          "value": 0.2253
+        },
+        {
+          "evidence": true,
+          "name": "evidence_coverage",
+          "source": "acceptance matrix",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "source_coverage",
+          "source": "ingestion manifest",
+          "unit": "sources",
+          "value": 16
+        },
+        {
+          "evidence": true,
+          "name": "output_completeness",
+          "source": "workflow artifacts",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "prediction_error",
+          "source": "outcome ledger",
+          "unit": "mean_absolute_error",
+          "value": 720.65
+        },
+        {
+          "evidence": true,
+          "name": "outcome_capture_completeness",
+          "source": "outcome ledger",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "unresolved_unknowns",
+          "source": "workflow unknowns",
+          "unit": "count",
+          "value": 5
+        },
+        {
+          "evidence": true,
+          "name": "corrections_required",
+          "source": "review findings",
+          "unit": "count",
+          "value": 0
+        },
+        {
+          "evidence": true,
+          "name": "reuse_across_workflow_families",
+          "source": "workflow families",
+          "unit": "families",
+          "value": 3
+        }
+      ],
+      "published": false,
+      "status": "DRAFT",
+      "title": "human gates"
+    },
+    {
+      "angle": "How TrajectoryOS is developed with its own gated workflow.",
+      "evidence_metrics": [
+        {
+          "evidence": true,
+          "name": "time_to_usable_deliverable_s",
+          "source": "dogfood timing",
+          "unit": "seconds",
+          "value": 0.2253
+        },
+        {
+          "evidence": true,
+          "name": "evidence_coverage",
+          "source": "acceptance matrix",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "source_coverage",
+          "source": "ingestion manifest",
+          "unit": "sources",
+          "value": 16
+        },
+        {
+          "evidence": true,
+          "name": "output_completeness",
+          "source": "workflow artifacts",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "prediction_error",
+          "source": "outcome ledger",
+          "unit": "mean_absolute_error",
+          "value": 720.65
+        },
+        {
+          "evidence": true,
+          "name": "outcome_capture_completeness",
+          "source": "outcome ledger",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "unresolved_unknowns",
+          "source": "workflow unknowns",
+          "unit": "count",
+          "value": 5
+        },
+        {
+          "evidence": true,
+          "name": "corrections_required",
+          "source": "review findings",
+          "unit": "count",
+          "value": 0
+        },
+        {
+          "evidence": true,
+          "name": "reuse_across_workflow_families",
+          "source": "workflow families",
+          "unit": "families",
+          "value": 3
+        }
+      ],
+      "published": false,
+      "status": "DRAFT",
+      "title": "self-hosting"
+    },
+    {
+      "angle": "Advisory prediction with explicit uncertainty and a guarded champion/challenger refresh that never auto-promotes.",
+      "evidence_metrics": [
+        {
+          "evidence": true,
+          "name": "time_to_usable_deliverable_s",
+          "source": "dogfood timing",
+          "unit": "seconds",
+          "value": 0.2253
+        },
+        {
+          "evidence": true,
+          "name": "evidence_coverage",
+          "source": "acceptance matrix",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "source_coverage",
+          "source": "ingestion manifest",
+          "unit": "sources",
+          "value": 16
+        },
+        {
+          "evidence": true,
+          "name": "output_completeness",
+          "source": "workflow artifacts",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "prediction_error",
+          "source": "outcome ledger",
+          "unit": "mean_absolute_error",
+          "value": 720.65
+        },
+        {
+          "evidence": true,
+          "name": "outcome_capture_completeness",
+          "source": "outcome ledger",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "unresolved_unknowns",
+          "source": "workflow unknowns",
+          "unit": "count",
+          "value": 5
+        },
+        {
+          "evidence": true,
+          "name": "corrections_required",
+          "source": "review findings",
+          "unit": "count",
+          "value": 0
+        },
+        {
+          "evidence": true,
+          "name": "reuse_across_workflow_families",
+          "source": "workflow families",
+          "unit": "families",
+          "value": 3
+        }
+      ],
+      "published": false,
+      "status": "DRAFT",
+      "title": "predictive ML"
+    },
+    {
+      "angle": "Career and life-sciences intelligence over real or clearly labelled sample inputs.",
+      "evidence_metrics": [
+        {
+          "evidence": true,
+          "name": "time_to_usable_deliverable_s",
+          "source": "dogfood timing",
+          "unit": "seconds",
+          "value": 0.2253
+        },
+        {
+          "evidence": true,
+          "name": "evidence_coverage",
+          "source": "acceptance matrix",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "source_coverage",
+          "source": "ingestion manifest",
+          "unit": "sources",
+          "value": 16
+        },
+        {
+          "evidence": true,
+          "name": "output_completeness",
+          "source": "workflow artifacts",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "prediction_error",
+          "source": "outcome ledger",
+          "unit": "mean_absolute_error",
+          "value": 720.65
+        },
+        {
+          "evidence": true,
+          "name": "outcome_capture_completeness",
+          "source": "outcome ledger",
+          "unit": "ratio",
+          "value": 1.0
+        },
+        {
+          "evidence": true,
+          "name": "unresolved_unknowns",
+          "source": "workflow unknowns",
+          "unit": "count",
+          "value": 5
+        },
+        {
+          "evidence": true,
+          "name": "corrections_required",
+          "source": "review findings",
+          "unit": "count",
+          "value": 0
+        },
+        {
+          "evidence": true,
+          "name": "reuse_across_workflow_families",
+          "source": "workflow families",
+          "unit": "families",
+          "value": 3
+        }
+      ],
+      "published": false,
+      "status": "DRAFT",
+      "title": "real-world workflows"
+    }
+  ],
+  "generated_at": "2026-09-19T21:42:31Z",
+  "kind": "build_in_public_drafts",
+  "rule": "never claim a metric that is not present in the evidence pack",
+  "schema_version": 1
+}
