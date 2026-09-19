@@ -1,0 +1,413 @@
+{
+  "artifacts": {
+    "closure.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/closure.json",
+    "events.jsonl": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/events.jsonl",
+    "mission.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/mission.json",
+    "plan.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/plan.json",
+    "recovery.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/recovery.json",
+    "status.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/status.json",
+    "summary.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/summary.json",
+    "telemetry.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/telemetry.json"
+  },
+  "attempts": 1,
+  "backend": "pi",
+  "baseline": "39fc9b0029142abdf6d8e42759bd4f4679a3ac96",
+  "current_patch": "98a4587a5326def0cd38bf4a80f613e11672680a007362549535ec814dfab2ff",
+  "event_count": 10,
+  "generated_at": "2026-09-19T12:42:49Z",
+  "lifecycle": "COMPLETE",
+  "mission_id": "m032-real-status-identity-b",
+  "mode": "LIVE",
+  "model": "deepseek-flash",
+  "objective_implemented": true,
+  "phase_transitions": [
+    "MISSION_CREATED",
+    "PREFLIGHT_COMPLETED",
+    "PLAN_PERSISTED",
+    "PREFLIGHT_COMPLETED",
+    "PATCH_CAPTURED",
+    "VALIDATION_COMPLETED",
+    "REVIEW_COMPLETED",
+    "RUN_COMPLETED",
+    "HUMAN_GATE_REACHED",
+    "MISSION_CLOSED"
+  ],
+  "provider": "deepseek",
+  "readiness": "READY_FOR_COMMIT",
+  "recovery": {
+    "events": 10,
+    "execution_finalized": true,
+    "idempotent": true,
+    "kind": "TERMINAL_COMPLETE",
+    "lifecycle": "COMPLETE",
+    "mission_id": "m032-real-status-identity-b",
+    "readiness": "READY_FOR_COMMIT",
+    "reason": "durable closure already recorded (idempotent resume)",
+    "resume_point": "CLOSURE",
+    "terminal": true
+  },
+  "repairs": 0,
+  "review_results": [
+    {
+      "active": true,
+      "at": "2026-09-19T12:42:48Z",
+      "attempt": 0,
+      "outcome": "VALID_PASS",
+      "patch": "98a4587a5326def0cd38bf4a80f613e11672680a007362549535ec814dfab2ff",
+      "reason": "PASS_GO_COMMIT_NO_BLOCKING_FINDINGS",
+      "result": "PASS",
+      "reviewer": "qwen3.8:27b-q4_K_M"
+    }
+  ],
+  "reviewed_patch": "98a4587a5326def0cd38bf4a80f613e11672680a007362549535ec814dfab2ff",
+  "reviewer_model": "qwen3.8:27b-q4_K_M",
+  "run_id": "m032-real-status-identity-b",
+  "selected_objective": "Harden `trajectory-mission status` and `follow` against stale mission identity. In `src/trajectory_os/assembly/cli.py`, status is loaded with `obs_store.load_status(store.mission_root(root, mission_id))` without checking that the loaded document's `run_id` equals the requested `mission_id`. A stale or mismatched `status.json` (for example from a copied or corrupt mission root) can therefore be rendered as the requested mission. Fail closed when the loaded status `run_id` does not match the requested mission id, and reject an unknown mission id. Do not change the canonical status schema, the observability model, or any Git behaviour.",
+  "telemetry": {
+    "derived": {
+      "cache_hit_ratio": {
+        "name": "cache_hit_ratio",
+        "reason": "cache hit tokens or prompt tokens unavailable",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "cost_per_successful_task": {
+        "name": "cost_per_successful_task",
+        "reason": "no successful trust-gated task/validated patch or no cost",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "output_tokens_per_second": {
+        "name": "output_tokens_per_second",
+        "reason": "completion tokens or duration unavailable",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "protocol_error_rate": {
+        "name": "protocol_error_rate",
+        "reason": null,
+        "source": "DERIVED",
+        "value": 0.0
+      },
+      "repair_rate": {
+        "name": "repair_rate",
+        "reason": null,
+        "source": "DERIVED",
+        "value": 0.0
+      },
+      "review_reject_rate": {
+        "name": "review_reject_rate",
+        "reason": null,
+        "source": "DERIVED",
+        "value": 0.0
+      },
+      "seconds_per_successful_task": {
+        "name": "seconds_per_successful_task",
+        "reason": null,
+        "source": "DERIVED",
+        "value": 42.521
+      },
+      "time_to_first_useful_patch_ms": {
+        "name": "time_to_useful_patch_ms",
+        "reason": null,
+        "source": "DERIVED",
+        "value": 42521.0
+      },
+      "tokens_per_successful_task": {
+        "name": "tokens_per_successful_task",
+        "reason": "no successful trust-gated task/validated patch",
+        "source": "UNAVAILABLE",
+        "value": null
+      }
+    },
+    "identity": {
+      "backend": "pi",
+      "locality": "remote",
+      "machine": "chu-z690udddr4",
+      "mission_id": "m032-real-status-identity-b",
+      "mode": "benchmark",
+      "model": "deepseek-flash",
+      "provider": "deepseek",
+      "run_id": "m032-real-status-identity-b"
+    },
+    "metrics": {
+      "cache_hit_tokens": {
+        "name": "cache_hit_tokens",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "cache_miss_tokens": {
+        "name": "cache_miss_tokens",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "cache_read_tokens": {
+        "name": "cache_read_tokens",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "completion_tokens": {
+        "name": "completion_tokens",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "cost_usd": {
+        "name": "cost_usd",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "cpu_percent": {
+        "name": "cpu_percent",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "first_useful_patch_ms": {
+        "name": "first_useful_patch_ms",
+        "reason": null,
+        "source": "DERIVED",
+        "value": 42521.0
+      },
+      "generation_tps": {
+        "name": "generation_tps",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "gpu_power_w": {
+        "name": "gpu_power_w",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "gpu_temp_c": {
+        "name": "gpu_temp_c",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "gpu_utilization_pct": {
+        "name": "gpu_utilization_pct",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "prompt_tokens": {
+        "name": "prompt_tokens",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "prompt_tps": {
+        "name": "prompt_tps",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "protocol_errors": {
+        "name": "protocol_errors",
+        "reason": null,
+        "source": "LOCAL",
+        "value": 0
+      },
+      "ram_bytes": {
+        "name": "ram_bytes",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "repairs": {
+        "name": "repairs",
+        "reason": null,
+        "source": "LOCAL",
+        "value": 0
+      },
+      "request_count": {
+        "name": "request_count",
+        "reason": null,
+        "source": "DERIVED",
+        "value": 1
+      },
+      "request_latency_ms": {
+        "name": "request_latency_ms",
+        "reason": null,
+        "source": "DERIVED",
+        "value": 42521.0
+      },
+      "resume_duration_ms": {
+        "name": "resume_duration_ms",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "retries": {
+        "name": "retries",
+        "reason": null,
+        "source": "LOCAL",
+        "value": 0
+      },
+      "review_rejects": {
+        "name": "review_rejects",
+        "reason": null,
+        "source": "LOCAL",
+        "value": 0
+      },
+      "total_duration_ms": {
+        "name": "total_duration_ms",
+        "reason": null,
+        "source": "DERIVED",
+        "value": 42521
+      },
+      "total_tokens": {
+        "name": "total_tokens",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "trial_count": {
+        "name": "trial_count",
+        "reason": null,
+        "source": "LOCAL",
+        "value": 1
+      },
+      "ttft_ms": {
+        "name": "ttft_ms",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "validation_failures": {
+        "name": "validation_failures",
+        "reason": null,
+        "source": "LOCAL",
+        "value": 0
+      },
+      "vram_bytes": {
+        "name": "vram_bytes",
+        "reason": "backend/provider does not expose this metric",
+        "source": "UNAVAILABLE",
+        "value": null
+      }
+    },
+    "mode": "benchmark",
+    "observability_version": "m030.1",
+    "phase_durations": [
+      {
+        "duration_ms": 42522,
+        "phase": "IMPLEMENT"
+      },
+      {
+        "duration_ms": 95,
+        "phase": "VALIDATE"
+      },
+      {
+        "duration_ms": 35833,
+        "phase": "REVIEW"
+      }
+    ],
+    "run_id": "m032-real-status-identity-b",
+    "schema_version": 1,
+    "series": {
+      "generation_tps": {
+        "average": null,
+        "count": 0,
+        "median": null,
+        "p95": null,
+        "reason": "backend/provider does not expose this metric"
+      },
+      "prompt_tps": {
+        "average": null,
+        "count": 0,
+        "median": null,
+        "p95": null,
+        "reason": "backend/provider does not expose this metric"
+      },
+      "request_latency_ms": {
+        "average": 42521.0,
+        "count": 1,
+        "median": 42521.0,
+        "p95": 42521.0
+      },
+      "total_duration_ms": {
+        "average": 42521.0,
+        "count": 1,
+        "median": 42521.0,
+        "p95": 42521.0
+      },
+      "ttft_ms": {
+        "average": null,
+        "count": 0,
+        "median": null,
+        "p95": null,
+        "reason": "backend/provider does not expose this metric"
+      }
+    },
+    "waste": {
+      "cost_wasted_in_failed_cycles": null,
+      "failed_cycle_count": 0,
+      "time_wasted_in_failed_cycles_ms": null,
+      "tokens_wasted_in_failed_cycles": null
+    }
+  },
+  "telemetry_summary": {
+    "metrics": {
+      "cost_usd": {
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "repairs": {
+        "source": "LOCAL",
+        "value": 0
+      },
+      "review_rejects": {
+        "source": "LOCAL",
+        "value": 0
+      },
+      "total_duration_ms": {
+        "source": "DERIVED",
+        "value": 42521
+      },
+      "total_tokens": {
+        "source": "UNAVAILABLE",
+        "value": null
+      },
+      "trial_count": {
+        "source": "LOCAL",
+        "value": 1
+      },
+      "validation_failures": {
+        "source": "LOCAL",
+        "value": 0
+      }
+    },
+    "mode": "benchmark",
+    "waste": {
+      "cost_wasted_in_failed_cycles": null,
+      "failed_cycle_count": 0,
+      "time_wasted_in_failed_cycles_ms": null,
+      "tokens_wasted_in_failed_cycles": null
+    }
+  },
+  "terminal_reason": "all gates passed",
+  "terminal_reason_code": "COMPLETE",
+  "validation_results": [
+    {
+      "at": "2026-09-19T12:42:13Z",
+      "attempt": 0,
+      "command": [
+        "{python} validate_real_mission.py"
+      ],
+      "exit_code": 0,
+      "patch": "98a4587a5326def0cd38bf4a80f613e11672680a007362549535ec814dfab2ff",
+      "reason": "OK",
+      "result": "PASS"
+    }
+  ],
+  "why_chosen": "Discovered while implementing the M034 mission-level operator control requirements: controls must target an explicit mission/run identity and stale/unknown mission ids must fail closed. The observation surface had the same identity gap, so a mismatched status could be displayed as the requested mission. It is a small, real, auditable repository hardening defect with a deterministic validation gate and no architectural change.",
+  "workspace": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/workspace"
+}

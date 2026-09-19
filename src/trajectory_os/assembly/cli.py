@@ -1,19 +1,28 @@
-"""M031 — one mission-level operator entry point (start/status/follow/resume).
+"""M031–M035 — one mission-level operator entry point.
 
 Commands::
 
-    start       create a mission from one objective and drive it to a gate
-    status      render the canonical mission status (CLI / TUI / Web)
-    follow      follow a mission until a terminal lifecycle/readiness outcome
-    resume      resume an interrupted mission (same mission_id, same evidence)
-    reconstruct reconstruct the mission from durable artifacts
-    plan        print the durable mission plan (JSON)
-    closure     print the durable closure evidence (JSON)
+    start        create a mission from one objective and drive it to a gate
+    status       render the canonical mission status (CLI / TUI / Web)
+    follow       follow a mission until a terminal lifecycle/readiness outcome
+    resume       resume an interrupted mission (same mission_id, same evidence)
+    reconstruct  reconstruct the mission from durable artifacts
+    plan         print the durable mission plan (JSON)
+    closure      print the durable closure evidence (JSON)
+    request-stop request a graceful, resumable stop at the next phase boundary
+    pause        pause a mission (resumable graceful stop)
+    cancel       cancel a mission -> canonical CANCELLED
+    control-log  print the mission-scoped append-only control log
+    recovery     print the explicit recovery/resume-point decision
+    acceptance   run the deterministic M035 production acceptance matrix
     version
 
-Observation commands are strictly read-only. The human gate is authoritative:
-no command performs a Git trust-boundary write (commit/push/merge/reset/
-restore/clean/stash/rebase/checkout/switch).
+Observation commands (``status``/``follow``/``reconstruct``/``plan``/
+``closure``/``recovery``/``control-log``) are strictly read-only. Control
+commands act on an explicit mission id and fail closed for an unknown or
+stale mission. The human gate is authoritative: no command performs a Git
+trust-boundary write (commit/push/merge/reset/restore/clean/stash/rebase/
+checkout/switch).
 """
 
 from __future__ import annotations
@@ -27,7 +36,9 @@ from typing import Any
 
 from trajectory_os import __version__
 from trajectory_os.agents import model as agent_model
-from trajectory_os.assembly import model, store
+from trajectory_os.assembly import acceptance as assembly_acceptance
+from trajectory_os.assembly import control as assembly_control
+from trajectory_os.assembly import model, recovery, store
 from trajectory_os.assembly import orchestrator as assembly_run
 from trajectory_os.benchmark import model as bench_model
 from trajectory_os.benchmark import review as bench_review
@@ -61,6 +72,19 @@ def _root_from(value: str | None) -> str:
 
 def _print_json(payload: Any) -> None:
     print(json.dumps(payload, indent=2, sort_keys=True, default=str))
+
+
+def _load_status_checked(root: str, mission_id: str) -> dict[str, Any]:
+    """Load a mission status, failing closed on an unknown/stale identity."""
+    if not store.mission_exists(root, mission_id):
+        raise model.AssemblyError(model.R_MISSION_MISSING, mission_id)
+    document = obs_store.load_status(store.mission_root(root, mission_id))
+    run_id = document.get("run_id")
+    if run_id != mission_id:
+        raise model.AssemblyError(
+            model.R_IDENTITY_MISMATCH,
+            f"status run_id {run_id!r} != mission_id {mission_id!r}")
+    return document
 
 
 def _executor(mode: str) -> Any:
@@ -111,6 +135,13 @@ def _cmd_start(args: argparse.Namespace) -> int:
     workspace = args.workspace or str(
         store.mission_root(root, mission_id) / "workspace")
     Path(workspace).mkdir(parents=True, exist_ok=True)
+    workload = None
+    workload_id = args.workload
+    if args.workload_file:
+        document = json.loads(
+            Path(args.workload_file).read_text(encoding="utf-8"))
+        workload = bench_model.WorkloadSpec.from_dict(document)
+        workload_id = workload.workload_id
     request = assembly_run.MissionRequest(
         objective=args.objective,
         workspace=workspace,
@@ -120,7 +151,8 @@ def _cmd_start(args: argparse.Namespace) -> int:
         backend=args.backend,
         provider=args.provider,
         model=args.model,
-        workload_id=args.workload,
+        workload_id=workload_id,
+        workload=workload,
         trust_policy=_trust_policy(args),
         mission_id=mission_id,
         mode=args.mode,
@@ -163,7 +195,7 @@ def _cmd_resume(args: argparse.Namespace) -> int:
 
 def _cmd_status(args: argparse.Namespace) -> int:
     root = _root_from(args.root)
-    document = obs_store.load_status(store.mission_root(root, args.mission_id))
+    document = _load_status_checked(root, args.mission_id)
     if args.json:
         _print_json(document)
     else:
@@ -175,8 +207,7 @@ def _cmd_follow(args: argparse.Namespace) -> int:
     root = _root_from(args.root)
 
     def reader() -> dict[str, Any]:
-        return obs_store.load_status(
-            store.mission_root(root, args.mission_id))
+        return _load_status_checked(root, args.mission_id)
 
     outcome = obs_follow.follow(
         reader, interval_s=args.interval, max_polls=args.max_polls,
@@ -219,8 +250,62 @@ def _cmd_closure(args: argparse.Namespace) -> int:
 
 def _cmd_version() -> int:
     print(f"trajectory-mission {__version__} "
-          f"(M031 {model.ASSEMBLY_VERSION})")
+          f"(M031-M035 {model.ASSEMBLY_VERSION})")
     return EXIT_OK
+
+
+# -- M033/M034 control + recovery + acceptance ---------------------------------
+
+
+def _control_command(action: str) -> Any:
+    def handler(args: argparse.Namespace) -> int:
+        root = _root_from(args.root)
+        outcome = {
+            assembly_control.ACTION_REQUEST_STOP:
+                assembly_control.request_stop,
+            assembly_control.ACTION_PAUSE: assembly_control.pause,
+            assembly_control.ACTION_CANCEL: assembly_control.cancel,
+        }[action](root, args.mission_id, reason=args.reason)
+        if args.json:
+            _print_json(outcome.to_dict())
+        else:
+            print(f"{outcome.action}: {outcome.result} "
+                  f"(readiness={outcome.readiness}) - {outcome.reason}")
+        return (EXIT_OK if outcome.result in
+                (assembly_control.RESULT_ACCEPTED,
+                 assembly_control.RESULT_ALREADY_CANCELLED)
+                else EXIT_REJECTED)
+
+    return handler
+
+
+def _cmd_control_log(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    if not store.mission_exists(root, args.mission_id):
+        raise model.AssemblyError(model.R_MISSION_MISSING, args.mission_id)
+    _print_json(assembly_control.control_log(root, args.mission_id))
+    return EXIT_OK
+
+
+def _cmd_recovery(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    decision = recovery.detect_resume(root, args.mission_id)
+    _print_json(decision.to_dict())
+    return EXIT_OK
+
+
+def _cmd_acceptance(args: argparse.Namespace) -> int:
+    root = _root_from(args.root)
+    report = assembly_acceptance.run_acceptance(root)
+    if args.out:
+        Path(args.out).write_text(
+            json.dumps(report.to_dict(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8")
+    if args.json:
+        _print_json(report.to_dict())
+    else:
+        print(report.render())
+    return EXIT_OK if report.status == "PASS" else EXIT_REJECTED
 
 
 def _add_policy_flags(parser: argparse.ArgumentParser) -> None:
@@ -238,7 +323,7 @@ def _add_policy_flags(parser: argparse.ArgumentParser) -> None:
 def build_parser(prog: str = "trajectory-mission",
                  ) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog=prog, description="M031 end-to-end mission assembly.")
+        prog=prog, description="M031-M035 mission assembly and operator flow.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("start", help="start a mission from one objective")
@@ -249,6 +334,8 @@ def build_parser(prog: str = "trajectory-mission",
     p.add_argument("--constraint", action="append", default=[])
     p.add_argument("--dod", action="append", default=[])
     p.add_argument("--workload", default="small-targeted-repair")
+    p.add_argument("--workload-file", dest="workload_file", default=None,
+                   help="path to a JSON WorkloadSpec document")
     p.add_argument("--mode", choices=sorted(bench_model.EXECUTION_MODES),
                    default=bench_model.MODE_FIXTURE)
     p.add_argument("--backend", default=agent_model.BACKEND_PI)
@@ -296,6 +383,34 @@ def build_parser(prog: str = "trajectory-mission",
     p.add_argument("--root", default=None)
     p.add_argument("--mission-id", dest="mission_id", required=True)
 
+    for name, help_text in (
+        ("request-stop", "request a graceful, resumable stop"),
+        ("pause", "pause a mission (resumable graceful stop)"),
+        ("cancel", "cancel a mission -> canonical CANCELLED"),
+    ):
+        p = sub.add_parser(name, help=help_text)
+        p.add_argument("--root", default=None)
+        p.add_argument("--mission-id", dest="mission_id", required=True)
+        p.add_argument("--reason", default=f"operator {name}")
+        p.add_argument("--json", action="store_true")
+
+    p = sub.add_parser("control-log",
+                       help="print the mission-scoped control log")
+    p.add_argument("--root", default=None)
+    p.add_argument("--mission-id", dest="mission_id", required=True)
+
+    p = sub.add_parser("recovery",
+                       help="print the explicit recovery/resume decision")
+    p.add_argument("--root", default=None)
+    p.add_argument("--mission-id", dest="mission_id", required=True)
+
+    p = sub.add_parser("acceptance",
+                       help="run the deterministic M035 acceptance matrix")
+    p.add_argument("--root", default=None)
+    p.add_argument("--out", default=None,
+                   help="write the machine-readable report to this path")
+    p.add_argument("--json", action="store_true")
+
     sub.add_parser("version", help="CLI version")
     return parser
 
@@ -314,12 +429,18 @@ def main(argv: list[str] | None = None) -> int:
         "start": _cmd_start, "resume": _cmd_resume, "status": _cmd_status,
         "follow": _cmd_follow, "reconstruct": _cmd_reconstruct,
         "plan": _cmd_plan, "closure": _cmd_closure,
+        "request-stop": _control_command(
+            assembly_control.ACTION_REQUEST_STOP),
+        "pause": _control_command(assembly_control.ACTION_PAUSE),
+        "cancel": _control_command(assembly_control.ACTION_CANCEL),
+        "control-log": _cmd_control_log, "recovery": _cmd_recovery,
+        "acceptance": _cmd_acceptance,
     }[args.command]
     try:
         return int(handler(args))
     except (model.AssemblyError, obs_model.ObservabilityError,
             obs_store.CanonicalStoreError,
-            bench_model.BenchmarkError) as exc:
+            bench_model.BenchmarkError, OSError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE
 

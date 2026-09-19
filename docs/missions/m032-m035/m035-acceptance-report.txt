@@ -1,0 +1,52 @@
+========================================================================
+TRAJECTORY-OS PRODUCTION ACCEPTANCE (m035.1)
+status : PASS
+root   : .artifacts/m032-m035/m035
+at     : 2026-09-19T12:59:49Z
+------------------------------------------------------------------------
+[PASS] 1: Real happy-path mission -> READY_FOR_COMMIT
+    ok   mission root persists all canonical artifacts
+    ok   happy path reaches READY_FOR_COMMIT
+    ok   reviewed_patch == current_patch and final reviewer active
+[PASS] 2: Validation reject
+    ok   validation reject cannot become READY_FOR_COMMIT
+    ok   no independent review runs after a validation reject
+[PASS] 3: Review reject -> bounded repair -> fresh PASS
+    ok   review reject triggers a bounded repair
+    ok   fresh PASS on the exact current patch
+[PASS] 4: Repair-budget exhaustion -> BLOCKED
+    ok   repair-budget exhaustion yields BLOCKED
+[PASS] 5: Invalid provider/model -> preflight BLOCKED
+    ok   invalid provider/model preflight BLOCKED
+    ok   no expensive phase runs after preflight reject
+[PASS] 6: Process interruption -> resume -> same identity
+    ok   interruption is non-terminal and preserves identity
+    ok   resume keeps mission_id and append-only prior evidence
+    ok   interruption is recorded with a durable non-terminal closure
+[PASS] 7: Cancel -> CANCELLED
+    ok   cancel produces canonical CANCELLED
+    ok   cancel preserves evidence and closure
+    ok   repeated cancel is idempotent
+[PASS] 8: Stale review -> BLOCKED
+    ok   a stale reviewed patch is blocked
+[PASS] 9: COMPLETE + non-ready never renders success
+    ok   COMPLETE + non-ready never renders as success
+[PASS] 10: Closure/reconstruct for terminal states
+    ok   closure reconstructs the READY mission
+    ok   closure reconstructs a CANCELLED terminal state
+[PASS] 11: Status/follow/reconstruct remain read-only
+    ok   status/follow/reconstruct are read-only
+    ok   follow exits at the terminal outcome
+[PASS] 12: Semantic patch identity remains authoritative
+    ok   current patch is an exact 64-hex semantic identity
+    ok   reviewed_patch equals the authoritative current patch
+    ok   recomputed semantic patch matches the durable identity
+    ok   closure records validation on the same patch
+[PASS] 13: Reviewer roles correct; no phantom reviewer
+    ok   final independent reviewer is active and explicit
+    ok   no phantom/default reviewer leaks into the status
+[PASS] 14: Repeated resume after completion is idempotent
+    ok   repeated resume after completion is idempotent
+------------------------------------------------------------------------
+14/14 cases, 29/29 checks
+========================================================================

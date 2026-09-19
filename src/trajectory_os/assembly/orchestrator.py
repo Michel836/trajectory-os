@@ -36,10 +36,10 @@ from typing import Any
 
 from trajectory_os.agents import model as agent_model
 from trajectory_os.assembly import closure as assembly_closure
-from trajectory_os.assembly import model, store
+from trajectory_os.assembly import control as assembly_control
+from trajectory_os.assembly import model, recovery, store
 from trajectory_os.assembly.baseline import capture_baseline
 from trajectory_os.benchmark import model as bench_model
-from trajectory_os.benchmark import workloads as bench_workloads
 from trajectory_os.benchmark.executor import TrialExecutor
 from trajectory_os.benchmark.review import ReviewerClient
 from trajectory_os.observability import model as obs_model
@@ -69,6 +69,7 @@ class MissionRequest:
     provider: str | None = "deepseek"
     model: str | None = "deepseek-flash"
     workload_id: str = "small-targeted-repair"
+    workload: bench_model.WorkloadSpec | None = None
     mission_id: str | None = None
     mode: str = bench_model.MODE_FIXTURE
     telemetry_mode: str = obs_model.TELEMETRY_STANDARD
@@ -86,6 +87,7 @@ class MissionResult:
     resumed: bool
     interrupted: bool = False
     interrupt_phase: str | None = None
+    recovery: recovery.ResumeDecision | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -97,6 +99,8 @@ class MissionResult:
             "resumed": self.resumed,
             "interrupted": self.interrupted,
             "interrupt_phase": self.interrupt_phase,
+            "recovery": (None if self.recovery is None
+                         else self.recovery.to_dict()),
         }
 
 
@@ -134,6 +138,11 @@ class MissionOrchestrator:
             raise model.AssemblyError(model.R_MISSION_EXISTS, mission_id)
         mission_root = store.ensure_mission_root(self._root, mission_id)
         baseline = capture_baseline(request.workspace, clock=self._clock)
+        workload_id = (request.workload.workload_id
+                       if request.workload is not None
+                       else request.workload_id)
+        workload_document = (request.workload.validate().to_dict()
+                             if request.workload is not None else None)
         mission = model.MissionDefinition.build(
             mission_id=mission_id,
             objective=request.objective,
@@ -145,7 +154,8 @@ class MissionOrchestrator:
             trust_policy=request.trust_policy.validate(),
             baseline=baseline,
             workspace=request.workspace,
-            workload_id=request.workload_id,
+            workload_id=workload_id,
+            workload=workload_document,
             mode=request.mode,
             telemetry_mode=request.telemetry_mode,
             created_at=created_at,
@@ -167,7 +177,8 @@ class MissionOrchestrator:
             readiness=obs_model.RD_INDETERMINATE)
         return self._run_phases(
             mission_root, mission, resumed=False,
-            interrupt_after_phase=interrupt_after_phase)
+            interrupt_after_phase=interrupt_after_phase,
+            resume_point=model.MP_INTAKE)
 
     def resume(self, mission_id: str, *,
                interrupt_after_phase: str | None = None) -> MissionResult:
@@ -175,121 +186,196 @@ class MissionOrchestrator:
         if not store.mission_exists(self._root, mission_id):
             raise model.AssemblyError(model.R_MISSION_MISSING, mission_id)
         mission = store.load_mission(self._root, mission_id)
-        if store.closure_exists(self._root, mission_id):
-            mission_root = store.mission_root(self._root, mission_id)
+        decision = recovery.detect_resume(self._root, mission_id)
+        recovery.write_recovery_record(self._root, decision)
+        mission_root = store.mission_root(self._root, mission_id)
+
+        # Consume any pending graceful stop request exactly once, before any
+        # resume path proceeds (a later resume must not be immediately
+        # re-interrupted by a stale latch).
+        if assembly_control.stop_requested(self._root, mission_id):
+            assembly_control.clear_stop_request(self._root, mission_id,
+                                                clock=self._clock)
+
+        # Idempotent terminal resume: an existing durable closure is the
+        # finalized trust decision and is never re-executed or re-closed.
+        if decision.kind == recovery.RC_TERMINAL_COMPLETE:
             closure = store.load_closure(self._root, mission_id)
             plan = (store.load_plan(self._root, mission_id)
                     if store.plan_exists(self._root, mission_id) else None)
+            status_document = recovery.load_identity_status(mission_root,
+                                                            mission_id)
             return MissionResult(
                 mission=mission, plan=plan, closure=closure,
-                status=obs_store.load_status(mission_root), resumed=True)
-        mission_root = store.mission_root(self._root, mission_id)
+                status=(status_document if status_document is not None
+                        else obs_store.load_status(mission_root)),
+                resumed=True, recovery=decision)
+
+        # A finalized execution is reused as-is; only the human gate and
+        # closure remain (never a second execution cycle).
+        if decision.kind == recovery.RC_EXECUTION_FINALIZED:
+            plan = (store.load_plan(self._root, mission_id)
+                    if store.plan_exists(self._root, mission_id)
+                    else model.build_plan(mission, created_at=self._clock()))
+            status = _status_from_document(
+                obs_store.load_status(mission_root))
+            return self._close(mission_root, mission, plan, status, resumed=True,
+                               decision=decision)
+
         self._emit(
             mission_root, mission_id, kind="MISSION_RESUMED",
             stage=obs_model.STAGE_PREFLIGHT, phase=model.MP_INTAKE,
-            detail={"reason": "operator resume"})
+            detail={"reason": "operator resume",
+                    "recovery_kind": decision.kind,
+                    "resume_point": decision.resume_point})
         return self._run_phases(
             mission_root, mission, resumed=True,
-            interrupt_after_phase=interrupt_after_phase)
+            interrupt_after_phase=interrupt_after_phase,
+            resume_point=decision.resume_point, decision=decision)
 
     # -- phases ----------------------------------------------------------------
 
     def _run_phases(self, mission_root: Path, mission: model.MissionDefinition,
                     *, resumed: bool,
-                    interrupt_after_phase: str | None) -> MissionResult:
+                    interrupt_after_phase: str | None,
+                    resume_point: str = model.MP_INTAKE,
+                    decision: recovery.ResumeDecision | None = None,
+                    ) -> MissionResult:
+        mission_id = mission.mission_id
         # Resume after a finalized execution: reuse the authoritative status so
         # a resume never rewrites a terminal M030 decision with a mission-phase
         # placeholder status. Only the human gate + closure remain.
         if self._execution_finalized(obs_store.load_events(mission_root)):
-            plan = (store.load_plan(self._root, mission.mission_id)
-                    if store.plan_exists(self._root, mission.mission_id)
+            plan = (store.load_plan(self._root, mission_id)
+                    if store.plan_exists(self._root, mission_id)
                     else model.build_plan(mission, created_at=self._clock()))
             status = _status_from_document(
                 obs_store.load_status(mission_root))
-            return self._close(mission_root, mission, plan, status, resumed)
+            return self._close(mission_root, mission, plan, status, resumed,
+                               decision=decision)
 
         # 1. Preflight — knowable errors stop before planning/execution.
-        self._write_phase_status(
-            mission_root, mission, current="PREFLIGHT",
-            next_label="PLAN", state=obs_model.LC_PREFLIGHT,
-            stage=obs_model.STAGE_PREFLIGHT, phase=model.MP_PREFLIGHT,
-            readiness=obs_model.RD_INDETERMINATE)
-        outcome = obs_preflight.preflight(obs_preflight.PreflightRequest(
-            run_id=mission.mission_id, backend=mission.backend,
-            provider=mission.provider, model=mission.model,
-            workspace=mission.workspace,
-            reviewer_model=mission.trust_policy.final_reviewer_model,
-            review_enabled=mission.trust_policy.require_review,
-            telemetry_mode=mission.telemetry_mode))
-        self._emit(
-            mission_root, mission.mission_id, kind="PREFLIGHT_COMPLETED",
-            stage=obs_model.STAGE_PREFLIGHT, phase=model.MP_PREFLIGHT,
-            gate=obs_model.GATE_PREFLIGHT,
-            result=(obs_model.RESULT_PASS if outcome.ok
-                    else obs_model.RESULT_FAIL),
-            detail={"reason": outcome.reason, "detail": outcome.detail,
-                    "checks": [dict(check) for check in outcome.checks]})
-        if not outcome.ok:
-            status = self._write_phase_status(
-                mission_root, mission, current="PREFLIGHT_REJECTED",
-                next_label=None, state=obs_model.LC_COMPLETE,
-                stage=obs_model.STAGE_DONE, phase=model.MP_PREFLIGHT,
-                readiness=obs_model.RD_BLOCKED,
-                previous_gate=obs_model.GATE_PREFLIGHT,
-                previous_result=obs_model.RESULT_FAIL,
-                terminal_reason=outcome.detail,
-                terminal_reason_code=outcome.reason,
-                next_action="operator: fix the invalid configuration and re-run")
-            status_document = status.to_dict()
+        preflight_required = (
+            not resumed
+            or resume_point in (model.MP_INTAKE, model.MP_PREFLIGHT))
+        if not preflight_required:
+            # A safe mid-mission resume requires a durable, identity-consistent
+            # status; otherwise fall back to re-running preflight.
+            existing = recovery.load_identity_status(mission_root, mission_id)
+            preflight_required = existing is None
+        if preflight_required:
+            self._write_phase_status(
+                mission_root, mission, current="PREFLIGHT",
+                next_label="PLAN", state=obs_model.LC_PREFLIGHT,
+                stage=obs_model.STAGE_PREFLIGHT, phase=model.MP_PREFLIGHT,
+                readiness=obs_model.RD_INDETERMINATE)
+            outcome = obs_preflight.preflight(obs_preflight.PreflightRequest(
+                run_id=mission_id, backend=mission.backend,
+                provider=mission.provider, model=mission.model,
+                workspace=mission.workspace,
+                reviewer_model=mission.trust_policy.final_reviewer_model,
+                review_enabled=mission.trust_policy.require_review,
+                telemetry_mode=mission.telemetry_mode))
             self._emit(
-                mission_root, mission.mission_id, kind="MISSION_CLOSED",
-                stage=obs_model.STAGE_DONE, phase=model.MP_CLOSURE,
-                result=obs_model.RESULT_FAIL,
-                detail={"readiness": obs_model.RD_BLOCKED,
-                        "reason": outcome.reason})
-            closure = assembly_closure.build_closure(
-                self._root, mission, plan=None, status=status_document,
-                created_at=self._clock())
-            store.write_closure(self._root, closure)
-            return MissionResult(
-                mission=mission, plan=None, closure=closure,
-                status=status_document, resumed=resumed)
+                mission_root, mission_id, kind="PREFLIGHT_COMPLETED",
+                stage=obs_model.STAGE_PREFLIGHT, phase=model.MP_PREFLIGHT,
+                gate=obs_model.GATE_PREFLIGHT,
+                result=(obs_model.RESULT_PASS if outcome.ok
+                        else obs_model.RESULT_FAIL),
+                detail={"reason": outcome.reason, "detail": outcome.detail,
+                        "checks": [dict(check) for check in outcome.checks]})
+            if not outcome.ok:
+                return self._preflight_rejected(
+                    mission_root, mission, resumed, outcome, decision)
+            if self._stop_requested(mission_id):
+                return self._interrupt(mission_root, mission, plan=None,
+                                       resumed=resumed, phase=model.MP_PREFLIGHT,
+                                       mission_id=mission_id, decision=decision)
 
         # 2. Plan — durable and bounded.
-        if store.plan_exists(self._root, mission.mission_id):
-            plan = store.load_plan(self._root, mission.mission_id)
+        plan_written = False
+        if store.plan_exists(self._root, mission_id):
+            plan = store.load_plan(self._root, mission_id)
         else:
             plan = model.build_plan(mission, created_at=self._clock())
             store.write_plan(self._root, plan)
-        self._emit(
-            mission_root, mission.mission_id, kind="PLAN_PERSISTED",
-            stage=obs_model.STAGE_PREFLIGHT, phase=model.MP_PLAN,
-            detail={"steps": [step.step_id for step in plan.steps],
-                    "retry_budget": plan.retry_budget,
-                    "reviewer_role": plan.reviewer_role})
+            plan_written = True
+        if plan_written:
+            self._emit(
+                mission_root, mission_id, kind="PLAN_PERSISTED",
+                stage=obs_model.STAGE_PREFLIGHT, phase=model.MP_PLAN,
+                detail={"steps": [step.step_id for step in plan.steps],
+                        "retry_budget": plan.retry_budget,
+                        "reviewer_role": plan.reviewer_role})
         self._write_phase_status(
             mission_root, mission, current="PLAN_PERSISTED",
             next_label="EXECUTE", state=obs_model.LC_PENDING,
             stage=obs_model.STAGE_PREFLIGHT, phase=model.MP_PLAN,
             readiness=obs_model.RD_INDETERMINATE)
+        self._checkpoint(mission_root, mission_id)
+        if self._stop_requested(mission_id):
+            return self._interrupt(mission_root, mission, plan, resumed,
+                                   model.MP_PLAN, mission_id=mission_id,
+                                   decision=decision)
         if interrupt_after_phase == model.MP_PLAN:
             return self._interrupt(mission_root, mission, plan, resumed,
-                                   model.MP_PLAN)
+                                   model.MP_PLAN, decision=decision)
 
         # 3. Execution / validation / review / repair (M030, unchanged).
         run_result = self._execute(mission_root, mission, plan)
         status = run_result.status
+        self._checkpoint(mission_root, mission_id)
+        if self._stop_requested(mission_id):
+            return self._interrupt(mission_root, mission, plan, resumed,
+                                   model.MP_EXECUTION,
+                                   status_document=status.to_dict(),
+                                   mission_id=mission_id, decision=decision)
         if interrupt_after_phase == model.MP_EXECUTION:
             return self._interrupt(mission_root, mission, plan, resumed,
                                    model.MP_EXECUTION,
-                                   status_document=status.to_dict())
+                                   status_document=status.to_dict(),
+                                   decision=decision)
 
         # 4. Human gate — defended in depth, then closure evidence.
-        return self._close(mission_root, mission, plan, status, resumed)
+        return self._close(mission_root, mission, plan, status, resumed,
+                           decision=decision)
+
+    def _preflight_rejected(
+        self, mission_root: Path, mission: model.MissionDefinition,
+        resumed: bool, outcome: obs_model.PreflightResult,
+        decision: recovery.ResumeDecision | None,
+    ) -> MissionResult:
+        status = self._write_phase_status(
+            mission_root, mission, current="PREFLIGHT_REJECTED",
+            next_label=None, state=obs_model.LC_COMPLETE,
+            stage=obs_model.STAGE_DONE, phase=model.MP_PREFLIGHT,
+            readiness=obs_model.RD_BLOCKED,
+            previous_gate=obs_model.GATE_PREFLIGHT,
+            previous_result=obs_model.RESULT_FAIL,
+            terminal_reason=outcome.detail,
+            terminal_reason_code=outcome.reason,
+            next_action="operator: fix the invalid configuration and re-run")
+        status_document = status.to_dict()
+        self._emit(
+            mission_root, mission.mission_id, kind="MISSION_CLOSED",
+            stage=obs_model.STAGE_DONE, phase=model.MP_CLOSURE,
+            result=obs_model.RESULT_FAIL,
+            detail={"readiness": obs_model.RD_BLOCKED,
+                    "reason": outcome.reason})
+        closure = assembly_closure.build_closure(
+            self._root, mission, plan=None, status=status_document,
+            created_at=self._clock())
+        store.write_closure(self._root, closure)
+        self._checkpoint(mission_root, mission.mission_id)
+        return MissionResult(
+            mission=mission, plan=None, closure=closure,
+            status=status_document, resumed=resumed, recovery=decision)
 
     def _close(self, mission_root: Path, mission: model.MissionDefinition,
                plan: model.MissionPlan, status: obs_model.CanonicalStatus,
-               resumed: bool) -> MissionResult:
+               resumed: bool,
+               decision: recovery.ResumeDecision | None = None,
+               ) -> MissionResult:
         status, gate_result = self._human_gate(mission_root, mission, plan,
                                                status)
         self._emit(
@@ -314,9 +400,10 @@ class MissionOrchestrator:
             self._root, mission, plan=plan, status=status_document,
             created_at=self._clock())
         store.write_closure(self._root, closure)
+        self._checkpoint(mission_root, mission.mission_id)
         return MissionResult(
             mission=mission, plan=plan, closure=closure,
-            status=status_document, resumed=resumed)
+            status=status_document, resumed=resumed, recovery=decision)
 
     # -- execution -------------------------------------------------------------
 
@@ -331,7 +418,7 @@ class MissionOrchestrator:
                 status=_status_from_document(document), attempts=0,
                 events=len(events), preflight=None,
                 telemetry=closure_telemetry(mission_root))
-        workload = bench_workloads.by_id(mission.workload_id)
+        workload = model.mission_workload(mission)
         config = obs_run.LiveRunConfig(
             run_id=mission.mission_id, root=str(self._root),
             workspace=mission.workspace, backend=mission.backend,
@@ -383,16 +470,34 @@ class MissionOrchestrator:
 
     # -- interruption ----------------------------------------------------------
 
+    def _stop_requested(self, mission_id: str) -> bool:
+        """Read the durable mission-scoped graceful stop latch (fail closed)."""
+        return assembly_control.stop_requested(self._root, mission_id)
+
+    def _checkpoint(self, mission_root: Path, mission_id: str) -> None:
+        """Persist the explicit safe resume point (best effort, read-only)."""
+        try:
+            decision = recovery.detect_resume(self._root, mission_id)
+        except (model.AssemblyError, obs_store.CanonicalStoreError):
+            return
+        recovery.write_recovery_record(self._root, decision)
+
     def _interrupt(self, mission_root: Path,
                    mission: model.MissionDefinition,
-                   plan: model.MissionPlan, resumed: bool,
+                   plan: model.MissionPlan | None, resumed: bool,
                    phase: str,
                    status_document: Mapping[str, Any] | None = None,
+                   mission_id: str | None = None,
+                   decision: recovery.ResumeDecision | None = None,
                    ) -> MissionResult:
+        reason = ("operator graceful stop requested"
+                  if mission_id is not None
+                  and self._stop_requested(mission_id)
+                  else "phase-boundary interruption")
         self._emit(
             mission_root, mission.mission_id, kind="MISSION_INTERRUPTED",
             stage=obs_model.STAGE_PREFLIGHT, phase=phase,
-            detail={"phase": phase,
+            detail={"phase": phase, "reason": reason,
                     "note": "durable evidence retained for resume"})
         if status_document is None:
             status_document = self._write_phase_status(
@@ -401,10 +506,11 @@ class MissionOrchestrator:
                 stage=obs_model.STAGE_PREFLIGHT, phase=phase,
                 readiness=obs_model.RD_INDETERMINATE,
                 next_action="operator: resume the mission").to_dict()
+        self._checkpoint(mission_root, mission.mission_id)
         return MissionResult(
             mission=mission, plan=plan, closure=None,
             status=status_document, resumed=resumed, interrupted=True,
-            interrupt_phase=phase)
+            interrupt_phase=phase, recovery=decision)
 
     # -- durable canonical status (M030 contract) ------------------------------
 

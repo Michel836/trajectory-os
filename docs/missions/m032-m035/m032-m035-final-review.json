@@ -1,0 +1,29 @@
+{
+  "assessment": {
+    "blockers": [],
+    "blocking_count": 0,
+    "classification_id": "41b375dc3d6235474a2950e4adb1174870f1fe61d073748bddbe01918c277c5c",
+    "majors": [],
+    "minors": [
+      "`acceptance.py` case 8 (`_case_stale_review`) calls the private `orchestrator._human_gate()` directly (suppressed with `# noqa: SLF001`). This is a minor encapsulation smell; a public test seam or a dedicated gate-verification helper would be more robust against refactoring.",
+      "`cli.py` `_cmd_control_log` performs a redundant `store.mission_exists()` check before calling `assembly_control.control_log()`, which itself constructs the path and returns `[]` if the file is absent. The CLI-level check is the correct guard (it raises a typed error), but the duplication is slightly noisy.",
+      "`orchestrator._checkpoint()` calls `recovery.detect_resume()` (which loads all events and status) at every phase boundary. For very long missions with large event logs this is a non-trivial read cost on the hot path. It is best-effort and bounded, so it is acceptable, but worth noting for future performance tuning.",
+      "`scripts/mission032_035_bundle_evidence.py` `trust_boundary_scan()` only checks for the literal pattern `\"git\", \"<verb>\"` / `'git', '<verb>'`. A more robust scan (e.g., regex for `subprocess.*git` or AST-based detection) would catch indirect invocations, though the existing `test_control_surface_has_no_git_or_process_writes` unit test provides a complementary guard."
+    ],
+    "outcome": "VALID_PASS",
+    "permits_commit": true,
+    "reason": "PASS_GO_COMMIT_NO_BLOCKING_FINDINGS",
+    "recommendation": "GO_COMMIT",
+    "schema_version": 1,
+    "valid": true,
+    "verdict": "PASS"
+  },
+  "generated_at": "2026-09-19T13:04:11Z",
+  "post_review_patch_sha256": "a7699825fd047be084dc6b9b05d82454941ada86479e813caf6174a43fe1b322",
+  "prompt_bytes": 179250,
+  "raw_response": "VERDICT: PASS\nBLOCKERS:\n- none\nMAJORS:\n- none\nMINORS:\n- `acceptance.py` case 8 (`_case_stale_review`) calls the private `orchestrator._human_gate()` directly (suppressed with `# noqa: SLF001`). This is a minor encapsulation smell; a public test seam or a dedicated gate-verification helper would be more robust against refactoring.\n- `cli.py` `_cmd_control_log` performs a redundant `store.mission_exists()` check before calling `assembly_control.control_log()`, which itself constructs the path and returns `[]` if the file is absent. The CLI-level check is the correct guard (it raises a typed error), but the duplication is slightly noisy.\n- `orchestrator._checkpoint()` calls `recovery.detect_resume()` (which loads all events and status) at every phase boundary. For very long missions with large event logs this is a non-trivial read cost on the hot path. It is best-effort and bounded, so it is acceptable, but worth noting for future performance tuning.\n- `scripts/mission032_035_bundle_evidence.py` `trust_boundary_scan()` only checks for the literal pattern `\"git\", \"<verb>\"` / `'git', '<verb>'`. A more robust scan (e.g., regex for `subprocess.*git` or AST-based detection) would catch indirect invocations, though the existing `test_control_surface_has_no_git_or_process_writes` unit test provides a complementary guard.\nFINAL RECOMMENDATION: GO COMMIT",
+  "reviewed_patch_bytes": 178272,
+  "reviewed_patch_sha256": "a7699825fd047be084dc6b9b05d82454941ada86479e813caf6174a43fe1b322",
+  "reviewed_patch_still_current": true,
+  "reviewer_model": "qwen3.8:27b-q4_K_M"
+}

@@ -258,6 +258,32 @@ class WorkloadSpec:
             "protected_paths": list(self.protected_paths),
         }
 
+    @staticmethod
+    def from_dict(data: Mapping[str, Any]) -> WorkloadSpec:
+        """Rebuild a validated workload from its durable document."""
+        if not isinstance(data, Mapping):
+            _fail("MALFORMED_WORKLOAD", "workload must be an object")
+        command = data.get("validation_command")
+        if not isinstance(command, Sequence) or isinstance(
+                command, (str, bytes)):
+            _fail("MALFORMED_WORKLOAD", "validation_command required")
+        fixture = data.get("fixture", {})
+        fixture = fixture if isinstance(fixture, Mapping) else {}
+        return WorkloadSpec(
+            workload_id=str(data["workload_id"]),
+            workload_class=str(data["workload_class"]),
+            title=str(data.get("title", "")),
+            objective=str(data["objective"]),
+            validation_command=tuple(str(part) for part in command),
+            expect_pass=bool(data.get("expect_pass", True)),
+            interrupt=bool(data.get("interrupt", False)),
+            fixture={str(k): str(v) for k, v in fixture.items()},
+            descriptive_files=tuple(
+                str(x) for x in data.get("descriptive_files", ())),
+            protected_paths=tuple(
+                str(x) for x in data.get("protected_paths", ())),
+        ).validate()
+
 
 # --- reviewer identity --------------------------------------------------------
 

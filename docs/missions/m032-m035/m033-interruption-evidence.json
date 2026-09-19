@@ -1,0 +1,158 @@
+{
+  "checks": [
+    {
+      "description": "implementation phase observed before the kill",
+      "ok": true,
+      "scenario": "SIGKILL"
+    },
+    {
+      "description": "canonical evidence loads after the kill",
+      "ok": true,
+      "scenario": "SIGKILL"
+    },
+    {
+      "description": "no closure exists after the kill",
+      "ok": true,
+      "scenario": "SIGKILL"
+    },
+    {
+      "description": "resume keeps the identical mission_id",
+      "ok": true,
+      "scenario": "SIGKILL"
+    },
+    {
+      "description": "append-only prior evidence survives",
+      "ok": true,
+      "scenario": "SIGKILL"
+    },
+    {
+      "description": "resume reaches READY_FOR_COMMIT",
+      "ok": true,
+      "scenario": "SIGKILL"
+    },
+    {
+      "description": "no duplicate READY_FOR_COMMIT transition",
+      "ok": true,
+      "scenario": "SIGKILL"
+    },
+    {
+      "description": "repeated resume after terminal is idempotent",
+      "ok": true,
+      "scenario": "SIGKILL"
+    },
+    {
+      "description": "implementation phase observed before the kill",
+      "ok": true,
+      "scenario": "SIGTERM"
+    },
+    {
+      "description": "canonical evidence loads after the kill",
+      "ok": true,
+      "scenario": "SIGTERM"
+    },
+    {
+      "description": "no closure exists after the kill",
+      "ok": true,
+      "scenario": "SIGTERM"
+    },
+    {
+      "description": "resume keeps the identical mission_id",
+      "ok": true,
+      "scenario": "SIGTERM"
+    },
+    {
+      "description": "append-only prior evidence survives",
+      "ok": true,
+      "scenario": "SIGTERM"
+    },
+    {
+      "description": "resume reaches READY_FOR_COMMIT",
+      "ok": true,
+      "scenario": "SIGTERM"
+    },
+    {
+      "description": "no duplicate READY_FOR_COMMIT transition",
+      "ok": true,
+      "scenario": "SIGTERM"
+    },
+    {
+      "description": "repeated resume after terminal is idempotent",
+      "ok": true,
+      "scenario": "SIGTERM"
+    }
+  ],
+  "generated_at": "2026-09-19T12:40:50Z",
+  "mission": "M033",
+  "results": {
+    "SIGKILL": {
+      "child_exit_code": -9,
+      "closure_absent_after_kill": true,
+      "current_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+      "events_after_resume": 12,
+      "events_before_resume": 4,
+      "evidence_loadable_after_kill": true,
+      "lifecycle_after_resume": "COMPLETE",
+      "no_duplicate_ready_transition": true,
+      "observed_implementing_marker": true,
+      "prior_evidence_preserved": true,
+      "readiness_after_resume": "READY_FOR_COMMIT",
+      "ready_for_commit_transitions": 1,
+      "repeated_resume_byte_idempotent": true,
+      "resume_exit_code": 0,
+      "resume_point": {
+        "events": 4,
+        "execution_finalized": false,
+        "idempotent": false,
+        "kind": "RESUME_EXECUTION",
+        "lifecycle": "IMPLEMENTING",
+        "mission_id": "m033-sigkill",
+        "readiness": "INDETERMINATE",
+        "reason": "durable plan present; resume at execution",
+        "resume_point": "EXECUTION",
+        "terminal": false
+      },
+      "resume_stderr": "",
+      "reviewed_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+      "same_mission_id": true,
+      "second_resume_exit_code": 0,
+      "signal": "SIGKILL",
+      "status_before_resume": "IMPLEMENTING"
+    },
+    "SIGTERM": {
+      "child_exit_code": -15,
+      "closure_absent_after_kill": true,
+      "current_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+      "events_after_resume": 12,
+      "events_before_resume": 4,
+      "evidence_loadable_after_kill": true,
+      "lifecycle_after_resume": "COMPLETE",
+      "no_duplicate_ready_transition": true,
+      "observed_implementing_marker": true,
+      "prior_evidence_preserved": true,
+      "readiness_after_resume": "READY_FOR_COMMIT",
+      "ready_for_commit_transitions": 1,
+      "repeated_resume_byte_idempotent": true,
+      "resume_exit_code": 0,
+      "resume_point": {
+        "events": 4,
+        "execution_finalized": false,
+        "idempotent": false,
+        "kind": "RESUME_EXECUTION",
+        "lifecycle": "IMPLEMENTING",
+        "mission_id": "m033-sigterm",
+        "readiness": "INDETERMINATE",
+        "reason": "durable plan present; resume at execution",
+        "resume_point": "EXECUTION",
+        "terminal": false
+      },
+      "resume_stderr": "",
+      "reviewed_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+      "same_mission_id": true,
+      "second_resume_exit_code": 0,
+      "signal": "SIGTERM",
+      "status_before_resume": "IMPLEMENTING"
+    }
+  },
+  "root": ".artifacts/m032-m035/m033",
+  "status": "PASS"
+}

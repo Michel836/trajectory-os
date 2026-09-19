@@ -41,7 +41,7 @@ from trajectory_os.observability import model as obs_model
 SCHEMA_VERSION = 1
 
 #: Human/machine assembly version string (additive).
-ASSEMBLY_VERSION = "m031.1"
+ASSEMBLY_VERSION = "m035.1"
 
 # --- mission phases (closed set) ---------------------------------------------
 
@@ -78,6 +78,11 @@ R_HUMAN_GATE_VIOLATION = "HUMAN_GATE_VIOLATION"
 R_STALE_REVIEW = "STALE_REVIEW"
 R_NO_ACTIVE_REVIEWER = "NO_ACTIVE_REVIEWER"
 R_MALFORMED = "MALFORMED_MISSION_DOCUMENT"
+R_STALE_STATE = "STALE_STATE"
+R_INCOMPLETE_STATE = "INCOMPLETE_STATE"
+R_IDENTITY_MISMATCH = "IDENTITY_MISMATCH"
+R_CONTROL_REFUSED = "CONTROL_REFUSED"
+R_CONTROL_UNSUPPORTED = "CONTROL_UNSUPPORTED"
 
 #: Mission ids follow the same filesystem-safe discipline as canonical runs.
 MISSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -231,6 +236,7 @@ class MissionDefinition:
     timeout_s: int = 600
     schema_version: int = SCHEMA_VERSION
     assembly_version: str = ASSEMBLY_VERSION
+    workload: Mapping[str, Any] | None = None
 
     def validate(self) -> MissionDefinition:
         if not isinstance(self.mission_id, str) or not (
@@ -265,8 +271,16 @@ class MissionDefinition:
             _fail(R_INVALID_MISSION, "workspace required")
         if not self.workload_id:
             _fail(R_INVALID_MISSION, "workload_id required")
-        # Fail closed on an unknown workload *at intake*.
-        bench_workloads.by_id(self.workload_id)
+        # Fail closed on an unknown workload *at intake*: an embedded custom
+        # workload is validated verbatim, otherwise the canonical registry is
+        # the single authority.
+        if self.workload is not None:
+            embedded = bench_model.WorkloadSpec.from_dict(self.workload)
+            if embedded.workload_id != self.workload_id:
+                _fail(R_INVALID_MISSION,
+                      "embedded workload_id does not match mission")
+        else:
+            bench_workloads.by_id(self.workload_id)
         self.trust_policy.validate()
         self.baseline.validate()
         return self
@@ -294,6 +308,8 @@ class MissionDefinition:
             "telemetry_mode": self.telemetry_mode,
             "created_at": self.created_at,
             "timeout_s": self.timeout_s,
+            "workload": (None if self.workload is None
+                         else dict(self.workload)),
         }
 
     @staticmethod
@@ -327,6 +343,9 @@ class MissionDefinition:
                 schema_version=int(data.get("schema_version", SCHEMA_VERSION)),
                 assembly_version=str(data.get("assembly_version",
                                             ASSEMBLY_VERSION)),
+                workload=(dict(data["workload"])
+                          if isinstance(data.get("workload"), Mapping)
+                          else None),
             ).validate()
         except KeyError as exc:
             _fail(R_MALFORMED, f"missing field {exc}")
@@ -458,6 +477,15 @@ class MissionPlan:
             _fail(R_MALFORMED, f"{type(exc).__name__}: {exc}")
 
 
+def mission_workload(
+    mission: MissionDefinition,
+) -> bench_model.WorkloadSpec:
+    """Resolve the workload for one mission (embedded custom, else registry)."""
+    if mission.workload is not None:
+        return bench_model.WorkloadSpec.from_dict(mission.workload)
+    return bench_workloads.by_id(mission.workload_id)
+
+
 def build_plan(mission: MissionDefinition, *, created_at: str | None = None,
                ) -> MissionPlan:
     """Deterministically build the bounded plan for one mission (pure).
@@ -465,7 +493,7 @@ def build_plan(mission: MissionDefinition, *, created_at: str | None = None,
     The plan references the canonical workload validation command and the
     mission's backend intent; it never duplicates a backend abstraction.
     """
-    workload = bench_workloads.by_id(mission.workload_id)
+    workload = mission_workload(mission)
     gate = " ".join(workload.validation_command)
     reviewer_role = (obs_model.ROLE_FINAL_INDEPENDENT_REVIEWER
                      if mission.trust_policy.require_review else "")
@@ -668,6 +696,8 @@ __all__ = [
     "MP_REVIEW",
     "MP_VALIDATION",
     "R_HUMAN_GATE_VIOLATION",
+    "R_IDENTITY_MISMATCH",
+    "R_INCOMPLETE_STATE",
     "R_INVALID_MISSION",
     "R_INVALID_POLICY",
     "R_MALFORMED",
@@ -676,6 +706,7 @@ __all__ = [
     "R_NO_ACTIVE_REVIEWER",
     "R_OK",
     "R_STALE_REVIEW",
+    "R_STALE_STATE",
     "R_UNBOUNDED_PLAN",
     "SCHEMA_VERSION",
     "AssemblyError",
@@ -687,5 +718,6 @@ __all__ = [
     "TrustPolicy",
     "build_plan",
     "generate_mission_id",
+    "mission_workload",
     "utc_now",
 ]
