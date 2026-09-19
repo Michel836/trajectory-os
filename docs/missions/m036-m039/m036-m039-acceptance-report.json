@@ -1,0 +1,340 @@
+{
+  "cases": [
+    {
+      "case": "1",
+      "checks": [
+        {
+          "case": "1",
+          "description": "READY_FOR_COMMIT produces a deterministic handoff",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "1",
+          "description": "handoff records branch, baseline and HEAD",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "1",
+          "description": "commit handoff is deterministic in content",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "1",
+          "description": "handoff artifact persists and is self-consistent",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "READY_FOR_COMMIT -> deterministic commit handoff"
+    },
+    {
+      "case": "2",
+      "checks": [
+        {
+          "case": "2",
+          "description": "a stale patch blocks GO COMMIT",
+          "detail": {
+            "code": "READINESS_CHANGED"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Stale patch blocks GO COMMIT"
+    },
+    {
+      "case": "3",
+      "checks": [
+        {
+          "case": "3",
+          "description": "a moved HEAD blocks GO COMMIT",
+          "detail": {
+            "code": "HEAD_MOVED"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Moved HEAD blocks GO COMMIT"
+    },
+    {
+      "case": "4",
+      "checks": [
+        {
+          "case": "4",
+          "description": "a moved branch blocks GO COMMIT",
+          "detail": {
+            "code": "BRANCH_MOVED"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Wrong branch blocks GO COMMIT"
+    },
+    {
+      "case": "5",
+      "checks": [
+        {
+          "case": "5",
+          "description": "authorized commit/push records the exact commit SHA",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "5",
+          "description": "commit result binds the reviewed semantic patch",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "5",
+          "description": "unauthorized commit is refused before any Git write",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Authorized commit/push records the exact commit SHA"
+    },
+    {
+      "case": "6",
+      "checks": [
+        {
+          "case": "6",
+          "description": "exactly one PR is bound to the exact head SHA",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "6",
+          "description": "repeated PR binding is idempotent",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "PR bound to the exact head SHA"
+    },
+    {
+      "case": "7",
+      "checks": [
+        {
+          "case": "7",
+          "description": "queued exact-head CI blocks merge",
+          "detail": {
+            "code": "EXACT_HEAD_CI_NOT_GREEN",
+            "state": "queued"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Queued CI blocks merge"
+    },
+    {
+      "case": "8",
+      "checks": [
+        {
+          "case": "8",
+          "description": "in-progress exact-head CI blocks merge",
+          "detail": {
+            "code": "EXACT_HEAD_CI_NOT_GREEN",
+            "state": "in_progress"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "In-progress CI blocks merge"
+    },
+    {
+      "case": "9",
+      "checks": [
+        {
+          "case": "9",
+          "description": "failed exact-head CI blocks merge",
+          "detail": {
+            "code": "EXACT_HEAD_CI_NOT_GREEN",
+            "state": "failure"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Failed CI blocks merge"
+    },
+    {
+      "case": "10",
+      "checks": [
+        {
+          "case": "10",
+          "description": "cancelled exact-head CI blocks merge",
+          "detail": {
+            "code": "EXACT_HEAD_CI_NOT_GREEN",
+            "state": "cancelled"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Cancelled CI blocks merge"
+    },
+    {
+      "case": "11",
+      "checks": [
+        {
+          "case": "11",
+          "description": "missing exact-head CI blocks merge",
+          "detail": {
+            "code": "EXACT_HEAD_CI_NOT_GREEN",
+            "state": "missing"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Missing CI blocks merge"
+    },
+    {
+      "case": "12",
+      "checks": [
+        {
+          "case": "12",
+          "description": "a moved PR head blocks merge",
+          "detail": {
+            "code": "PULL_REQUEST_HEAD_MOVED"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Moved PR head blocks merge"
+    },
+    {
+      "case": "13",
+      "checks": [
+        {
+          "case": "13",
+          "description": "green exact-head CI + explicit GO MERGE permits merge",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "13",
+          "description": "unauthorized merge is refused",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Green exact-head CI + explicit GO MERGE permits merge"
+    },
+    {
+      "case": "14",
+      "checks": [
+        {
+          "case": "14",
+          "description": "target branch is verified after merge",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Target branch verification after merge"
+    },
+    {
+      "case": "15",
+      "checks": [
+        {
+          "case": "15",
+          "description": "closure links mission/patch/commit/PR/CI/merge",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "15",
+          "description": "closure records the GO COMMIT and GO MERGE gates",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Release closure links mission/patch/commit/PR/CI/merge"
+    },
+    {
+      "case": "16",
+      "checks": [
+        {
+          "case": "16",
+          "description": "watch/status/reconstruct are read-only",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Status/watch/reconstruct are read-only"
+    },
+    {
+      "case": "17",
+      "checks": [
+        {
+          "case": "17",
+          "description": "repeated release reconstruction is idempotent",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Repeated release reconstruction is idempotent"
+    },
+    {
+      "case": "18",
+      "checks": [
+        {
+          "case": "18",
+          "description": "non-release modules never perform a Git trust-boundary write",
+          "detail": {
+            "offenders": []
+          },
+          "ok": true
+        },
+        {
+          "case": "18",
+          "description": "agent actor cannot mint a release authorization",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "18",
+          "description": "the unauthorized sentinel never validates",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "18",
+          "description": "runtime control remains release-write free",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Agent/runtime-control trust boundary remains intact"
+    }
+  ],
+  "generated_at": "2026-09-19T14:22:09Z",
+  "root": ".artifacts/m036-m039/bundle/acceptance",
+  "schema": "trajectory-release-acceptance/m039.1",
+  "status": "PASS",
+  "summary": {
+    "cases": 18,
+    "checks": 29,
+    "passed_cases": 18,
+    "passed_checks": 29
+  },
+  "version": "m039.1"
+}

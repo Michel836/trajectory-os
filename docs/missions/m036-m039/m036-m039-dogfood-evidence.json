@@ -1,0 +1,181 @@
+{
+  "authorized_commit_sha": "b3ce420a361fe89709ef5bcfa728d1db906177f0",
+  "base_branch": "main",
+  "ci": {
+    "green": true,
+    "head_sha": "b3ce420a361fe89709ef5bcfa728d1db906177f0",
+    "state": "success"
+  },
+  "closure": {
+    "ci_status": "success",
+    "commit_sha": "b3ce420a361fe89709ef5bcfa728d1db906177f0",
+    "issue_closure": {
+      "issue": "238",
+      "relation": "closes",
+      "source": "operator"
+    },
+    "merge_sha": "084bef554b93a29c52d64b53875938157b87410c",
+    "pr_number": 1,
+    "reviewed_patch_sha256": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+    "status": "CLOSED",
+    "target_branch_verified": true
+  },
+  "commit": {
+    "authorization": {
+      "action": "GO_COMMIT",
+      "actor": "operator",
+      "explicit": true,
+      "issued_at": "2026-09-19T14:16:28Z",
+      "token_digest": "e53c54eac6b8cc5241b24e06554e961d1d9574602bd250238326343a6d2e09e3"
+    },
+    "commit_sha": "b3ce420a361fe89709ef5bcfa728d1db906177f0",
+    "pushed_sha": "b3ce420a361fe89709ef5bcfa728d1db906177f0"
+  },
+  "generated_at": "2026-09-19T14:16:30Z",
+  "github_read_only_probe": {
+    "attempted": true,
+    "available": true,
+    "exact_head_ci": "success",
+    "exact_head_ci_runs": 1,
+    "head_sha": "f98113ec5264e67289e75d098d26c77aff10ead7",
+    "slug": "Michel836/trajectory-os",
+    "write_operations": "none (read-only liveness probe)"
+  },
+  "handoff": {
+    "baseline_head": "f98113ec5264e67289e75d098d26c77aff10ead7",
+    "branch": "release/m036-m039-dogfood",
+    "current_head": "b35c978866bbc3f84f1ca283f9e020a1a011739d",
+    "gate": "GO_COMMIT",
+    "patch_sha256": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1"
+  },
+  "merge": {
+    "merge_sha": "084bef554b93a29c52d64b53875938157b87410c",
+    "method": "squash",
+    "target_branch": "main",
+    "verified": true
+  },
+  "merge_handoff": {
+    "ci_state": "success",
+    "gate": "GO_MERGE",
+    "merge_method": "squash",
+    "pr_number": 1,
+    "release_commit_sha": "b3ce420a361fe89709ef5bcfa728d1db906177f0"
+  },
+  "mission_id": "m036-m039-dogfood",
+  "pr": {
+    "base_branch": "main",
+    "base_sha": "b3ce420a361fe89709ef5bcfa728d1db906177f0",
+    "head_sha": "b3ce420a361fe89709ef5bcfa728d1db906177f0",
+    "number": 1
+  },
+  "release_events": [
+    {
+      "action": "GO_COMMIT",
+      "at": "2026-09-19T14:16:28Z",
+      "branch": "release/m036-m039-dogfood",
+      "current_head": "b35c978866bbc3f84f1ca283f9e020a1a011739d",
+      "mission_id": "m036-m039-dogfood",
+      "patch_sha256": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+      "result": "HANDOFF_READY"
+    },
+    {
+      "action": "GO_COMMIT",
+      "at": "2026-09-19T14:16:28Z",
+      "authorization": {
+        "action": "GO_COMMIT",
+        "actor": "operator",
+        "explicit": true,
+        "issued_at": "2026-09-19T14:16:28Z",
+        "token_digest": "e53c54eac6b8cc5241b24e06554e961d1d9574602bd250238326343a6d2e09e3"
+      },
+      "commit_sha": "b3ce420a361fe89709ef5bcfa728d1db906177f0",
+      "mission_id": "m036-m039-dogfood",
+      "remote": "origin",
+      "result": "COMMITTED"
+    },
+    {
+      "action": "BIND_PR",
+      "at": "2026-09-19T14:16:28Z",
+      "created": true,
+      "mission_id": "m036-m039-dogfood",
+      "pr_head_sha": "b3ce420a361fe89709ef5bcfa728d1db906177f0",
+      "pr_number": 1,
+      "result": "PR_BOUND"
+    },
+    {
+      "action": "GO_MERGE",
+      "at": "2026-09-19T14:16:28Z",
+      "ci_state": "success",
+      "mission_id": "m036-m039-dogfood",
+      "pr_number": 1,
+      "release_commit_sha": "b3ce420a361fe89709ef5bcfa728d1db906177f0",
+      "result": "HANDOFF_READY"
+    },
+    {
+      "action": "GO_MERGE",
+      "at": "2026-09-19T14:16:28Z",
+      "authorization": {
+        "action": "GO_MERGE",
+        "actor": "operator",
+        "explicit": true,
+        "issued_at": "2026-09-19T14:16:28Z",
+        "token_digest": "e53c54eac6b8cc5241b24e06554e961d1d9574602bd250238326343a6d2e09e3"
+      },
+      "merge_sha": "084bef554b93a29c52d64b53875938157b87410c",
+      "mission_id": "m036-m039-dogfood",
+      "result": "MERGED",
+      "target_branch": "main",
+      "target_verified": true
+    },
+    {
+      "action": "RELEASE_CLOSURE",
+      "at": "2026-09-19T14:16:28Z",
+      "merge_sha": "084bef554b93a29c52d64b53875938157b87410c",
+      "mission_id": "m036-m039-dogfood",
+      "result": "CLOSED",
+      "target_branch_verified": true
+    }
+  ],
+  "release_root": "/home/chu/Projects/trajectory-os/.artifacts/m036-m039/dogfood",
+  "release_state": {
+    "base_branch": "main",
+    "branch": "release/m036-m039-dogfood",
+    "ci_state": "success",
+    "commit_sha": "b3ce420a361fe89709ef5bcfa728d1db906177f0",
+    "merge_sha": "084bef554b93a29c52d64b53875938157b87410c",
+    "mission_id": "m036-m039-dogfood",
+    "pr_head_sha": "b3ce420a361fe89709ef5bcfa728d1db906177f0",
+    "pr_number": 1,
+    "reason": "OK",
+    "release_version": "m039.1",
+    "schema_version": 1,
+    "stage": "RELEASED",
+    "updated_at": "2026-09-19T14:16:28Z"
+  },
+  "remote": "/home/chu/Projects/trajectory-os/.artifacts/m036-m039/dogfood/remote.git",
+  "remote_branch": "release/m036-m039-dogfood",
+  "remote_branch_head": "b3ce420a361fe89709ef5bcfa728d1db906177f0",
+  "remote_push_verified": true,
+  "repo": "/home/chu/Projects/trajectory-os/.artifacts/m036-m039/dogfood/repo",
+  "review_gate": {
+    "attempts": 1,
+    "current_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+    "final_review_enabled": true,
+    "final_reviewer_active": true,
+    "final_reviewer_model": "qwen3.8:27b-q4_K_M",
+    "fresh_review": true,
+    "lifecycle": "COMPLETE",
+    "mission_id": "m036-m039-dogfood",
+    "readiness": "READY_FOR_COMMIT",
+    "ready": true,
+    "reason": "OK",
+    "repairs": 0,
+    "require_review": true,
+    "review_at": "2026-09-19T14:16:28Z",
+    "review_outcome": "VALID_PASS",
+    "review_reason": "PASS_GO_COMMIT_NO_BLOCKING_FINDINGS",
+    "reviewed_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+    "run_id": "m036-m039-dogfood",
+    "semantic_patch_identity": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1"
+  }
+}

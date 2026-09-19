@@ -303,6 +303,52 @@ objective, mission ids, patch identities, telemetry and terminal readiness are
 recorded there. See
 `docs/adr/ADR-023-mission-operator-control-recovery-acceptance.md`.
 
+## Human-gated release bundle (M036-M039)
+
+M036-M039 add the missing operator-authorized release segment after
+`READY_FOR_COMMIT`, without ever letting implementation, review or
+runtime-control components write to Git:
+
+    scripts/trajectory-release handoff       --mission-id MISSION_ID
+    scripts/trajectory-release go-commit     --mission-id MISSION_ID --authorize-commit TOKEN
+    scripts/trajectory-release bind-pr       --mission-id MISSION_ID
+    scripts/trajectory-release watch-ci      --mission-id MISSION_ID
+    scripts/trajectory-release merge-handoff --mission-id MISSION_ID
+    scripts/trajectory-release go-merge      --mission-id MISSION_ID --authorize-merge TOKEN
+    scripts/trajectory-release closure       --mission-id MISSION_ID --issue 238
+    scripts/trajectory-release reconstruct   --mission-id MISSION_ID
+    scripts/trajectory-release acceptance    --out acceptance.json
+
+* `handoff` emits a deterministic GO COMMIT handoff bound to the exact
+  reviewed semantic patch SHA-256 (branch, baseline HEAD, proposed commit
+  message and scope summary); it performs no Git write;
+* `go-commit` rechecks readiness/branch/HEAD/patch/review freshness
+  immediately before staging/committing/pushing and requires an explicit
+  operator authorization token; a moved branch/HEAD, a stale patch or an
+  unauthorized actor fails closed;
+* `bind-pr` creates or discovers exactly one pull request bound to the exact
+  commit SHA; `watch-ci` queries CI ONLY for that exact head SHA and
+  distinguishes queued / in_progress / success / failure / cancelled /
+  missing (no branch-name-only trust); repeated status/watch are read-only
+  and byte-idempotent;
+* `merge-handoff` requires PR-open + mergeable + exact PR head + fresh
+  exact-head CI success; `go-merge` rechecks and merges only after an explicit
+  operator authorization, with expected-head protection and the default
+  `squash` method (no background or auto-merge);
+* `closure` records `release-closure.json`, linking objective, mission
+  identity, reviewed/final patch SHA-256, commit SHA, remote branch, PR
+  number, base SHA, exact PR head, CI workflow/run/status/conclusion, the GO
+  COMMIT and GO MERGE gate evidence, merge SHA, target-branch verification
+  and issue closure; `reconstruct` rebuilds the chain read-only and
+  idempotently;
+* the deterministic M036-M039 acceptance matrix (18 cases) proves every
+  fail-closed gate with a real local Git repository and a fixture GitHub
+  adapter; a separate read-only real-GitHub probe provides dogfood evidence
+  without mutating anything remotely.
+
+Durable evidence lives under `docs/missions/m036-m039/`. See
+`docs/adr/ADR-024-human-gated-release-bundle.md`.
+
 ## Current status
 
 TrajectoryOS is under active experimental development.
