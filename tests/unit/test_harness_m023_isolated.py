@@ -152,8 +152,13 @@ def test_identity_probe_missing_environment() -> None:
 def test_isolated_factory_injects_sdk_facts(tmp_path: Path) -> None:
     root = _make_env(tmp_path / "sdk")
     env = hq.resolve_environment(root=str(root), which=lambda _: None)
-    backend: Any = hq.isolated_backend_factory(env)(
-        model.BACKEND_DEEPSEEK_HARNESS)
+    # This factory test verifies SDK fact injection, not the developer or
+    # CI runner credential environment.  Inject the credential seam explicitly
+    # so the assertion remains deterministic on clean GitHub runners.
+    backend: Any = hq.isolated_backend_factory(
+        env,
+        credentials_present=lambda: True,
+    )(model.BACKEND_DEEPSEEK_HARNESS)
     assert isinstance(backend, AgentBackend)
     probe = backend.probe()
     assert probe.available is True
