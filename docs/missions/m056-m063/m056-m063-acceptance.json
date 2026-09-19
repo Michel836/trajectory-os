@@ -1,0 +1,571 @@
+{
+  "cases": [
+    {
+      "case_id": "D01",
+      "category": "DATASET",
+      "description": "deterministic extraction reproduces dataset id",
+      "detail": "5538705fadf18fbd",
+      "passed": true
+    },
+    {
+      "case_id": "D02",
+      "category": "DATASET",
+      "description": "every row carries a canonical source reference",
+      "detail": "120 rows",
+      "passed": true
+    },
+    {
+      "case_id": "D03",
+      "category": "DATASET",
+      "description": "every value carries a provenance label",
+      "detail": "provenance per field",
+      "passed": true
+    },
+    {
+      "case_id": "D04",
+      "category": "DATASET",
+      "description": "UNAVAILABLE always carries a reason",
+      "detail": "1500 unavailable values",
+      "passed": true
+    },
+    {
+      "case_id": "D05",
+      "category": "DATASET",
+      "description": "quality report reports missingness per field",
+      "detail": "34 fields",
+      "passed": true
+    },
+    {
+      "case_id": "D06",
+      "category": "DATASET",
+      "description": "fixture rows are never labelled as real history",
+      "detail": "real=0 fixture=120",
+      "passed": true
+    },
+    {
+      "case_id": "D07",
+      "category": "DATASET",
+      "description": "unsupported schema version is rejected",
+      "detail": "schema fail-closed",
+      "passed": true
+    },
+    {
+      "case_id": "D08",
+      "category": "DATASET",
+      "description": "split prevents group leakage",
+      "detail": "no group spans two splits",
+      "passed": true
+    },
+    {
+      "case_id": "D09",
+      "category": "DATASET",
+      "description": "split is reproducible for a fixed seed",
+      "detail": "same seed -> same split",
+      "passed": true
+    },
+    {
+      "case_id": "D10",
+      "category": "DATASET",
+      "description": "extraction is read-only over canonical sources",
+      "detail": "720 source files unchanged",
+      "passed": true
+    },
+    {
+      "case_id": "M01",
+      "category": "ML",
+      "description": "duration baseline trains",
+      "detail": "TRAINED",
+      "passed": true
+    },
+    {
+      "case_id": "M02",
+      "category": "ML",
+      "description": "duration beats the naive mean baseline (MAE)",
+      "detail": "mae=133.453 vs baseline=1057.639",
+      "passed": true
+    },
+    {
+      "case_id": "M03",
+      "category": "ML",
+      "description": "success baseline trains",
+      "detail": "TRAINED",
+      "passed": true
+    },
+    {
+      "case_id": "M04",
+      "category": "ML",
+      "description": "success model improves ranking over naive baseline",
+      "detail": "auc=0.734 vs baseline=0.500",
+      "passed": true
+    },
+    {
+      "case_id": "M05",
+      "category": "ML",
+      "description": "blocked baseline trains",
+      "detail": "TRAINED",
+      "passed": true
+    },
+    {
+      "case_id": "M06",
+      "category": "ML",
+      "description": "repairs baseline trains",
+      "detail": "TRAINED",
+      "passed": true
+    },
+    {
+      "case_id": "M07",
+      "category": "ML",
+      "description": "cost target reports INSUFFICIENT_DATA when absent",
+      "detail": "no labelled rows for this target",
+      "passed": true
+    },
+    {
+      "case_id": "M08",
+      "category": "ML",
+      "description": "probability calibration is reported",
+      "detail": "Platt calibration bins present",
+      "passed": true
+    },
+    {
+      "case_id": "M09",
+      "category": "ML",
+      "description": "reported probabilities lie in [0, 1]",
+      "detail": "probability bounds",
+      "passed": true
+    },
+    {
+      "case_id": "M10",
+      "category": "ML",
+      "description": "feature importance is reported",
+      "detail": "non-empty importances",
+      "passed": true
+    },
+    {
+      "case_id": "M11",
+      "category": "ML",
+      "description": "model metadata is persisted (id/schema/dataset)",
+      "detail": "model ids present",
+      "passed": true
+    },
+    {
+      "case_id": "M12",
+      "category": "ML",
+      "description": "uncertainty is reported for every trained target",
+      "detail": "uncertainty present",
+      "passed": true
+    },
+    {
+      "case_id": "M13",
+      "category": "ML",
+      "description": "insufficient-data fail-safe returns INSUFFICIENT_DATA",
+      "detail": "only 1 positive / 3 negative rows; 4 of each required",
+      "passed": true
+    },
+    {
+      "case_id": "M14",
+      "category": "ML",
+      "description": "naive baseline comparison is always present",
+      "detail": "baseline metrics",
+      "passed": true
+    },
+    {
+      "case_id": "M15",
+      "category": "ML",
+      "description": "no fabricated statistical significance",
+      "detail": "no significance claims",
+      "passed": true
+    },
+    {
+      "case_id": "M16",
+      "category": "ML",
+      "description": "training report is persisted and reloadable",
+      "detail": "round-trip",
+      "passed": true
+    },
+    {
+      "case_id": "R01",
+      "category": "ROUTING",
+      "description": "candidate routes are explicit",
+      "detail": "2 candidates",
+      "passed": true
+    },
+    {
+      "case_id": "R02",
+      "category": "ROUTING",
+      "description": "comparable-evidence gate is applied",
+      "detail": "2 comparable routes",
+      "passed": true
+    },
+    {
+      "case_id": "R03",
+      "category": "ROUTING",
+      "description": "a recommendation or NO_RECOMMENDATION is emitted",
+      "detail": "RECOMMEND",
+      "passed": true
+    },
+    {
+      "case_id": "R04",
+      "category": "ROUTING",
+      "description": "NO_RECOMMENDATION when evidence is insufficient",
+      "detail": "INSUFFICIENT_COMPARABLE_EVIDENCE",
+      "passed": true
+    },
+    {
+      "case_id": "R05",
+      "category": "ROUTING",
+      "description": "explanation accompanies the recommendation",
+      "detail": "pi/deepseek/deepseek-flash has the highest transparent advis",
+      "passed": true
+    },
+    {
+      "case_id": "R06",
+      "category": "ROUTING",
+      "description": "recommendation is advisory only",
+      "detail": "advisory, no policy mutation",
+      "passed": true
+    },
+    {
+      "case_id": "R07",
+      "category": "ROUTING",
+      "description": "release gates are explicitly unchanged",
+      "detail": "release_gates_unchanged",
+      "passed": true
+    },
+    {
+      "case_id": "R08",
+      "category": "ROUTING",
+      "description": "final reviewer identity is explicit",
+      "detail": "qwen3.8:27b-q4_K_M",
+      "passed": true
+    },
+    {
+      "case_id": "R09",
+      "category": "ROUTING",
+      "description": "Harness remains developer-preview",
+      "detail": "developer-preview",
+      "passed": true
+    },
+    {
+      "case_id": "R10",
+      "category": "ROUTING",
+      "description": "recommendation persists and reloads identically",
+      "detail": "round-trip",
+      "passed": true
+    },
+    {
+      "case_id": "S01",
+      "category": "SCHEDULING",
+      "description": "adaptive score exposes its components",
+      "detail": "3 scored candidates",
+      "passed": true
+    },
+    {
+      "case_id": "S02",
+      "category": "SCHEDULING",
+      "description": "ML mode without predictions falls back to rule",
+      "detail": "deterministic fallback or predictions used",
+      "passed": true
+    },
+    {
+      "case_id": "S03",
+      "category": "SCHEDULING",
+      "description": "rule-based vs ML-assisted comparison reported",
+      "detail": "tau=1.000",
+      "passed": true
+    },
+    {
+      "case_id": "S04",
+      "category": "SCHEDULING",
+      "description": "overlay never commands a release Git write",
+      "detail": "no Git write",
+      "passed": true
+    },
+    {
+      "case_id": "S05",
+      "category": "SCHEDULING",
+      "description": "overlay never mutates the canonical scheduler",
+      "detail": "canonical scheduler authoritative",
+      "passed": true
+    },
+    {
+      "case_id": "S06",
+      "category": "SCHEDULING",
+      "description": "no improvement is claimed without outcomes",
+      "detail": "no executed outcome is attached to this snapshot; an orderin",
+      "passed": true
+    },
+    {
+      "case_id": "S07",
+      "category": "SCHEDULING",
+      "description": "human priority influences a transparent score",
+      "detail": "human priority contribution",
+      "passed": true
+    },
+    {
+      "case_id": "G01",
+      "category": "RAG",
+      "description": "documents carry source identity and content hash",
+      "detail": "3 documents",
+      "passed": true
+    },
+    {
+      "case_id": "G02",
+      "category": "RAG",
+      "description": "chunks carry document and source provenance",
+      "detail": "3 chunks",
+      "passed": true
+    },
+    {
+      "case_id": "G03",
+      "category": "RAG",
+      "description": "retrieval trace is persisted with citations",
+      "detail": "2 results",
+      "passed": true
+    },
+    {
+      "case_id": "G04",
+      "category": "RAG",
+      "description": "retrieval is ranked deterministically",
+      "detail": "contiguous ranks",
+      "passed": true
+    },
+    {
+      "case_id": "G05",
+      "category": "RAG",
+      "description": "stale source is detected",
+      "detail": "STALE",
+      "passed": true
+    },
+    {
+      "case_id": "G06",
+      "category": "RAG",
+      "description": "missing source is detected",
+      "detail": "3 missing",
+      "passed": true
+    },
+    {
+      "case_id": "G07",
+      "category": "RAG",
+      "description": "contradictions are representable and unresolved",
+      "detail": "NUMERIC_MISMATCH",
+      "passed": true
+    },
+    {
+      "case_id": "G08",
+      "category": "RAG",
+      "description": "NO_EVIDENCE path never substitutes model knowledge",
+      "detail": "NO_EVIDENCE",
+      "passed": true
+    },
+    {
+      "case_id": "G09",
+      "category": "RAG",
+      "description": "sensitivity boundary filters retrieval",
+      "detail": "restricted excluded",
+      "passed": true
+    },
+    {
+      "case_id": "G10",
+      "category": "RAG",
+      "description": "retrieval is labelled non-canonical context",
+      "detail": "canonical=False",
+      "passed": true
+    },
+    {
+      "case_id": "W01",
+      "category": "WORKFLOWS",
+      "description": "career workflow produces a deliverable",
+      "detail": "5 evidence items",
+      "passed": true
+    },
+    {
+      "case_id": "W02",
+      "category": "WORKFLOWS",
+      "description": "life-sciences workflow produces a deliverable",
+      "detail": "opportunities present",
+      "passed": true
+    },
+    {
+      "case_id": "W03",
+      "category": "WORKFLOWS",
+      "description": "research workflow produces a deliverable",
+      "detail": "4 evidence items",
+      "passed": true
+    },
+    {
+      "case_id": "W04",
+      "category": "WORKFLOWS",
+      "description": "deliverables persist to durable markdown",
+      "detail": "markdown on disk",
+      "passed": true
+    },
+    {
+      "case_id": "W05",
+      "category": "WORKFLOWS",
+      "description": "career workflow never invents personal facts",
+      "detail": "empty value proposition",
+      "passed": true
+    },
+    {
+      "case_id": "W06",
+      "category": "WORKFLOWS",
+      "description": "workflow evidence carries provenance",
+      "detail": "source refs present",
+      "passed": true
+    },
+    {
+      "case_id": "W07",
+      "category": "WORKFLOWS",
+      "description": "LifeOS markdown note is emitted",
+      "detail": "lifeos note present",
+      "passed": true
+    },
+    {
+      "case_id": "X01",
+      "category": "DECISION",
+      "description": "decision lists alternatives",
+      "detail": "alternatives present",
+      "passed": true
+    },
+    {
+      "case_id": "X02",
+      "category": "DECISION",
+      "description": "decision shows risks and constraints",
+      "detail": "risks/constraints",
+      "passed": true
+    },
+    {
+      "case_id": "X03",
+      "category": "DECISION",
+      "description": "FACT and PREDICTION are distinguished",
+      "detail": "FACT + PREDICTION contributions",
+      "passed": true
+    },
+    {
+      "case_id": "X04",
+      "category": "DECISION",
+      "description": "prediction uncertainty is reported",
+      "detail": "uncertainty present",
+      "passed": true
+    },
+    {
+      "case_id": "X05",
+      "category": "DECISION",
+      "description": "human remains the final decision-maker",
+      "detail": "human required",
+      "passed": true
+    },
+    {
+      "case_id": "X06",
+      "category": "DECISION",
+      "description": "snapshot persists and reloads identically",
+      "detail": "round-trip",
+      "passed": true
+    },
+    {
+      "case_id": "X07",
+      "category": "DECISION",
+      "description": "actual outcome can be compared to the snapshot",
+      "detail": "outcome comparison",
+      "passed": true
+    },
+    {
+      "case_id": "X08",
+      "category": "DECISION",
+      "description": "no irreversible high-trust decision is autonomous",
+      "detail": "autonomous_execution_allowed=False",
+      "passed": true
+    },
+    {
+      "case_id": "X09",
+      "category": "DECISION",
+      "description": "dashboard decision summary is read-only",
+      "detail": "read_only summary",
+      "passed": true
+    },
+    {
+      "case_id": "T01",
+      "category": "TRUST",
+      "description": "intelligence layer contains no release Git verbs",
+      "detail": "clean",
+      "passed": true
+    },
+    {
+      "case_id": "T02",
+      "category": "TRUST",
+      "description": "release gates are preserved (routing unchanged)",
+      "detail": "GO COMMIT / GO MERGE untouched",
+      "passed": true
+    },
+    {
+      "case_id": "T03",
+      "category": "TRUST",
+      "description": "policy is never silently mutated",
+      "detail": "no policy mutation",
+      "passed": true
+    },
+    {
+      "case_id": "T04",
+      "category": "TRUST",
+      "description": "no fabricated measurement (provenance enforced)",
+      "detail": "concrete values require a source",
+      "passed": true
+    },
+    {
+      "case_id": "T05",
+      "category": "TRUST",
+      "description": "semantic patch identity is not touched by this layer",
+      "detail": "no git write call sites",
+      "passed": true
+    },
+    {
+      "case_id": "T06",
+      "category": "TRUST",
+      "description": "acceptance requires persisted evidence, not prose",
+      "detail": "every case carries machine detail",
+      "passed": true
+    }
+  ],
+  "category_counts": {
+    "DATASET": {
+      "failed": 0,
+      "passed": 10
+    },
+    "DECISION": {
+      "failed": 0,
+      "passed": 9
+    },
+    "ML": {
+      "failed": 0,
+      "passed": 16
+    },
+    "RAG": {
+      "failed": 0,
+      "passed": 10
+    },
+    "ROUTING": {
+      "failed": 0,
+      "passed": 10
+    },
+    "SCHEDULING": {
+      "failed": 0,
+      "passed": 7
+    },
+    "TRUST": {
+      "failed": 0,
+      "passed": 6
+    },
+    "WORKFLOWS": {
+      "failed": 0,
+      "passed": 7
+    }
+  },
+  "failed": 0,
+  "fixture_count": 120,
+  "generated_at": "2026-01-01T00:00:00Z",
+  "intelligence_version": "m056-m063.1",
+  "kind": "intelligence_acceptance_matrix",
+  "passed": 75,
+  "schema_version": 1,
+  "total": 75
+}
