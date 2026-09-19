@@ -141,6 +141,15 @@ if [[ "${TRAJECTORY_PI_BOOTSTRAP:-}" != "1" ]]; then
     # script bytes can no longer be rewritten out from under it.
     chmod a-w -- "$_tp_copy" 2>/dev/null || true
 
+    # Resolve the product src layout while the ORIGINAL location is still
+    # known: the bootstrap copy lives in a private temp dir, so the M026
+    # reviewer-protocol classifier needs an explicit, immutable pointer to
+    # the real `trajectory_os` package to stay available after the hop.
+    _tp_self_dir="$(cd -- "$(dirname -- "$_tp_self")" 2>/dev/null && pwd -P)" || _tp_self_dir=""
+    if [[ -n "$_tp_self_dir" && -d "${_tp_self_dir}/../src/trajectory_os/missions" ]]; then
+        export TRAJECTORY_PI_SRC="$(cd -- "${_tp_self_dir}/../src" && pwd -P)"
+    fi
+
     TRAJECTORY_PI_BOOTSTRAP=1 \
     TRAJECTORY_PI_BOOTSTRAP_COPY="$_tp_copy" \
     exec bash "$_tp_copy" "$@"
@@ -2168,6 +2177,9 @@ REVIEW_VERDICT=""
 REVIEW_RECOMMENDATION=""
 REVIEW_STALE="n/a"
 REVIEW_VERBOSITY=""
+# M026 — normalized reviewer semantic distinction (VALID_PASS /
+# VALID_REJECT / REVIEW_PROTOCOL_INVALID). n/a until a review runs.
+REVIEW_PROTOCOL="n/a"
 
 # V1.83 — first-class review findings state (conservative classification
 # of the reviewer's own findings: OPEN | REBUTTED | AMBIGUOUS).
@@ -2603,6 +2615,60 @@ print("AMBIGUOUS=%d" % totals["ambiguous"])
 PY
 }
 
+# ------------------------------------------------------------
+# Review-protocol semantic distinction (M026 regression)
+#
+# The strict parser above already fail-closes contradictions. This
+# classifier adds the authoritative *normalized* outcome:
+#
+#   VALID_PASS   = PASS + GO COMMIT + zero blocking findings
+#   VALID_REJECT = REJECT/FAIL + REPAIR/FIX + >=1 blocking finding
+#   REVIEW_PROTOCOL_INVALID = anything else
+#
+# It is computed from the RAW reviewer response (so it sees the finding
+# text the parser collapses) and is used to strengthen -- never weaken --
+# the PASS path: a PASS that is not unambiguously VALID_PASS is rejected.
+# The reviewer model stays configurable; no model judgement is involved.
+#
+# $1 = raw reviewer response file. Prints OUTCOME=/REASON= key=value lines.
+# A missing classifier fails CLOSED (REVIEW_PROTOCOL_INVALID).
+
+review_protocol_outcome() {
+    # Resolve the product src layout: prefer the explicit pointer captured
+    # before the immutable bootstrap hop, then the wrapper's OWN location,
+    # then REPO/src for extracted runs (the reviewed repository is REPO,
+    # which in a foreign checkout has no trajectory_os package).
+    local self_path self_src src_root
+    self_path="$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null)" || self_path="${BASH_SOURCE[0]:-$0}"
+    self_src="$(cd -- "$(dirname -- "$self_path")/../src" 2>/dev/null && pwd -P)" || self_src=""
+    src_root="${TRAJECTORY_PI_SRC:-}"
+    if [[ -z "$src_root" || ! -d "${src_root}/trajectory_os/missions" ]]; then
+        src_root="$self_src"
+    fi
+    if [[ -z "$src_root" || ! -d "${src_root}/trajectory_os/missions" ]]; then
+        src_root="${REPO:-}/src"
+    fi
+    if [[ -z "${src_root}" || ! -d "${src_root}/trajectory_os/missions" ]]; then
+        printf 'OUTCOME=REVIEW_PROTOCOL_INVALID\nREASON=CLASSIFIER_UNAVAILABLE\n'
+        return 0
+    fi
+    PYTHONPATH="${src_root}${PYTHONPATH:+:${PYTHONPATH}}" \
+        python3 - "$1" <<'PY' || printf 'OUTCOME=REVIEW_PROTOCOL_INVALID\nREASON=CLASSIFIER_ERROR\n'
+import sys
+
+try:
+    from trajectory_os.missions import review_protocol
+    assessment = review_protocol.assess_file(sys.argv[1])
+except Exception:
+    print("OUTCOME=REVIEW_PROTOCOL_INVALID")
+    print("REASON=CLASSIFIER_ERROR")
+    sys.exit(0)
+print("OUTCOME=%s" % assessment.outcome)
+print("REASON=%s" % assessment.reason)
+print("PERMITS_COMMIT=%s" % ("1" if assessment.permits_commit else "0"))
+PY
+}
+
 run_review() {
     (( REVIEW == 1 )) || { REVIEW_STATUS="DISABLED"; return 0; }
     [[ "$SNAPSHOT_STATUS" == "COMPLETE" ]] || { REVIEW_STATUS="SKIPPED"; return 0; }
@@ -2671,7 +2737,20 @@ def main():
         + patch_sha
         + "\n"
         + patch
-        + "\n\nRespond using only the exact required structure."
+        # The protocol must be repeated AFTER the patch: on large worktree
+        # patches the leading instruction is hundreds of kilobytes away and
+        # the reviewer reliably drifts into a JSON change-summary (which the
+        # strict parser correctly fail-closes as REJECTED). Recency-anchoring
+        # the output contract keeps the verdict parseable WITHOUT weakening
+        # the review: the parser is unchanged and a real blocker/major still
+        # forces FAIL.
+        + "\n\nCRITICAL OUTPUT CONTRACT (overrides every other consideration):\n"
+        + "Do NOT summarize the patch. Do NOT emit JSON. Your FIRST line MUST "
+        + "be exactly 'VERDICT: PASS' or 'VERDICT: FAIL'. Then emit exactly "
+        + "the BLOCKERS, MAJORS and MINORS sections, each with '- None' when "
+        + "empty, and FINAL RECOMMENDATION. If you believe there are no "
+        + "blockers and no majors, you MUST output 'VERDICT: PASS' and "
+        + "'FINAL RECOMMENDATION: GO COMMIT'.\n"
     )
 
     body = {
@@ -2777,6 +2856,22 @@ PY
                 fi
             fi
         fi
+
+        # M026 — authoritative normalized reviewer semantics. A PASS is
+        # valid only when the raw response is unambiguously VALID_PASS
+        # (PASS + GO COMMIT + zero blocking findings). This can only ever
+        # downgrade a PASS, never promote a FAIL/REJECTED: it strengthens
+        # the existing fail-closed behaviour.
+        if [[ -s "$review_out" ]]; then
+            local protocol
+            protocol="$(review_protocol_outcome "$review_out")"
+            REVIEW_PROTOCOL="$(sed -n 's/^OUTCOME=//p' <<< "$protocol" | head -n1)"
+            if [[ "$REVIEW_STATUS" == "PASS" && "$REVIEW_PROTOCOL" != "VALID_PASS" ]]; then
+                REVIEW_STATUS="REJECTED"
+                REVIEW_VERDICT="FAIL"
+                REVIEW_RECOMMENDATION="FIX"
+            fi
+        fi
     fi
 
     # Staleness: re-derive the snapshot identity from the CURRENT
@@ -2805,6 +2900,7 @@ PY
         echo "reviewer_num_ctx=$REVIEWER_NUM_CTX"
         echo "review_rc=$REVIEW_RC"
         echo "review_status=$REVIEW_STATUS"
+        echo "review_protocol=$REVIEW_PROTOCOL"
         echo "review_verdict=${REVIEW_VERDICT:-n/a}"
         echo "review_recommendation=${REVIEW_RECOMMENDATION:-n/a}"
         echo "review_stale=$REVIEW_STALE"
