@@ -1,0 +1,782 @@
+{
+  "cases": [
+    {
+      "case": "1",
+      "checks": [
+        {
+          "case": "1",
+          "description": "project create yields a stable identity",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Project create"
+    },
+    {
+      "case": "2",
+      "checks": [
+        {
+          "case": "2",
+          "description": "project read returns the exact document",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Project read"
+    },
+    {
+      "case": "3",
+      "checks": [
+        {
+          "case": "3",
+          "description": "project update changes only explicit metadata",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Project update metadata"
+    },
+    {
+      "case": "4",
+      "checks": [
+        {
+          "case": "4",
+          "description": "project archive is explicit and idempotent",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Project archive"
+    },
+    {
+      "case": "5",
+      "checks": [
+        {
+          "case": "5",
+          "description": "project -> objective -> mission linkage is durable",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Project -> mission linkage"
+    },
+    {
+      "case": "6",
+      "checks": [
+        {
+          "case": "6",
+          "description": "projects reconstruct deterministically after restart",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Project reconstruction after restart"
+    },
+    {
+      "case": "7",
+      "checks": [
+        {
+          "case": "7",
+          "description": "supervisor single-owner claim succeeds",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Daemon single-owner"
+    },
+    {
+      "case": "8",
+      "checks": [
+        {
+          "case": "8",
+          "description": "a duplicate live supervisor is blocked",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Duplicate daemon blocked"
+    },
+    {
+      "case": "9",
+      "checks": [
+        {
+          "case": "9",
+          "description": "a dead owner is detected as a crash",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Daemon crash detection"
+    },
+    {
+      "case": "10",
+      "checks": [
+        {
+          "case": "10",
+          "description": "supervisor restarts by explicit stale recovery",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "10",
+          "description": "restarted supervisor completes a bounded cycle",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Daemon restart"
+    },
+    {
+      "case": "11",
+      "checks": [
+        {
+          "case": "11",
+          "description": "supervisor is terminal-independent (detached)",
+          "detail": {
+            "pid": 3114153
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Daemon terminal independence"
+    },
+    {
+      "case": "12",
+      "checks": [
+        {
+          "case": "12",
+          "description": "higher priority is selected first",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Queue priority"
+    },
+    {
+      "case": "13",
+      "checks": [
+        {
+          "case": "13",
+          "description": "a dependency blocks its dependent",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Dependency blocking"
+    },
+    {
+      "case": "14",
+      "checks": [
+        {
+          "case": "14",
+          "description": "a completed dependency unblocks its dependent",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Dependency unblocking"
+    },
+    {
+      "case": "15",
+      "checks": [
+        {
+          "case": "15",
+          "description": "bounded concurrency admits exactly the limit",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Bounded concurrency"
+    },
+    {
+      "case": "16",
+      "checks": [
+        {
+          "case": "16",
+          "description": "local GPU/VRAM admission is enforced",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "GPU/resource admission"
+    },
+    {
+      "case": "17",
+      "checks": [
+        {
+          "case": "17",
+          "description": "an unavailable remote provider blocks admission",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Remote-provider admission"
+    },
+    {
+      "case": "18",
+      "checks": [
+        {
+          "case": "18",
+          "description": "scheduling decisions are deterministic",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Deterministic scheduler reason"
+    },
+    {
+      "case": "19",
+      "checks": [
+        {
+          "case": "19",
+          "description": "starvation resistance ages waiting entries",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Starvation resistance"
+    },
+    {
+      "case": "20",
+      "checks": [
+        {
+          "case": "20",
+          "description": "a canonically terminal mission is never re-executed",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "No duplicate execution after restart"
+    },
+    {
+      "case": "21",
+      "checks": [
+        {
+          "case": "21",
+          "description": "queued pause/resume is explicit and reversible",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Queued pause/resume"
+    },
+    {
+      "case": "22",
+      "checks": [
+        {
+          "case": "22",
+          "description": "active cancel is recorded",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Active cancel"
+    },
+    {
+      "case": "23",
+      "checks": [
+        {
+          "case": "23",
+          "description": "requeue returns a cancelled mission to the queue",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Requeue"
+    },
+    {
+      "case": "24",
+      "checks": [
+        {
+          "case": "24",
+          "description": "GO COMMIT gate generates an inbox notification",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "GO COMMIT inbox generation"
+    },
+    {
+      "case": "25",
+      "checks": [
+        {
+          "case": "25",
+          "description": "GO MERGE gate generates an inbox notification",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "GO MERGE inbox generation"
+    },
+    {
+      "case": "26",
+      "checks": [
+        {
+          "case": "26",
+          "description": "notifications are deduplicated across recovery",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Notification deduplication"
+    },
+    {
+      "case": "27",
+      "checks": [
+        {
+          "case": "27",
+          "description": "notifications can be acknowledged",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Notification acknowledge"
+    },
+    {
+      "case": "28",
+      "checks": [
+        {
+          "case": "28",
+          "description": "notifications can be resolved",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Notification resolution"
+    },
+    {
+      "case": "29",
+      "checks": [
+        {
+          "case": "29",
+          "description": "notify-send absence degrades explicitly",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "notify-send unavailable degradation"
+    },
+    {
+      "case": "30",
+      "checks": [
+        {
+          "case": "30",
+          "description": "API observation is read-only",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "API observation read-only"
+    },
+    {
+      "case": "31",
+      "checks": [
+        {
+          "case": "31",
+          "description": "dashboard and canonical projection agree",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Dashboard/canonical projection parity"
+    },
+    {
+      "case": "32",
+      "checks": [
+        {
+          "case": "32",
+          "description": "mutations are isolated behind explicit auth",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Mutation isolation"
+    },
+    {
+      "case": "33",
+      "checks": [
+        {
+          "case": "33",
+          "description": "non-loopback binding is refused by default",
+          "detail": {
+            "code": "API_BIND_FORBIDDEN"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Localhost-only default"
+    },
+    {
+      "case": "34",
+      "checks": [
+        {
+          "case": "34",
+          "description": "contradictory canonical state fails closed",
+          "detail": {
+            "code": "CANONICAL_STATE_CONTRADICTION"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Contradictory state fails closed"
+    },
+    {
+      "case": "35",
+      "checks": [
+        {
+          "case": "35",
+          "description": "LifeOS note creation writes the project note",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "LifeOS note creation"
+    },
+    {
+      "case": "36",
+      "checks": [
+        {
+          "case": "36",
+          "description": "LifeOS updates are idempotent",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "LifeOS idempotent update"
+    },
+    {
+      "case": "37",
+      "checks": [
+        {
+          "case": "37",
+          "description": "LifeOS notes carry canonical provenance",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "LifeOS provenance"
+    },
+    {
+      "case": "38",
+      "checks": [
+        {
+          "case": "38",
+          "description": "an unavailable vault degrades explicitly",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Vault unavailable degradation"
+    },
+    {
+      "case": "39",
+      "checks": [
+        {
+          "case": "39",
+          "description": "no secret can leak into a projected note",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "No secret leakage"
+    },
+    {
+      "case": "40",
+      "checks": [
+        {
+          "case": "40",
+          "description": "reference reviewer route telemetry is captured",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Reference reviewer telemetry"
+    },
+    {
+      "case": "41",
+      "checks": [
+        {
+          "case": "41",
+          "description": "dev3090 route telemetry is captured",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "dev3090 telemetry"
+    },
+    {
+      "case": "42",
+      "checks": [
+        {
+          "case": "42",
+          "description": "remote implementation route telemetry is captured",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Remote implementation telemetry"
+    },
+    {
+      "case": "43",
+      "checks": [
+        {
+          "case": "43",
+          "description": "unavailable telemetry is None with a reason",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Unavailable telemetry semantics"
+    },
+    {
+      "case": "44",
+      "checks": [
+        {
+          "case": "44",
+          "description": "explicit provenance is preserved per metric",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Explicit routing fallback provenance"
+    },
+    {
+      "case": "45",
+      "checks": [
+        {
+          "case": "45",
+          "description": "no superiority is claimed without comparison",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "45",
+          "description": "routing evidence stays separate from policy",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "No unsupported superiority claim"
+    },
+    {
+      "case": "46",
+      "checks": [
+        {
+          "case": "46",
+          "description": "the supervisor never performs a release Git write",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Daemon trust boundary"
+    },
+    {
+      "case": "47",
+      "checks": [
+        {
+          "case": "47",
+          "description": "the scheduler never performs a release Git write",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Scheduler trust boundary"
+    },
+    {
+      "case": "48",
+      "checks": [
+        {
+          "case": "48",
+          "description": "GO COMMIT remains an explicit human gate",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "GO COMMIT remains human gated"
+    },
+    {
+      "case": "49",
+      "checks": [
+        {
+          "case": "49",
+          "description": "exact-head CI remains required for release",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Exact-head CI remains required"
+    },
+    {
+      "case": "50",
+      "checks": [
+        {
+          "case": "50",
+          "description": "GO MERGE remains an explicit human gate",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "GO MERGE remains human gated"
+    },
+    {
+      "case": "51",
+      "checks": [
+        {
+          "case": "51",
+          "description": "backup excludes transient PID/lock/runtime state",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "51",
+          "description": "backup manifest verifies every digest",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Backup excludes transient state"
+    },
+    {
+      "case": "52",
+      "checks": [
+        {
+          "case": "52",
+          "description": "restore reconstructs canonical state",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Restore canonical state"
+    },
+    {
+      "case": "53",
+      "checks": [
+        {
+          "case": "53",
+          "description": "stale-lock detection is read-only and explicit",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Stale lock handling"
+    },
+    {
+      "case": "54",
+      "checks": [
+        {
+          "case": "54",
+          "description": "partial corruption is detected",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Corruption detection"
+    },
+    {
+      "case": "55",
+      "checks": [
+        {
+          "case": "55",
+          "description": "schema migration upgrades a legacy document",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Schema migration/reconstruction"
+    },
+    {
+      "case": "56",
+      "checks": [
+        {
+          "case": "56",
+          "description": "restored inbox/project/mission state is consistent",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Restored inbox/project/mission consistency"
+    },
+    {
+      "case": "57",
+      "checks": [
+        {
+          "case": "57",
+          "description": "complete persistent multi-project dogfood passes",
+          "detail": {
+            "status": "PASS"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Complete persistent multi-project dogfood"
+    }
+  ],
+  "generated_at": "2026-09-19T18:40:58Z",
+  "root": ".artifacts/m048-m055/bundle/acceptance",
+  "schema": "trajectory-platform-acceptance/m055.1",
+  "status": "PASS",
+  "summary": {
+    "cases": 57,
+    "checks": 60,
+    "passed_cases": 57,
+    "passed_checks": 60
+  },
+  "version": "m055.1"
+}

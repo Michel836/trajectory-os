@@ -1,0 +1,145 @@
+{
+  "backup_file_count": 85,
+  "backup_id": "6fd198daa6825c0e84183aee8a832b2482d5bdecb8d3efade0d4206bcedffe2e",
+  "built_at": "2026-09-19T18:40:58Z",
+  "distinction": {
+    "fixture": "simulated process death / restart / time compression",
+    "mixed": false,
+    "real": "real platform code paths with deterministic LLM executors"
+  },
+  "dogfood_version": "m055.1",
+  "fixture_evidence": {
+    "kind": "FIXTURE",
+    "missions": 5,
+    "projects": 3,
+    "simulated_machine_restart": {
+      "reconstructed": true,
+      "reconstruction": {
+        "inbox": {
+          "platform_version": "m055.1",
+          "reconstructed": true,
+          "records": 7,
+          "schema_version": 1,
+          "unread": 7
+        },
+        "lifeos_records": 0,
+        "platform_version": "m055.1",
+        "projects": {
+          "project_ids": [
+            "c802aa7a02f341b9f8a854573e90731ebf57202420f91ac1fbe86fe6ef37fe8b",
+            "dc00cbb5cee54751f2cf061fc836482a2faea061c58bb0081c058b5291b8d6d1",
+            "fc949840a6ec9c1a9e04a96c9f05e64550e008c8fb58d63a5fb5ded8357af430"
+          ],
+          "projects": 3,
+          "reconstructed": true
+        },
+        "queue": {
+          "decision_count": 1,
+          "entries": 3,
+          "next_seq": 4,
+          "platform_version": "m055.1",
+          "reconstructed": true,
+          "schema_version": 1
+        },
+        "reconstructed": true,
+        "routing_evidence_present": true,
+        "schema_version": 1,
+        "supervisor": {
+          "crash": {
+            "crash_detected": false,
+            "owner": null,
+            "status": "ABSENT"
+          },
+          "owner": null,
+          "platform_version": "m055.1",
+          "project_ids": [
+            "c802aa7a02f341b9f8a854573e90731ebf57202420f91ac1fbe86fe6ef37fe8b",
+            "dc00cbb5cee54751f2cf061fc836482a2faea061c58bb0081c058b5291b8d6d1",
+            "fc949840a6ec9c1a9e04a96c9f05e64550e008c8fb58d63a5fb5ded8357af430"
+          ],
+          "projects": {
+            "project_ids": [
+              "c802aa7a02f341b9f8a854573e90731ebf57202420f91ac1fbe86fe6ef37fe8b",
+              "dc00cbb5cee54751f2cf061fc836482a2faea061c58bb0081c058b5291b8d6d1",
+              "fc949840a6ec9c1a9e04a96c9f05e64550e008c8fb58d63a5fb5ded8357af430"
+            ],
+            "projects": 3,
+            "reconstructed": true
+          },
+          "reconstructed": true,
+          "schema_version": 1,
+          "supervisor": null
+        }
+      },
+      "restored": true,
+      "simulated": true
+    },
+    "simulated_process_death": {
+      "crash_detected": true,
+      "restarted": true,
+      "simulated": true,
+      "supervisor_status": "STOPPED"
+    },
+    "summary": "time-compressed and simulated events; not production measurements",
+    "time_compression": {
+      "note": "hours of queued/active operation compressed into deterministic cycles; no live elapsed-time claim",
+      "simulated": true
+    }
+  },
+  "generator": "trajectory_os.platform.dogfood",
+  "guardrails": {
+    "crossed_human_gate": false,
+    "git_writes": 0,
+    "real_go_commit": false,
+    "real_go_merge": false
+  },
+  "objectives": [
+    "Represent several hours of persistent multi-project platform operation with real execution where reasonable and deterministic fixtures where waiting would add no proof.",
+    "Operate at least three projects and five missions, including queued and active work, one dependency and bounded resource scheduling.",
+    "Survive one deliberate supervisor/process death and a simulated machine restart with deterministic recovery.",
+    "Surface at least one READY_FOR_COMMIT mission, one blocked mission and a human-gate notification.",
+    "Expose a canonical dashboard/API projection and a LifeOS projection.",
+    "Back up, restore and reconstruct canonical platform state without weakening the M017-M047 trust model."
+  ],
+  "platform_version": "m055.1",
+  "real_evidence": {
+    "active": 1,
+    "blocked_readiness": "BLOCKED",
+    "dashboard_projection_id": "eb39865806b82fcfb5c8e3dee6aadb91ae79c3a92d012ef98043e88772efa57b",
+    "inbox_unread": 7,
+    "kind": "REAL",
+    "lifeos_status": "SYNCED",
+    "lifeos_written": 8,
+    "missions": 5,
+    "pending_gates": [
+      {
+        "mission_id": "beta-commit",
+        "notification_id": "35424ac1b0c7171f851164318223e39fe408d0944de44e7be2a48ee3a21abda3",
+        "state": "UNREAD",
+        "type": "GO_COMMIT_REQUIRED"
+      }
+    ],
+    "project_ids": [
+      "fc949840a6ec9c1a9e04a96c9f05e64550e008c8fb58d63a5fb5ded8357af430",
+      "c802aa7a02f341b9f8a854573e90731ebf57202420f91ac1fbe86fe6ef37fe8b",
+      "dc00cbb5cee54751f2cf061fc836482a2faea061c58bb0081c058b5291b8d6d1"
+    ],
+    "projects": 3,
+    "queued": 1,
+    "resources": {
+      "active": 1,
+      "cpu_slots": 1,
+      "gpu_mem_bytes": 0,
+      "gpu_slots": 0
+    },
+    "scheduler_reason": "SELECTED",
+    "scheduler_selected": [
+      "beta-queued"
+    ],
+    "summary": "real platform paths executed with fixture executors"
+  },
+  "root": ".artifacts/m048-m055/bundle/dogfood",
+  "schema_version": 1,
+  "status": "PASS",
+  "trust_gates_unchanged": true
+}

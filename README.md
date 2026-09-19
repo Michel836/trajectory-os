@@ -410,6 +410,68 @@ script remains a compatible thin entrypoint:
 Durable evidence lives under `docs/missions/m040-m047/`. See
 `docs/adr/ADR-025-self-hosting-operator-platform.md`.
 
+## Persistent autonomous operator platform (M048-M055)
+
+M048-M055 turn the M017-M047 operator into a persistent local operator that
+manages multiple projects and missions, survives interruption and restart,
+schedules work with persisted deterministic resource-aware decisions, surfaces
+human gates, exposes one local dashboard/API, projects into LifeOS and can be
+backed up, restored and reconstructed — without introducing a competing
+lifecycle, readiness, mission/release identity, event, patch-identity or trust
+model, and without any Git release write from the platform layers:
+
+    scripts/trajectory project create|list|show|update|archive|objective-add|link|status|linkage|reconstruct
+    scripts/trajectory daemon start|status|stop|resume|crash|reconstruct
+    scripts/trajectory queue add|list|schedule|accounting|pause|resume|cancel|requeue|reconstruct
+    scripts/trajectory inbox refresh|list|gates|ack|resolve|notify
+    scripts/trajectory api projection|dashboard|serve
+    scripts/trajectory lifeos sync|status --vault DIR
+    scripts/trajectory routing-evidence [--trials FILE] [--benchmark-root DIR]
+    scripts/trajectory bootstrap|systemd-unit
+    scripts/trajectory backup|restore|dr|corruption|migrate
+    scripts/trajectory platform-acceptance --out acceptance.json
+    scripts/trajectory platform-dogfood --json
+
+* **M048** a durable project registry above objectives and missions with a
+  stable identity, explicit policy/routing preferences, active/archived
+  lifecycle and read-only project -> objective -> mission -> release ->
+  artifact linkage; project metadata never replaces canonical artifacts and
+  the environment can never mutate policy;
+* **M049** a terminal-independent, single-owner, restart-safe supervisor with
+  an explicit process identity, heartbeat, duplicate-owner prevention, crash
+  detection, startup recovery, deterministic restart/resume and a systemd
+  user-service unit; it never performs a release Git write;
+* **M050** a durable multi-mission queue with priority, dependencies, bounded
+  concurrency, local GPU/VRAM and remote-provider admission, deterministic
+  persisted scheduling reasons, starvation resistance, pause/resume/cancel/
+  requeue and no duplicate execution after restart; it orchestrates the
+  existing runtime/control paths;
+* **M051** a durable, deduplicated human-gate inbox for the required
+  lifecycle events with unread/acknowledged/resolved state and an optional
+  `notify-send` sink that reports explicit `UNAVAILABLE`; it never authorizes
+  a human gate;
+* **M052** one canonical read-only projection served by a localhost-only API
+  and self-contained web dashboard with explicit, token/CSRF-protected
+  mutations and no business-logic duplication; contradictory canonical state
+  fails closed;
+* **M053** an idempotent Obsidian/LifeOS projection of project notes and
+  mission journals with deterministic frontmatter, canonical provenance,
+  secret-safe allow-listing and explicit degraded status when the vault is
+  unavailable;
+* **M054** evidence-based routing over the M029/M030 telemetry: every metric
+  carries `PROVIDER`/`DERIVED`/`LOCAL`/`UNAVAILABLE` provenance, unavailable
+  metrics are `null` with a reason, a recommendation requires comparable
+  evidence and is persisted separately from policy authorization, and the
+  final reviewer stays `qwen3.8:27b-q4_K_M`;
+* **M055** production hardening: versioned config with secrets separated,
+  bootstrap/preflight, systemd generation, durable-state backup excluding
+  transient PID/lock/runtime junk, deterministic restore into a clean fixture,
+  stale-lock and partial-corruption detection, schema migration verification,
+  full reconstruction and a disaster-recovery drill.
+
+Durable evidence lives under `docs/missions/m048-m055/`. See
+`docs/adr/ADR-026-persistent-autonomous-operator-platform.md`.
+
 ## Current status
 
 TrajectoryOS is under active experimental development.

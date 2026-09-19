@@ -49,6 +49,7 @@ from trajectory_os.operator import dogfood as operator_dogfood
 from trajectory_os.operator import model
 from trajectory_os.operator.control_plane import ControlPlane
 from trajectory_os.operator.policy import PROFILE_RELEASE, PROFILES
+from trajectory_os.platform import cli as platform_cli
 
 EXIT_OK = 0
 EXIT_USAGE = 2
@@ -423,6 +424,8 @@ def build_parser(prog: str = "trajectory",
     p.add_argument("--out", default=None)
     p.add_argument("--json", action="store_true")
 
+    platform_cli.register(sub)
+
     sub.add_parser("version", help="CLI version")
     return parser
 
@@ -437,6 +440,8 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_OK if code == 0 else EXIT_USAGE
     if args.command == "version":
         return _cmd_version()
+    if platform_cli.is_platform_command(args.command):
+        return platform_cli.dispatch(args)
     handlers: dict[str, Any] = {
         "start": _cmd_start, "status": _cmd_status,
         "dashboard": _cmd_dashboard, "follow": _cmd_follow,
