@@ -871,6 +871,18 @@ def test_reviewer_output_contract_is_recency_anchored_after_patch() -> None:
     assert script.index(patch_marker) < script.index(contract)
     assert "Do NOT emit JSON" in script
 
+    # The strict parser (\(parse_review_verdict\)) requires a colon after every
+    # canonical heading. The recency anchor must therefore show the literal
+    # colon-terminated template: a phrasing without the colons made the
+    # reviewer emit colon-less headings, which the parser correctly
+    # fail-closed as REVIEW_PROTOCOL_INVALID even for a semantic PASS. Guard
+    # the contract text so it cannot silently regress.
+    anchor = script[script.index(contract):]
+    for heading in ("VERDICT:", "BLOCKERS:", "MAJORS:", "MINORS:",
+                    "FINAL RECOMMENDATION:"):
+        assert heading in anchor, heading
+    assert "trailing colon" in anchor
+
 
 def test_parser_pass_with_real_blocker_never_passes(tmp_path: Path) -> None:
     # 2. PASS + real BLOCKER + GO COMMIT -> never PASS

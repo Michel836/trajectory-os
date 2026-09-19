@@ -2745,11 +2745,26 @@ def main():
         # the review: the parser is unchanged and a real blocker/major still
         # forces FAIL.
         + "\n\nCRITICAL OUTPUT CONTRACT (overrides every other consideration):\n"
-        + "Do NOT summarize the patch. Do NOT emit JSON. Your FIRST line MUST "
-        + "be exactly 'VERDICT: PASS' or 'VERDICT: FAIL'. Then emit exactly "
-        + "the BLOCKERS, MAJORS and MINORS sections, each with '- None' when "
-        + "empty, and FINAL RECOMMENDATION. If you believe there are no "
-        + "blockers and no majors, you MUST output 'VERDICT: PASS' and "
+        # The strict parser requires a colon after every canonical heading
+        # (``BLOCKERS:``, ``MAJORS:``, ...). The recency anchor therefore has
+        # to show the literal colon-terminated template: an earlier phrasing
+        # ("emit exactly the BLOCKERS, MAJORS and MINORS sections") made the
+        # reviewer drop the colons, which the strict parser correctly
+        # fail-closed as REVIEW_PROTOCOL_INVALID even for a semantic PASS.
+        + "Do NOT summarize the patch. Do NOT emit JSON. Emit EXACTLY this "
+        + "literal template, including every trailing colon:\n"
+        + "VERDICT: PASS\n"
+        + "BLOCKERS:\n"
+        + "- None\n"
+        + "MAJORS:\n"
+        + "- None\n"
+        + "MINORS:\n"
+        + "- None\n"
+        + "FINAL RECOMMENDATION: GO COMMIT\n"
+        + "The heading lines MUST be exactly 'VERDICT:', 'BLOCKERS:', "
+        + "'MAJORS:', 'MINORS:' and 'FINAL RECOMMENDATION:' with their "
+        + "trailing colons. If you believe there are no blockers and no "
+        + "majors, you MUST output 'VERDICT: PASS' and "
         + "'FINAL RECOMMENDATION: GO COMMIT'.\n"
     )
 

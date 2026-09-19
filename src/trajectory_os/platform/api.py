@@ -345,6 +345,15 @@ class LocalApi:
         if path == "/api/health":
             return self._json({"status": "OK",
                                "platform_version": model.PLATFORM_VERSION})
+        if path == "/api/intelligence":
+            from trajectory_os.intelligence import projection as intel_projection
+
+            return self._json(intel_projection.build_intelligence_projection(
+                self.root, clock=self.clock))
+        if path == "/api/intelligence/decisions":
+            from trajectory_os.intelligence import decision as intel_decision
+
+            return self._json(intel_decision.decision_summary(str(self.root)))
         return ApiResponse(404, b'{"error":"NOT_FOUND"}', CONTENT_JSON)
 
     def _mutate(self, path: str, payload: Mapping[str, Any]) -> ApiResponse:

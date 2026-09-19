@@ -1,0 +1,206 @@
+{
+  "built_at": "2026-09-19T21:00:00Z",
+  "dataset_id": "ccf3a6bd101f756bfa9b5f5e9be193462abb638577fd36044a02cbb8eb08effb",
+  "field_availability": {
+    "backend": 57,
+    "block_reason": 148,
+    "branch": 151,
+    "cache_read_tokens": 0,
+    "changed_files": 148,
+    "ci_result": 0,
+    "completion_tokens": 0,
+    "complexity": 151,
+    "cost_usd": 0,
+    "duration_s": 148,
+    "final_outcome": 152,
+    "gpu_utilization_pct": 25,
+    "human_wait_s": 0,
+    "model": 151,
+    "patch_bytes": 145,
+    "patch_lines_changed": 144,
+    "prompt_chars": 0,
+    "prompt_tokens": 0,
+    "protocol_failures": 0,
+    "provider": 42,
+    "readiness": 148,
+    "repairs": 48,
+    "retries": 0,
+    "review_failures": 100,
+    "review_wait_s": 94,
+    "reviewer": 151,
+    "run_id": 152,
+    "task_type": 151,
+    "throughput_tps": 0,
+    "total_tokens": 0,
+    "ttft_ms": 0,
+    "validation_failures": 58,
+    "vram_bytes": 25,
+    "workspace": 127
+  },
+  "field_provenance": {
+    "backend": {
+      "MEASURED": 57,
+      "UNAVAILABLE": 95
+    },
+    "block_reason": {
+      "MEASURED": 148,
+      "UNAVAILABLE": 4
+    },
+    "branch": {
+      "MEASURED": 151,
+      "UNAVAILABLE": 1
+    },
+    "cache_read_tokens": {
+      "UNAVAILABLE": 152
+    },
+    "changed_files": {
+      "MEASURED": 148,
+      "UNAVAILABLE": 4
+    },
+    "ci_result": {
+      "UNAVAILABLE": 152
+    },
+    "completion_tokens": {
+      "UNAVAILABLE": 152
+    },
+    "complexity": {
+      "DERIVED": 151,
+      "UNAVAILABLE": 1
+    },
+    "cost_usd": {
+      "UNAVAILABLE": 152
+    },
+    "duration_s": {
+      "MEASURED": 148,
+      "UNAVAILABLE": 4
+    },
+    "final_outcome": {
+      "DERIVED": 152
+    },
+    "gpu_utilization_pct": {
+      "MEASURED": 25,
+      "UNAVAILABLE": 127
+    },
+    "human_wait_s": {
+      "UNAVAILABLE": 152
+    },
+    "model": {
+      "MEASURED": 151,
+      "UNAVAILABLE": 1
+    },
+    "patch_bytes": {
+      "MEASURED": 145,
+      "UNAVAILABLE": 7
+    },
+    "patch_lines_changed": {
+      "DERIVED": 144,
+      "UNAVAILABLE": 8
+    },
+    "prompt_chars": {
+      "UNAVAILABLE": 152
+    },
+    "prompt_tokens": {
+      "UNAVAILABLE": 152
+    },
+    "protocol_failures": {
+      "UNAVAILABLE": 152
+    },
+    "provider": {
+      "MEASURED": 42,
+      "UNAVAILABLE": 110
+    },
+    "readiness": {
+      "MEASURED": 148,
+      "UNAVAILABLE": 4
+    },
+    "repairs": {
+      "MEASURED": 48,
+      "UNAVAILABLE": 104
+    },
+    "retries": {
+      "UNAVAILABLE": 152
+    },
+    "review_failures": {
+      "DERIVED": 100,
+      "UNAVAILABLE": 52
+    },
+    "review_wait_s": {
+      "DERIVED": 94,
+      "UNAVAILABLE": 58
+    },
+    "reviewer": {
+      "MEASURED": 151,
+      "UNAVAILABLE": 1
+    },
+    "run_id": {
+      "MEASURED": 152
+    },
+    "task_type": {
+      "MEASURED": 151,
+      "UNAVAILABLE": 1
+    },
+    "throughput_tps": {
+      "UNAVAILABLE": 152
+    },
+    "total_tokens": {
+      "UNAVAILABLE": 152
+    },
+    "ttft_ms": {
+      "UNAVAILABLE": 152
+    },
+    "validation_failures": {
+      "DERIVED": 58,
+      "UNAVAILABLE": 94
+    },
+    "vram_bytes": {
+      "MEASURED": 25,
+      "UNAVAILABLE": 127
+    },
+    "workspace": {
+      "MEASURED": 127,
+      "UNAVAILABLE": 25
+    }
+  },
+  "fixture_rows": 0,
+  "kind": "m056_learning_dataset_quality",
+  "real_rows": 152,
+  "row_count": 152,
+  "schema_version": 1,
+  "source_kind": "REAL",
+  "split_metadata": {
+    "group_counts": {
+      "test": 7,
+      "train": 30,
+      "validation": 12
+    },
+    "group_key": "branch|workspace|run_id",
+    "leakage_free": true,
+    "leakage_groups": [],
+    "row_counts": {
+      "test": 14,
+      "train": 115,
+      "validation": 23
+    },
+    "seed": "m056-default",
+    "test_fraction": 0.2,
+    "train_fraction": 0.6,
+    "validation_fraction": 0.2
+  },
+  "target_availability": {
+    "blocked": 148,
+    "cost_usd": 0,
+    "duration_s": 148,
+    "repairs": 48,
+    "success": 148
+  },
+  "trainable_targets": [
+    "duration_s",
+    "success",
+    "blocked",
+    "repairs"
+  ],
+  "untrainable_targets": {
+    "cost_usd": "0 values < 20"
+  },
+  "warnings": []
+}

@@ -472,6 +472,50 @@ model, and without any Git release write from the platform layers:
 Durable evidence lives under `docs/missions/m048-m055/`. See
 `docs/adr/ADR-026-persistent-autonomous-operator-platform.md`.
 
+## Adaptive intelligence & practical workflows (M056-M063)
+
+M056-M063 build the first complete adaptive-intelligence loop on top of the
+trusted operator platform, without a competing lifecycle, scheduler or trust
+model and with no release Git write from the intelligence layers:
+
+    python scripts/m056_m063_bundle_evidence.py
+    uv run pytest tests/unit/test_intelligence_*.py tests/integration/test_intelligence_bundle_m056_m063.py
+
+* **M056** a deterministic, read-only learning dataset over real canonical
+  run history with per-value `MEASURED`/`DERIVED`/`INFERRED`/`UNAVAILABLE`
+  provenance, an explicit missingness/quality report, `REAL`/`FIXTURE`
+  separation, schema versioning and a leakage-free group-aware split;
+* **M057** a classical predictive ML baseline implemented in pure Python
+  (ridge, logistic, CART, random forest, gradient boosting) with naive-baseline
+  comparison, a reproducible train/validation/test protocol, Platt probability
+  calibration, feature importance, uncertainty, persisted model metadata and
+  an `INSUFFICIENT_DATA` fail-safe;
+* **M058** an advisory backend/model recommendation over M054 telemetry and
+  M056/M057 evidence with explicit candidates, a comparable-evidence gate,
+  Wilson intervals and an honest `NO_RECOMMENDATION` path; the final reviewer
+  stays `qwen3.8:27b-q4_K_M` and the Harness stays developer-preview;
+* **M059** an optional predictive overlay over the canonical M050 scheduler
+  with transparent named score components, a deterministic rule-based
+  fallback, rule-vs-ML comparison and no hidden policy mutation;
+* **M060** a provenance-first knowledge workspace with an extensible adapter
+  model, deterministic BM25 retrieval, per-chunk citations, stale/missing
+  source semantics, representable contradictions and a `NO_EVIDENCE` path
+  that never substitutes model knowledge;
+* **M061** three reusable practical workflow families (career/consulting,
+  life-sciences/pharma, research/strategy) that produce durable,
+  human-readable deliverables, evidence chains and next actions and never
+  invent personal facts;
+* **M062** a human-centred decision workspace that ranks candidate next
+  actions against explicit criteria, distinguishes
+  `FACT`/`PREDICTION`/`HEURISTIC`/`HUMAN_PRIORITY`, reports uncertainty,
+  persists an auditable snapshot and can compare a later outcome against the
+  prior recommendation; humans remain the final decision-maker;
+* **M063** a 75-case intelligence acceptance matrix across eight categories,
+  a real-history dogfood and the machine evidence bundle.
+
+Durable evidence lives under `docs/missions/m056-m063/`. See
+`docs/adr/ADR-027-adaptive-intelligence-practical-workflows.md`.
+
 ## Current status
 
 TrajectoryOS is under active experimental development.
