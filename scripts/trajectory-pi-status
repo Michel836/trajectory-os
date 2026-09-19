@@ -158,6 +158,86 @@ def _load_core():
 
 
 _CORE = _load_core()
+
+
+def _load_observability():
+    """Load the M030 canonical observability core, degrading gracefully."""
+    try:
+        from trajectory_os.observability import follow as obs_follow
+        from trajectory_os.observability import projection as obs_projection
+    except ModuleNotFoundError:
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        if src not in sys.path:
+            sys.path.insert(0, src)
+        try:
+            import importlib
+
+            obs_follow = importlib.import_module(
+                "trajectory_os.observability.follow")
+            obs_projection = importlib.import_module(
+                "trajectory_os.observability.projection")
+        except ModuleNotFoundError:
+            return None, None
+    return obs_follow, obs_projection
+
+
+def canonical_for_follow(run_dir: Path, state: dict[str, Any]) -> dict[str, Any]:
+    """Map a trajectory-pi reader state into the canonical follow document.
+
+    When the producer has written a canonical ``status.json`` it is used
+    verbatim (one source of truth). Otherwise the reader's recorded lifecycle
+    evidence is mapped without inventing any fact.
+    """
+    canonical_path = run_dir / "status.json"
+    if canonical_path.is_file():
+        try:
+            document = json.loads(canonical_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            document = None
+        if isinstance(document, dict) and "readiness" in document:
+            return document
+    lifecycle = state.get("lifecycle")
+    lifecycle = lifecycle if isinstance(lifecycle, dict) else {}
+    lifecycle_state = str(lifecycle.get("state") or "unknown")
+    ended = lifecycle_state == "ended"
+    readiness_info = state.get("readiness")
+    readiness_info = readiness_info if isinstance(readiness_info, dict) else {}
+    repository_readiness = str(
+        readiness_info.get("repository_readiness") or "")
+    blockers = state.get("blockers")
+    blockers = blockers if isinstance(blockers, list) else []
+    if ended:
+        canonical_state = "COMPLETE"
+        if repository_readiness == "READY_FOR_COMMIT" and not blockers:
+            readiness = "READY_FOR_COMMIT"
+        else:
+            readiness = "BLOCKED"
+    elif lifecycle_state == "running":
+        canonical_state = "RUNNING"
+        readiness = "INDETERMINATE"
+    else:
+        canonical_state = "RUNNING"
+        readiness = "UNKNOWN"
+    terminal_reason = None
+    if ended:
+        terminal_reason = (str(blockers[0]) if blockers
+                           else "run ended")
+    phase = str(state.get("phase") or "unknown")
+    return {
+        "run_id": str(state.get("run_id") or run_dir.name),
+        "state": canonical_state,
+        "stage": phase,
+        "phase": phase,
+        "attempt": 0,
+        "readiness": readiness,
+        "terminal": ended,
+        "terminal_reason": terminal_reason,
+        "current": phase,
+        "next": str(state.get("next_gate") or "unknown"),
+        "next_action": str(state.get("next_gate") or "unknown"),
+        "updated_at": state.get("generated_at"),
+        "heartbeat_at": lifecycle.get("updated_at"),
+    }
 # Artifact names consulted (in priority order) by the mtime fallback for
 # lifecycle.updated_at; only file mtime is observed, never content order.
 ARTIFACT_NAMES = (
@@ -1073,9 +1153,52 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"max changed-file entries shown (default {DEFAULT_MAX_FILES})")
     parser.add_argument("--worktree-live", action="store_true",
                         help="optionally fall back to one lock-free git status observation")
+    parser.add_argument("--follow", action="store_true",
+                        help="M030: follow the run until a terminal outcome")
+    parser.add_argument("--follow-interval", dest="follow_interval",
+                        type=float, default=12.0,
+                        help="follow heartbeat seconds (default 12)")
+    parser.add_argument("--follow-max-polls", dest="follow_max_polls",
+                        type=int, default=240,
+                        help="bounded number of follow polls (default 240)")
     parser.add_argument("--version", action="version",
                         version=f"trajectory-pi-status {VERSION}")
     return parser
+
+
+def follow_run(run_dir: Path, args: Any) -> int:
+    """M030 read-only follow: poll until a terminal/readiness outcome."""
+    obs_follow, obs_projection = _load_observability()
+    if obs_follow is None or obs_projection is None:
+        print("error: observability follow core unavailable", file=sys.stderr)
+        return 2
+
+    def reader() -> dict[str, Any]:
+        now_value = (parse_iso(args.now) if args.now is not None
+                     else datetime.now().astimezone())
+        state = collect(run_dir, now_value, args.stale_after,
+                        max(0, args.max_files), args.worktree_live)
+        return canonical_for_follow(run_dir, state)
+
+    def on_frame(frame: str) -> None:
+        if not args.json:
+            print(frame)
+
+    outcome = obs_follow.follow(
+        reader, interval_s=args.follow_interval,
+        max_polls=args.follow_max_polls, on_frame=on_frame,
+        renderer=lambda document: obs_projection.render_projection(
+            document, target=obs_projection.PROJECTION_CLI))
+    if args.json:
+        print(json.dumps(outcome.to_dict(), indent=2, ensure_ascii=False))
+    print("=" * 68)
+    if outcome.exited:
+        print(f"RUN TERMINÉ — {outcome.document.get('readiness')} "
+              f"({outcome.reason})")
+    else:
+        print("FOLLOW BOUND REACHED — run still active")
+    print("=" * 68)
+    return 0 if outcome.exited else 2
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1094,6 +1217,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {detail} (looked under {runs_root}); "
               f"pass --run NAME|PATH or --runs-root DIR", file=sys.stderr)
         return 2
+    if args.follow:
+        return follow_run(Path(run_dir).resolve(), args)
     try:
         state = collect(
             Path(run_dir).resolve(), now, args.stale_after,

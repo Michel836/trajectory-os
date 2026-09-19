@@ -33,6 +33,38 @@ EXIT_USAGE = 2
 EXIT_REJECTED = 3
 
 
+def _preflight_or_block(root: str, benchmark_run_id: str,
+                        args: argparse.Namespace) -> int | None:
+    """Fail-fast preflight before any expensive phase (M030).
+
+    A knowable configuration error (including an invalid provider/model
+    combination) stops the run before validation/review/repair and preserves
+    explicit canonical evidence.
+    """
+    from trajectory_os.observability import adapter, preflight, store
+
+    backend = _backends(args.backend)[0]
+    outcome = preflight.preflight(preflight.PreflightRequest(
+        run_id=benchmark_run_id, backend=backend, provider=args.provider,
+        model=args.model, workspace=args.repo or os.getcwd(),
+        reviewer_model=args.reviewer_model,
+        review_enabled=not args.allow_inactive_reviewer,
+        telemetry_mode=args.telemetry))
+    if outcome.ok:
+        return None
+    canonical = adapter.blocked_status(
+        run_id=benchmark_run_id, backend=backend, provider=args.provider,
+        model_name=args.model, reason=outcome.reason, detail=outcome.detail,
+        telemetry_mode=args.telemetry)
+    run_root = store.ensure_run_root(root, benchmark_run_id)
+    store.write_json(run_root / store.STATUS_NAME, canonical)
+    if args.json:
+        _print_json(canonical)
+    else:
+        print(f"PREFLIGHT REJECTED: {outcome.reason} ({outcome.detail})")
+    return EXIT_REJECTED
+
+
 def _root_from(argv_root: str | None) -> str:
     if argv_root:
         return argv_root
@@ -68,6 +100,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
     mode = args.mode
     created = engine.utc_now()
     benchmark_run_id = args.run_id or engine.make_run_id(created, mode)
+    blocked = _preflight_or_block(root, benchmark_run_id, args)
+    if blocked is not None:
+        return blocked
     selected = bench_workloads.select(tuple(args.workload or ()))
     config = engine.RunConfig(
         root=root, benchmark_run_id=benchmark_run_id, mode=mode,
@@ -95,6 +130,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
         config, executor=executor, reviewer_factory=reviewer_factory,
         resource_sampler=_resource_sampler(args.model))
     result = runner.run(resume=args.resume)
+    from trajectory_os.observability import adapter as obs_adapter
+
+    obs_adapter.write_run_artifacts(
+        root, benchmark_run_id, telemetry_mode=args.telemetry)
     if args.json:
         _print_json(result.to_dict())
     else:
@@ -215,6 +254,9 @@ def build_parser(prog: str = "trajectory-pi-benchmark",
     p.add_argument("--repo", default=None,
                    help="repository to capture the read-only baseline from")
     p.add_argument("--resume", action="store_true", default=False)
+    p.add_argument("--telemetry",
+                   choices=("off", "standard", "benchmark"),
+                   default="standard")
     p.add_argument("--json", action="store_true")
 
     p = sub.add_parser("status", help="canonical run status")
