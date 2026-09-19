@@ -235,6 +235,41 @@ observability contract shared by the CLI, TUI and Web surfaces:
 
 See `docs/adr/ADR-021-live-run-observability-telemetry.md`.
 
+## End-to-end mission assembly (M031)
+
+M031 assembles the M023–M030 capabilities into one trust-gated operator flow
+from a single objective to `READY_FOR_COMMIT` / `BLOCKED` with durable
+closure evidence:
+
+    Mission -> Preflight -> Plan -> Execution -> Validation
+            -> Review -> Repair -> Human Gate -> Closure
+
+    scripts/trajectory-mission start --objective "..." --workload small-targeted-repair --reviewer reject-then-pass
+    scripts/trajectory-mission status --mission-id MISSION_ID
+    scripts/trajectory-mission follow --mission-id MISSION_ID
+    scripts/trajectory-mission resume --mission-id MISSION_ID
+    scripts/trajectory-mission reconstruct --mission-id MISSION_ID
+    scripts/trajectory-mission closure --mission-id MISSION_ID
+
+* one mission root converges on `mission.json`, `plan.json`, `events.jsonl`,
+  `status.json`, `telemetry.json`, `summary.json` and `closure.json`; the
+  canonical M030 `status.json` remains the single status truth
+  (`mission_id == run_id`);
+* a durable mission identity (objective, constraints, definition of done,
+  backend/provider/model intent, trust policy, starting baseline) survives
+  every phase, including interruption/resume;
+* execution, deterministic validation, exact patch identity, strict review,
+  bounded repair, telemetry and projections are reused unchanged from
+  M029/M030 — no second backend or status abstraction;
+* the human gate stops at `READY_FOR_COMMIT`; a preflight reject stops before
+  planning/execution, a validation reject can never advance, a stale review
+  or inactive reviewer is downgraded to `BLOCKED`, and repair-budget
+  exhaustion yields `BLOCKED`;
+* `closure.json` plus `reconstruct` rebuild the mission without reading prose
+  logs, and no command performs a Git trust-boundary write.
+
+See `docs/adr/ADR-022-end-to-end-mission-assembly.md`.
+
 ## Current status
 
 TrajectoryOS is under active experimental development.
