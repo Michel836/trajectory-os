@@ -168,6 +168,36 @@ behaviour.
 See `docs/adr/ADR-019-authoritative-events-web-lifeos.md` and
 `docs/development/LIFEOS_INTEGRATION.md`.
 
+## Pi vs DeepSeek Harness benchmark (M029)
+
+M029 adds a decision-grade, repeatable A/B benchmark between the proven
+`Pi -> DeepSeek Flash` runtime and a qualified
+`DeepSeek Harness -> DeepSeek Flash` runtime:
+
+    scripts/trajectory-benchmark run --mode live --backend both --repetitions 2
+    scripts/trajectory-benchmark follow --run-id RUN_ID
+    scripts/trajectory-benchmark status --run-id RUN_ID
+    scripts/trajectory-benchmark report --run-id RUN_ID
+    scripts/trajectory-benchmark reconstruct --run-id RUN_ID
+
+* the same five canonical workloads, fresh isolated workspace per trial, and
+  the same validation + strict-review trust gates for both backends;
+* authoritative per-request/per-phase/per-trial/aggregate telemetry with an
+  explicit provenance (`PROVIDER` / `DERIVED` / `LOCAL` / `UNAVAILABLE`) for
+  every metric — an unavailable metric is recorded as `null` with a reason,
+  never guessed;
+* an exact Git-free semantic patch identity, and failed/blocked/unavailable
+  trials preserved as evidence;
+* a machine-readable artifact suite (`manifest.json`, `state.json`,
+  `events.jsonl`, `trials/*.json`, `summary.json`, `report.md`) plus a human
+  report that never auto-promotes a backend;
+* Harness qualification that fails closed when its runtime identity or
+  handshake cannot be proven; no successful Harness measurement is fabricated;
+* no Git trust-boundary write.
+
+See `docs/adr/ADR-020-pi-vs-harness-benchmark.md` and
+`docs/development/BENCHMARK.md`.
+
 ## Current status
 
 TrajectoryOS is under active experimental development.

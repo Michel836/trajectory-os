@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# trajectory-benchmark — M029 Pi vs DeepSeek Harness benchmark CLI.
+#
+# Thin, stable shim over src/trajectory_os/benchmark. It resolves the
+# repository root, prepends the src layout to PYTHONPATH and execs the CLI.
+#
+# Subcommands:
+#   run          run or resume the benchmark
+#   status       canonical run status
+#   follow       follow a run until a terminal state
+#   report       print the human-readable decision report
+#   reconstruct  strictly reconstruct one run (JSON)
+#   version      CLI version
+#
+# No subcommand performs a Git trust-boundary write.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+SRC="${ROOT}/src"
+
+if [[ ! -d "${SRC}/trajectory_os/benchmark" ]]; then
+  printf 'trajectory-benchmark: internal error: missing trajectory_os/benchmark package (expected %s)\n' "${SRC}/trajectory_os/benchmark" >&2
+  exit 2
+fi
+
+export PYTHONPATH="${SRC}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m trajectory_os.benchmark.cli "$@"
