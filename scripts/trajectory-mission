@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# trajectory-mission — M031 end-to-end mission assembly CLI.
+#
+# Thin, stable shim over src/trajectory_os/assembly. It resolves the
+# repository root, prepends the src layout to PYTHONPATH and execs the CLI.
+#
+# Subcommands:
+#   start        create a mission from one objective and drive it to a gate
+#   resume       resume an interrupted mission (same mission_id, same evidence)
+#   status       render the canonical mission status (CLI / TUI / Web)
+#   follow       follow a mission until a terminal lifecycle/readiness outcome
+#   reconstruct  reconstruct the mission from durable artifacts
+#   plan         print the durable mission plan (JSON)
+#   closure      print the durable closure evidence (JSON)
+#   version      CLI version
+#
+# Observation commands are strictly read-only. No subcommand performs a Git
+# trust-boundary write (commit/push/merge/reset/restore/clean/stash/rebase/
+# checkout/switch).
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+SRC="${ROOT}/src"
+
+if [[ ! -d "${SRC}/trajectory_os/assembly" ]]; then
+  printf 'trajectory-mission: internal error: missing trajectory_os/assembly package (expected %s)\n' "${SRC}/trajectory_os/assembly" >&2
+  exit 2
+fi
+
+export PYTHONPATH="${SRC}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m trajectory_os.assembly.cli "$@"
