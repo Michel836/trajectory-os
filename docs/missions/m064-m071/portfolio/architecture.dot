@@ -1,0 +1,20 @@
+digraph trajectory_os {
+  rankdir="LR";
+  n0 [label="Objective"];
+  n1 [label="Project / Workflow"];
+  n0 -> n1;
+  n2 [label="Knowledge"];
+  n1 -> n2;
+  n3 [label="Prediction"];
+  n2 -> n3;
+  n4 [label="Decision"];
+  n3 -> n4;
+  n5 [label="Execution"];
+  n4 -> n5;
+  n6 [label="Validation"];
+  n5 -> n6;
+  n7 [label="Outcome"];
+  n6 -> n7;
+  n8 [label="Learning"];
+  n7 -> n8;
+}

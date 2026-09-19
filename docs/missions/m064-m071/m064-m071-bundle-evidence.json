@@ -1,0 +1,194 @@
+{
+  "acceptance": {
+    "artifact": "docs/missions/m064-m071/m064-m071-acceptance.json",
+    "category_counts": {
+      "ACTIVE_LEARNING": {
+        "failed": 0,
+        "passed": 10
+      },
+      "CAREER": {
+        "failed": 0,
+        "passed": 12
+      },
+      "COCKPIT": {
+        "failed": 0,
+        "passed": 8
+      },
+      "INPUTS": {
+        "failed": 0,
+        "passed": 16
+      },
+      "LIFEOS": {
+        "failed": 0,
+        "passed": 12
+      },
+      "LIFE_SCIENCES": {
+        "failed": 0,
+        "passed": 10
+      },
+      "OUTCOMES": {
+        "failed": 0,
+        "passed": 10
+      },
+      "PORTFOLIO": {
+        "failed": 0,
+        "passed": 10
+      },
+      "TRUST": {
+        "failed": 0,
+        "passed": 10
+      }
+    },
+    "failed": 0,
+    "passed": 98,
+    "status": "PASS",
+    "total": 98
+  },
+  "acceptance_matrix_passed": true,
+  "baseline": "77de25be7b04c27d4a66de206a8fc911f7da4017",
+  "dogfood": {
+    "artifact": "docs/missions/m064-m071/m064-m071-dogfood.json",
+    "career_input": "SAMPLE",
+    "fixture_row_count": 0,
+    "history_note": "extracted read-only from .trajectory-pi/runs; rows are labelled REAL and no missing metric is imputed",
+    "history_source": "REAL",
+    "life_sciences_input": "SAMPLE",
+    "limitations": [
+      "prediction error is the canonical run ETA-range midpoint vs measured elapsed_seconds; it is a point estimate"
+    ],
+    "model_refresh_state": "NO_PROMOTION",
+    "outcome_links": 20,
+    "outcome_reconciled": 20,
+    "prediction_error": 720.65,
+    "real_row_count": 153,
+    "value_metrics": [
+      {
+        "evidence": true,
+        "name": "time_to_usable_deliverable_s",
+        "source": "dogfood timing",
+        "unit": "seconds",
+        "value": 0.2253
+      },
+      {
+        "evidence": true,
+        "name": "evidence_coverage",
+        "source": "acceptance matrix",
+        "unit": "ratio",
+        "value": 1.0
+      },
+      {
+        "evidence": true,
+        "name": "source_coverage",
+        "source": "ingestion manifest",
+        "unit": "sources",
+        "value": 16
+      },
+      {
+        "evidence": true,
+        "name": "output_completeness",
+        "source": "workflow artifacts",
+        "unit": "ratio",
+        "value": 1.0
+      },
+      {
+        "evidence": true,
+        "name": "prediction_error",
+        "source": "outcome ledger",
+        "unit": "mean_absolute_error",
+        "value": 720.65
+      },
+      {
+        "evidence": true,
+        "name": "outcome_capture_completeness",
+        "source": "outcome ledger",
+        "unit": "ratio",
+        "value": 1.0
+      },
+      {
+        "evidence": true,
+        "name": "unresolved_unknowns",
+        "source": "workflow unknowns",
+        "unit": "count",
+        "value": 5
+      },
+      {
+        "evidence": true,
+        "name": "corrections_required",
+        "source": "review findings",
+        "unit": "count",
+        "value": 0
+      },
+      {
+        "evidence": true,
+        "name": "reuse_across_workflow_families",
+        "source": "workflow families",
+        "unit": "families",
+        "value": 3
+      }
+    ]
+  },
+  "generated_at": "2026-09-19T21:42:31Z",
+  "git_writes": 0,
+  "marker": "M064_M071_REAL_WORLD_OS_PORTFOLIO_PROOF_COMPLETE",
+  "privacy_safe_demo": {
+    "command": "scripts/trajectory demo portfolio",
+    "documents": [
+      "docs/missions/m064-m071/portfolio/README.md",
+      "docs/missions/m064-m071/portfolio/architecture.dot",
+      "docs/missions/m064-m071/portfolio/architecture.txt",
+      "docs/missions/m064-m071/portfolio/build-in-public.json",
+      "docs/missions/m064-m071/portfolio/case-studies.md",
+      "docs/missions/m064-m071/portfolio/evidence-pack.json",
+      "docs/missions/m064-m071/portfolio/executive-overview.md",
+      "docs/missions/m064-m071/portfolio/reproducibility.md"
+    ],
+    "history_source": "FIXTURE",
+    "real_rows": 0
+  },
+  "realworld_version": "m064-m071.1",
+  "schema": "trajectory-m064-m071-bundle-evidence/1",
+  "semantic_patch": {
+    "changed_file_count": 30,
+    "changed_files": [
+      "README.md",
+      "docs/adr/ADR-028-real-world-os-portfolio-proof.md",
+      "docs/missions/m064-m071/README.md",
+      "docs/missions/m064-m071/m064-m071-final-review.json",
+      "docs/missions/m064-m071/m064-m071-final-review.txt",
+      "scripts/m064_m071_bundle_evidence.py",
+      "scripts/m064_m071_final_review.py",
+      "scripts/trajectory",
+      "src/trajectory_os/operator/cli.py",
+      "src/trajectory_os/realworld/__init__.py",
+      "src/trajectory_os/realworld/acceptance.py",
+      "src/trajectory_os/realworld/career.py",
+      "src/trajectory_os/realworld/cli.py",
+      "src/trajectory_os/realworld/cockpit.py",
+      "src/trajectory_os/realworld/dogfood.py",
+      "src/trajectory_os/realworld/ingest.py",
+      "src/trajectory_os/realworld/learning.py",
+      "src/trajectory_os/realworld/lifeos_ops.py",
+      "src/trajectory_os/realworld/lifesci.py",
+      "src/trajectory_os/realworld/model.py",
+      "src/trajectory_os/realworld/outcomes.py",
+      "src/trajectory_os/realworld/portfolio.py",
+      "tests/integration/test_realworld_bundle_m064_m071.py",
+      "tests/unit/test_realworld_acceptance_m064_m071.py",
+      "tests/unit/test_realworld_career_lifesci_m065_m066.py",
+      "tests/unit/test_realworld_cockpit_portfolio_m070_m071.py",
+      "tests/unit/test_realworld_ingest_m064.py",
+      "tests/unit/test_realworld_learning_m069.py",
+      "tests/unit/test_realworld_lifeos_ops_m067.py",
+      "tests/unit/test_realworld_outcomes_m068.py"
+    ],
+    "patch_bytes": 325391,
+    "semantic_patch_sha256": "dba1bb533e9ff6f4c53e64896d0fbc1f49351924b67fe7440139c467a34b075e",
+    "temp_index_isolated": true
+  },
+  "trust_boundary": {
+    "clean": true,
+    "offenders": [],
+    "scanned_files": 13
+  },
+  "trust_gates_unchanged": true
+}

@@ -15,6 +15,9 @@
 #   handoff go-commit bind-pr pr-status watch-ci
 #   merge-handoff go-merge closure reconstruct
 #   dogfood acceptance version
+#   realworld <ingest|career|life-sciences|operations|outcomes|refresh|
+#              cockpit|dogfood|acceptance|portfolio>
+#   demo portfolio
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)"

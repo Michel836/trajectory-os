@@ -516,6 +516,61 @@ model and with no release Git write from the intelligence layers:
 Durable evidence lives under `docs/missions/m056-m063/`. See
 `docs/adr/ADR-027-adaptive-intelligence-practical-workflows.md`.
 
+## Real-world operating system & portfolio proof (M064-M071)
+
+M064-M071 turn the adaptive-intelligence stack into something demonstrably
+useful in the real world: real inputs, human-readable output, tracked
+outcomes, guarded learning, a non-developer cockpit and credible external
+proof. The bundle is additive, performs no release Git write and never
+mutates policy:
+
+    scripts/trajectory demo portfolio
+    scripts/trajectory realworld dogfood
+    scripts/trajectory realworld acceptance
+    python scripts/m064_m071_bundle_evidence.py
+
+* **M064** production-useful real input adapters (local files/folders,
+  Markdown/text, PDF-derived text, CSV/Excel-compatible input, LifeOS notes
+  and caller-supplied URL/research text) with a deterministic provenance
+  manifest, duplicate/change detection, explicit unsupported-format results,
+  explicit conversion limitations, no silent OCR claim and no secret leakage;
+* **M065** a complete career/consulting artifact set (`company-analysis`,
+  `role-fit`, `evidence-map`, `gaps`, `business-problem-hypotheses`,
+  `ai-data-opportunity`, `value-proposition`, `interview-brief`,
+  `next-actions` and a LifeOS projection) with strict
+  `FACT`/`EVIDENCE`/`INFERENCE`/`HYPOTHESIS` typing and no invented personal
+  or company fact;
+* **M066** a reusable life-sciences/pharma workflow that classifies themes and
+  entities, detects recurring problems and cautious trends, and generates
+  opportunity/business-case hypotheses with preserved provenance and
+  uncertainty (`OBSERVATION`/`EVIDENCE`/`INFERENCE`/`HYPOTHESIS`);
+* **M067** LifeOS operational intelligence over the existing project model
+  answering what changed, what is blocked, what requires attention, what can
+  wait and what the next best actions are — every action with rationale,
+  source, dependencies, uncertainty, urgency basis and alternatives;
+* **M068** outcome tracking that links prediction/recommendation to decision,
+  execution and actual measured/entered outcome, persists prediction error,
+  keeps `UNKNOWN` unknown and maintains an immutable, idempotent, append-only
+  ledger;
+* **M069** guarded champion/challenger model refresh with dataset-snapshot
+  identity, minimum-sample thresholds, calibration comparison, data-quality
+  checks, drift indicators, rollback metadata and `PROMOTE` /
+  `NO_PROMOTION` / `INSUFFICIENT_DATA` states — never an automatic promotion
+  or policy/route/scheduler change;
+* **M070** a read-only, non-developer decision cockpit (projects, next
+  actions, attention, intelligence) with why-this, uncertainty and evidence
+  drill-down over the existing control plane;
+* **M071** portfolio/external proof: a 60-second executive overview, a
+  deterministic architecture representation, three case studies, a
+  privacy-safe reproducible demo, an external evidence pack and
+  build-in-public **drafts** that are never auto-published;
+* cross-cutting: a 98-case acceptance matrix across nine categories and a
+  real-world dogfood that uses real canonical runtime evidence where
+  available and clearly labelled `SAMPLE`/`FIXTURE` inputs otherwise.
+
+Durable evidence lives under `docs/missions/m064-m071/`. See
+`docs/adr/ADR-028-real-world-os-portfolio-proof.md`.
+
 ## Current status
 
 TrajectoryOS is under active experimental development.

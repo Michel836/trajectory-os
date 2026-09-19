@@ -1,0 +1,210 @@
+{
+  "architecture": {
+    "chain": [
+      "Objective",
+      "Project / Workflow",
+      "Knowledge",
+      "Prediction",
+      "Decision",
+      "Execution",
+      "Validation",
+      "Outcome",
+      "Learning"
+    ],
+    "dot": "digraph trajectory_os {\n  rankdir=\"LR\";\n  n0 [label=\"Objective\"];\n  n1 [label=\"Project / Workflow\"];\n  n0 -> n1;\n  n2 [label=\"Knowledge\"];\n  n1 -> n2;\n  n3 [label=\"Prediction\"];\n  n2 -> n3;\n  n4 [label=\"Decision\"];\n  n3 -> n4;\n  n5 [label=\"Execution\"];\n  n4 -> n5;\n  n6 [label=\"Validation\"];\n  n5 -> n6;\n  n7 [label=\"Outcome\"];\n  n6 -> n7;\n  n8 [label=\"Learning\"];\n  n7 -> n8;\n}\n",
+    "text": "Value chain (deterministic):\n\nObjective\n  |\n  v\n  Project / Workflow\n    |\n    v\n    Knowledge\n      |\n      v\n      Prediction\n        |\n        v\n        Decision\n          |\n          v\n          Execution\n            |\n            v\n            Validation\n              |\n              v\n              Outcome\n                |\n                v\n                Learning\n"
+  },
+  "case_studies": [
+    {
+      "approach": [
+        "typed claims",
+        "requirement extraction",
+        "evidence mapping"
+      ],
+      "architecture": [
+        "Objective -> Workflow -> Knowledge -> Evidence map -> Next actions"
+      ],
+      "case_id": "career",
+      "evidence": [
+        "ai-data-opportunity.md",
+        "business-problem-hypotheses.md",
+        "company-analysis.md",
+        "evidence-map.md",
+        "gaps.md",
+        "interview-brief.md",
+        "role-fit.md",
+        "value-proposition.md"
+      ],
+      "inputs": [
+        "role description",
+        "company evidence",
+        "profile/portfolio evidence"
+      ],
+      "lessons": [
+        "typed claims make overclaiming visible"
+      ],
+      "limitations": [
+        "evidence quality depends on supplied inputs"
+      ],
+      "problem": "Convert a role description and supplied evidence into a complete, evidence-typed application package.",
+      "result": [
+        "complete artifact set",
+        "no invented personal or company fact"
+      ],
+      "title": "Career Intelligence"
+    },
+    {
+      "approach": [
+        "deterministic theme classification",
+        "entity detection",
+        "opportunity hypotheses"
+      ],
+      "architecture": [
+        "Evidence -> Themes -> Trends -> Opportunities -> Business cases"
+      ],
+      "case_id": "life-sciences",
+      "evidence": [
+        "business-cases.md",
+        "entities.md",
+        "evidence-map.md",
+        "monitoring-digest.md",
+        "opportunities.md",
+        "recurring-problems.md",
+        "themes.md",
+        "trends.md"
+      ],
+      "inputs": [
+        "dated monitoring records"
+      ],
+      "lessons": [
+        "uncertainty must stay visible"
+      ],
+      "limitations": [
+        "opportunity value is a hypothesis, not measured"
+      ],
+      "problem": "Classify a monitoring evidence set into themes, entities and cautious trends, then propose opportunities.",
+      "result": [
+        "recurring themes and hypotheses with provenance"
+      ],
+      "title": "Life Sciences Intelligence"
+    },
+    {
+      "approach": [
+        "outcome reconciliation",
+        "champion/challenger evaluation"
+      ],
+      "architecture": [
+        "Prediction -> Decision -> Execution -> Outcome -> Learning"
+      ],
+      "case_id": "adaptive-learning",
+      "evidence": [
+        "outcome ledger",
+        "model-refresh report"
+      ],
+      "inputs": [
+        "canonical runtime history",
+        "outcome ledger"
+      ],
+      "lessons": [
+        "guarded refresh prevents silent regressions"
+      ],
+      "limitations": [
+        "small samples are reported as insufficient"
+      ],
+      "problem": "Reconcile predictions with real outcomes and guard model refresh.",
+      "result": [
+        "prediction error persisted; no automatic promotion"
+      ],
+      "title": "Adaptive execution / predictive learning"
+    }
+  ],
+  "generated_at": "2026-09-19T21:42:31Z",
+  "kind": "external_evidence_pack",
+  "limitations": [
+    "value metrics are computed from this dogfood run only",
+    "sample inputs are labelled SAMPLE and are not real client data"
+  ],
+  "metrics": [
+    {
+      "evidence": true,
+      "name": "time_to_usable_deliverable_s",
+      "source": "dogfood timing",
+      "unit": "seconds",
+      "value": 0.2253
+    },
+    {
+      "evidence": true,
+      "name": "evidence_coverage",
+      "source": "acceptance matrix",
+      "unit": "ratio",
+      "value": 1.0
+    },
+    {
+      "evidence": true,
+      "name": "source_coverage",
+      "source": "ingestion manifest",
+      "unit": "sources",
+      "value": 16
+    },
+    {
+      "evidence": true,
+      "name": "output_completeness",
+      "source": "workflow artifacts",
+      "unit": "ratio",
+      "value": 1.0
+    },
+    {
+      "evidence": true,
+      "name": "prediction_error",
+      "source": "outcome ledger",
+      "unit": "mean_absolute_error",
+      "value": 720.65
+    },
+    {
+      "evidence": true,
+      "name": "outcome_capture_completeness",
+      "source": "outcome ledger",
+      "unit": "ratio",
+      "value": 1.0
+    },
+    {
+      "evidence": true,
+      "name": "unresolved_unknowns",
+      "source": "workflow unknowns",
+      "unit": "count",
+      "value": 5
+    },
+    {
+      "evidence": true,
+      "name": "corrections_required",
+      "source": "review findings",
+      "unit": "count",
+      "value": 0
+    },
+    {
+      "evidence": true,
+      "name": "reuse_across_workflow_families",
+      "source": "workflow families",
+      "unit": "families",
+      "value": 3
+    }
+  ],
+  "reproducibility": {
+    "command": "scripts/trajectory demo portfolio",
+    "inputs": "SAMPLE inputs only, clearly labelled",
+    "privacy_safe": true,
+    "uses_private_data": false
+  },
+  "schema_version": 1,
+  "trust_boundaries": {
+    "clean": true,
+    "human_gates": [
+      "GO COMMIT",
+      "exact-head CI",
+      "GO MERGE"
+    ],
+    "release_git_writes_from_intelligence": 0,
+    "scanned_files": 0
+  },
+  "version": "m064-m071.1"
+}

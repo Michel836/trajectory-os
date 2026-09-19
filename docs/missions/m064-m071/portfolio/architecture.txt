@@ -1,0 +1,27 @@
+Value chain (deterministic):
+
+Objective
+  |
+  v
+  Project / Workflow
+    |
+    v
+    Knowledge
+      |
+      v
+      Prediction
+        |
+        v
+        Decision
+          |
+          v
+          Execution
+            |
+            v
+            Validation
+              |
+              v
+              Outcome
+                |
+                v
+                Learning

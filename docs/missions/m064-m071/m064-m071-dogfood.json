@@ -1,0 +1,1398 @@
+{
+  "acceptance": {
+    "cases": [
+      {
+        "case_id": "I01",
+        "category": "INPUTS",
+        "description": "manifest is deterministic for identical inputs",
+        "detail": "d3bb0c368dfc9464",
+        "passed": true
+      },
+      {
+        "case_id": "I02",
+        "category": "INPUTS",
+        "description": "every record carries origin/hash/location",
+        "detail": "7 records",
+        "passed": true
+      },
+      {
+        "case_id": "I03",
+        "category": "INPUTS",
+        "description": "duplicate content is detected",
+        "detail": "duplicate status present",
+        "passed": true
+      },
+      {
+        "case_id": "I04",
+        "category": "INPUTS",
+        "description": "duplicate references the original source",
+        "detail": "1 duplicate(s)",
+        "passed": true
+      },
+      {
+        "case_id": "I05",
+        "category": "INPUTS",
+        "description": "changed source is detected",
+        "detail": "1 changed",
+        "passed": true
+      },
+      {
+        "case_id": "I06",
+        "category": "INPUTS",
+        "description": "changed source records the prior hash",
+        "detail": "changed_from set",
+        "passed": true
+      },
+      {
+        "case_id": "I07",
+        "category": "INPUTS",
+        "description": "unsupported format is an explicit result",
+        "detail": "1 unsupported",
+        "passed": true
+      },
+      {
+        "case_id": "I08",
+        "category": "INPUTS",
+        "description": "no silent OCR claim for a raw PDF",
+        "detail": "OCR limitation recorded",
+        "passed": true
+      },
+      {
+        "case_id": "I09",
+        "category": "INPUTS",
+        "description": "unsupported raw PDF is not parsed",
+        "detail": "UNSUPPORTED parse status",
+        "passed": true
+      },
+      {
+        "case_id": "I10",
+        "category": "INPUTS",
+        "description": "sensitivity override is honoured",
+        "detail": "RESTRICTED record",
+        "passed": true
+      },
+      {
+        "case_id": "I11",
+        "category": "INPUTS",
+        "description": "restricted content is not persisted",
+        "detail": "RESTRICTED content withheld",
+        "passed": true
+      },
+      {
+        "case_id": "I12",
+        "category": "INPUTS",
+        "description": "secret-shaped filename is classified sensitive",
+        "detail": "CONFIDENTIAL",
+        "passed": true
+      },
+      {
+        "case_id": "I13",
+        "category": "INPUTS",
+        "description": "manifest is context, not canonical runtime truth",
+        "detail": "canonical=False",
+        "passed": true
+      },
+      {
+        "case_id": "I14",
+        "category": "INPUTS",
+        "description": "manifest round-trips through persistence",
+        "detail": "load_manifest",
+        "passed": true
+      },
+      {
+        "case_id": "I15",
+        "category": "INPUTS",
+        "description": "usable sources bridge into knowledge adapters",
+        "detail": "4 adapters",
+        "passed": true
+      },
+      {
+        "case_id": "I16",
+        "category": "INPUTS",
+        "description": "secret-shaped content is redacted before persist",
+        "detail": "secret redacted",
+        "passed": true
+      },
+      {
+        "case_id": "C01",
+        "category": "CAREER",
+        "description": "career produces the complete artifact set",
+        "detail": "8 artifacts",
+        "passed": true
+      },
+      {
+        "case_id": "C02",
+        "category": "CAREER",
+        "description": "career uses FACT/EVIDENCE/INFERENCE/HYPOTHESIS",
+        "detail": "EVIDENCE, FACT, HYPOTHESIS, INFERENCE",
+        "passed": true
+      },
+      {
+        "case_id": "C03",
+        "category": "CAREER",
+        "description": "FACT claims come only from profile inputs",
+        "detail": "1 facts",
+        "passed": true
+      },
+      {
+        "case_id": "C04",
+        "category": "CAREER",
+        "description": "company statements are grounded evidence",
+        "detail": "company evidence grounded",
+        "passed": true
+      },
+      {
+        "case_id": "C05",
+        "category": "CAREER",
+        "description": "no personal fact is invented without profile",
+        "detail": "empty value proposition",
+        "passed": true
+      },
+      {
+        "case_id": "C06",
+        "category": "CAREER",
+        "description": "no company fact is invented without evidence",
+        "detail": "company unknown recorded",
+        "passed": true
+      },
+      {
+        "case_id": "C07",
+        "category": "CAREER",
+        "description": "evidence map references each claim source",
+        "detail": "13 claims mapped",
+        "passed": true
+      },
+      {
+        "case_id": "C08",
+        "category": "CAREER",
+        "description": "gaps artifact lists unevidenced requirements",
+        "detail": "gaps structured",
+        "passed": true
+      },
+      {
+        "case_id": "C09",
+        "category": "CAREER",
+        "description": "value proposition only claims matched evidence",
+        "detail": "value proposition grounded",
+        "passed": true
+      },
+      {
+        "case_id": "C10",
+        "category": "CAREER",
+        "description": "next actions carry rationale/source/urgency",
+        "detail": "3 actions",
+        "passed": true
+      },
+      {
+        "case_id": "C11",
+        "category": "CAREER",
+        "description": "LifeOS-compatible note is emitted",
+        "detail": "lifeos note",
+        "passed": true
+      },
+      {
+        "case_id": "C12",
+        "category": "CAREER",
+        "description": "business problems are HYPOTHESIS unless evidenced",
+        "detail": "problem labels bounded",
+        "passed": true
+      },
+      {
+        "case_id": "L01",
+        "category": "LIFE_SCIENCES",
+        "description": "each event is an evidence-linked observation",
+        "detail": "3 observations",
+        "passed": true
+      },
+      {
+        "case_id": "L02",
+        "category": "LIFE_SCIENCES",
+        "description": "themes are classified from source text",
+        "detail": "oncology theme",
+        "passed": true
+      },
+      {
+        "case_id": "L03",
+        "category": "LIFE_SCIENCES",
+        "description": "companies/entities are linked to evidence",
+        "detail": "entity surfaced",
+        "passed": true
+      },
+      {
+        "case_id": "L04",
+        "category": "LIFE_SCIENCES",
+        "description": "opportunity hypotheses are labelled",
+        "detail": "hypotheses labelled",
+        "passed": true
+      },
+      {
+        "case_id": "L05",
+        "category": "LIFE_SCIENCES",
+        "description": "trends carry an uncertainty label",
+        "detail": "uncertainty present",
+        "passed": true
+      },
+      {
+        "case_id": "L06",
+        "category": "LIFE_SCIENCES",
+        "description": "business cases preserve provenance",
+        "detail": "evidence refs",
+        "passed": true
+      },
+      {
+        "case_id": "L07",
+        "category": "LIFE_SCIENCES",
+        "description": "no unsupported company claim is made",
+        "detail": "labels bounded",
+        "passed": true
+      },
+      {
+        "case_id": "L08",
+        "category": "LIFE_SCIENCES",
+        "description": "life-sciences artifacts persist",
+        "detail": "analysis persisted",
+        "passed": true
+      },
+      {
+        "case_id": "L09",
+        "category": "LIFE_SCIENCES",
+        "description": "next actions are surfaced",
+        "detail": "3 actions",
+        "passed": true
+      },
+      {
+        "case_id": "L10",
+        "category": "LIFE_SCIENCES",
+        "description": "recurring problems require >=2 records",
+        "detail": "recurrence threshold",
+        "passed": true
+      },
+      {
+        "case_id": "O01",
+        "category": "LIFEOS",
+        "description": "what changed is answered",
+        "detail": "1 changed",
+        "passed": true
+      },
+      {
+        "case_id": "O02",
+        "category": "LIFEOS",
+        "description": "what is blocked is answered",
+        "detail": "1 blocked",
+        "passed": true
+      },
+      {
+        "case_id": "O03",
+        "category": "LIFEOS",
+        "description": "human decisions are surfaced as attention",
+        "detail": "human gate",
+        "passed": true
+      },
+      {
+        "case_id": "O04",
+        "category": "LIFEOS",
+        "description": "stale evidence is surfaced as attention",
+        "detail": "stale evidence",
+        "passed": true
+      },
+      {
+        "case_id": "O05",
+        "category": "LIFEOS",
+        "description": "missing outcome feedback is surfaced",
+        "detail": "outcome feedback",
+        "passed": true
+      },
+      {
+        "case_id": "O06",
+        "category": "LIFEOS",
+        "description": "what can wait is answered",
+        "detail": "1 can wait",
+        "passed": true
+      },
+      {
+        "case_id": "O07",
+        "category": "LIFEOS",
+        "description": "next best actions are produced",
+        "detail": "6 actions",
+        "passed": true
+      },
+      {
+        "case_id": "O08",
+        "category": "LIFEOS",
+        "description": "every action carries a rationale",
+        "detail": "rationale present",
+        "passed": true
+      },
+      {
+        "case_id": "O09",
+        "category": "LIFEOS",
+        "description": "every action carries an urgency basis",
+        "detail": "urgency present",
+        "passed": true
+      },
+      {
+        "case_id": "O10",
+        "category": "LIFEOS",
+        "description": "meaningful alternatives are offered",
+        "detail": "alternatives present",
+        "passed": true
+      },
+      {
+        "case_id": "O11",
+        "category": "LIFEOS",
+        "description": "operational view persists",
+        "detail": "operations persisted",
+        "passed": true
+      },
+      {
+        "case_id": "O12",
+        "category": "LIFEOS",
+        "description": "operational view is a projection, not canonical",
+        "detail": "canonical=False",
+        "passed": true
+      },
+      {
+        "case_id": "U01",
+        "category": "OUTCOMES",
+        "description": "prediction is linked to decision and execution",
+        "detail": "link present",
+        "passed": true
+      },
+      {
+        "case_id": "U02",
+        "category": "OUTCOMES",
+        "description": "actual outcome is linked with provenance",
+        "detail": "measured actual",
+        "passed": true
+      },
+      {
+        "case_id": "U03",
+        "category": "OUTCOMES",
+        "description": "prediction error is computed and persisted",
+        "detail": "absolute error 30.0",
+        "passed": true
+      },
+      {
+        "case_id": "U04",
+        "category": "OUTCOMES",
+        "description": "delayed outcome appends a new revision",
+        "detail": "revision 2",
+        "passed": true
+      },
+      {
+        "case_id": "U05",
+        "category": "OUTCOMES",
+        "description": "UNKNOWN actual stays UNKNOWN",
+        "detail": "repairs UNKNOWN",
+        "passed": true
+      },
+      {
+        "case_id": "U06",
+        "category": "OUTCOMES",
+        "description": "re-submission is idempotent",
+        "detail": "2 immutable revisions",
+        "passed": true
+      },
+      {
+        "case_id": "U07",
+        "category": "OUTCOMES",
+        "description": "outcome history is immutable and ordered",
+        "detail": "revisions [1, 2]",
+        "passed": true
+      },
+      {
+        "case_id": "U08",
+        "category": "OUTCOMES",
+        "description": "recommended vs selected action is recorded",
+        "detail": "followed_recommendation=False",
+        "passed": true
+      },
+      {
+        "case_id": "U09",
+        "category": "OUTCOMES",
+        "description": "no success is inferred from silence",
+        "detail": "PARTIAL",
+        "passed": true
+      },
+      {
+        "case_id": "U10",
+        "category": "OUTCOMES",
+        "description": "reconciliation summary reports completeness",
+        "detail": "summary computed",
+        "passed": true
+      },
+      {
+        "case_id": "A01",
+        "category": "ACTIVE_LEARNING",
+        "description": "dataset snapshot identity is recorded",
+        "detail": "f9f09af49d62c6bf",
+        "passed": true
+      },
+      {
+        "case_id": "A02",
+        "category": "ACTIVE_LEARNING",
+        "description": "champion and challenger are explicit",
+        "detail": "champion + challenger",
+        "passed": true
+      },
+      {
+        "case_id": "A03",
+        "category": "ACTIVE_LEARNING",
+        "description": "minimum sample threshold is enforced",
+        "detail": "INSUFFICIENT_DATA",
+        "passed": true
+      },
+      {
+        "case_id": "A04",
+        "category": "ACTIVE_LEARNING",
+        "description": "calibration comparison is reported",
+        "detail": "calibration compared",
+        "passed": true
+      },
+      {
+        "case_id": "A05",
+        "category": "ACTIVE_LEARNING",
+        "description": "no-promotion is a valid result",
+        "detail": "NO_PROMOTION",
+        "passed": true
+      },
+      {
+        "case_id": "A06",
+        "category": "ACTIVE_LEARNING",
+        "description": "rollback metadata is present",
+        "detail": "rollback path",
+        "passed": true
+      },
+      {
+        "case_id": "A07",
+        "category": "ACTIVE_LEARNING",
+        "description": "no policy mutation is ever claimed",
+        "detail": "policy_mutation=False",
+        "passed": true
+      },
+      {
+        "case_id": "A08",
+        "category": "ACTIVE_LEARNING",
+        "description": "no hidden route/scheduler authority",
+        "detail": "authority unchanged",
+        "passed": true
+      },
+      {
+        "case_id": "A09",
+        "category": "ACTIVE_LEARNING",
+        "description": "registry entry requires human action",
+        "detail": "not auto-registered",
+        "passed": true
+      },
+      {
+        "case_id": "A10",
+        "category": "ACTIVE_LEARNING",
+        "description": "drift indicator is reported or explicit",
+        "detail": "UNSUPPORTED",
+        "passed": true
+      },
+      {
+        "case_id": "K01",
+        "category": "COCKPIT",
+        "description": "default projection is human-readable",
+        "detail": "four sections",
+        "passed": true
+      },
+      {
+        "case_id": "K02",
+        "category": "COCKPIT",
+        "description": "why-this is present for every action",
+        "detail": "rationale visible",
+        "passed": true
+      },
+      {
+        "case_id": "K03",
+        "category": "COCKPIT",
+        "description": "uncertainty is visible",
+        "detail": "confidence visible",
+        "passed": true
+      },
+      {
+        "case_id": "K04",
+        "category": "COCKPIT",
+        "description": "evidence drill-down is referenced",
+        "detail": "drilldown reference",
+        "passed": true
+      },
+      {
+        "case_id": "K05",
+        "category": "COCKPIT",
+        "description": "human decision visibility",
+        "detail": "human gate visible",
+        "passed": true
+      },
+      {
+        "case_id": "K06",
+        "category": "COCKPIT",
+        "description": "projects are categorised",
+        "detail": "statuses in closed set",
+        "passed": true
+      },
+      {
+        "case_id": "K07",
+        "category": "COCKPIT",
+        "description": "cockpit is strictly read-only",
+        "detail": "read_only",
+        "passed": true
+      },
+      {
+        "case_id": "K08",
+        "category": "COCKPIT",
+        "description": "cockpit persists text and HTML projections",
+        "detail": "projections persisted",
+        "passed": true
+      },
+      {
+        "case_id": "P01",
+        "category": "PORTFOLIO",
+        "description": "executive overview covers the required headings",
+        "detail": "headings present",
+        "passed": true
+      },
+      {
+        "case_id": "P02",
+        "category": "PORTFOLIO",
+        "description": "three case studies are present",
+        "detail": "3",
+        "passed": true
+      },
+      {
+        "case_id": "P03",
+        "category": "PORTFOLIO",
+        "description": "each case study has the required sections",
+        "detail": "sections present",
+        "passed": true
+      },
+      {
+        "case_id": "P04",
+        "category": "PORTFOLIO",
+        "description": "architecture chain is deterministic",
+        "detail": "chain fixed",
+        "passed": true
+      },
+      {
+        "case_id": "P05",
+        "category": "PORTFOLIO",
+        "description": "architecture DOT source is provided",
+        "detail": "DOT source",
+        "passed": true
+      },
+      {
+        "case_id": "P06",
+        "category": "PORTFOLIO",
+        "description": "evidence pack contains metrics + trust",
+        "detail": "pack complete",
+        "passed": true
+      },
+      {
+        "case_id": "P07",
+        "category": "PORTFOLIO",
+        "description": "privacy-safe demo command is referenced",
+        "detail": "demo command",
+        "passed": true
+      },
+      {
+        "case_id": "P08",
+        "category": "PORTFOLIO",
+        "description": "no metric is emitted without an evidence source",
+        "detail": "9 metrics sourced",
+        "passed": true
+      },
+      {
+        "case_id": "P09",
+        "category": "PORTFOLIO",
+        "description": "build-in-public material is draft-only",
+        "detail": "drafts unpublished",
+        "passed": true
+      },
+      {
+        "case_id": "P10",
+        "category": "PORTFOLIO",
+        "description": "portfolio documents persist to disk",
+        "detail": "executive overview written",
+        "passed": true
+      },
+      {
+        "case_id": "T01",
+        "category": "TRUST",
+        "description": "realworld layer contains no release Git verbs",
+        "detail": "clean",
+        "passed": true
+      },
+      {
+        "case_id": "T02",
+        "category": "TRUST",
+        "description": "realworld layer has no process/git write calls",
+        "detail": "clean",
+        "passed": true
+      },
+      {
+        "case_id": "T03",
+        "category": "TRUST",
+        "description": "model refresh never mutates policy",
+        "detail": "no policy mutation",
+        "passed": true
+      },
+      {
+        "case_id": "T04",
+        "category": "TRUST",
+        "description": "model refresh never auto-registers",
+        "detail": "human action required",
+        "passed": true
+      },
+      {
+        "case_id": "T05",
+        "category": "TRUST",
+        "description": "cockpit is read-only",
+        "detail": "read_only",
+        "passed": true
+      },
+      {
+        "case_id": "T06",
+        "category": "TRUST",
+        "description": "portfolio never auto-publishes",
+        "detail": "auto_publish=False",
+        "passed": true
+      },
+      {
+        "case_id": "T07",
+        "category": "TRUST",
+        "description": "no prose-success inference from silence",
+        "detail": "UNKNOWN/PARTIAL counted, not success",
+        "passed": true
+      },
+      {
+        "case_id": "T08",
+        "category": "TRUST",
+        "description": "GO COMMIT and GO MERGE gates are unchanged",
+        "detail": "release gates intact",
+        "passed": true
+      },
+      {
+        "case_id": "T09",
+        "category": "TRUST",
+        "description": "semantic patch identity is untouched",
+        "detail": "no git write call sites",
+        "passed": true
+      },
+      {
+        "case_id": "T10",
+        "category": "TRUST",
+        "description": "every acceptance case carries machine evidence",
+        "detail": "details present",
+        "passed": true
+      }
+    ],
+    "category_counts": {
+      "ACTIVE_LEARNING": {
+        "failed": 0,
+        "passed": 10
+      },
+      "CAREER": {
+        "failed": 0,
+        "passed": 12
+      },
+      "COCKPIT": {
+        "failed": 0,
+        "passed": 8
+      },
+      "INPUTS": {
+        "failed": 0,
+        "passed": 16
+      },
+      "LIFEOS": {
+        "failed": 0,
+        "passed": 12
+      },
+      "LIFE_SCIENCES": {
+        "failed": 0,
+        "passed": 10
+      },
+      "OUTCOMES": {
+        "failed": 0,
+        "passed": 10
+      },
+      "PORTFOLIO": {
+        "failed": 0,
+        "passed": 10
+      },
+      "TRUST": {
+        "failed": 0,
+        "passed": 10
+      }
+    },
+    "failed": 0,
+    "generated_at": "2026-09-19T21:42:31Z",
+    "kind": "realworld_acceptance_matrix",
+    "passed": 98,
+    "realworld_version": "m064-m071.1",
+    "schema_version": 1,
+    "total": 98
+  },
+  "career_artifacts": [
+    "ai-data-opportunity.md",
+    "business-problem-hypotheses.md",
+    "company-analysis.md",
+    "evidence-map.md",
+    "gaps.md",
+    "interview-brief.md",
+    "role-fit.md",
+    "value-proposition.md"
+  ],
+  "career_input": "SAMPLE",
+  "cockpit": {
+    "attention": [
+      {
+        "blocked_reason": null,
+        "changed_at": null,
+        "dependencies": [],
+        "failed_reason": null,
+        "human_gate": "GO COMMIT",
+        "lifecycle": "RUNNING",
+        "mission_id": "mission-gate",
+        "next_action": null,
+        "outcome_recorded": true,
+        "phase": "",
+        "priority": 3,
+        "project_id": "21c19e59088a7027c14ac4c6baa2e09b14cfef4f64d3415f90c935167a1c2584",
+        "readiness": "UNKNOWN",
+        "reason": "human decision required: GO COMMIT",
+        "stale_evidence_since": null,
+        "waiting_reason": null
+      },
+      {
+        "blocked_reason": "upstream dependency",
+        "changed_at": null,
+        "dependencies": [],
+        "failed_reason": null,
+        "human_gate": null,
+        "lifecycle": "RUNNING",
+        "mission_id": "mission-blocked",
+        "next_action": null,
+        "outcome_recorded": true,
+        "phase": "",
+        "priority": 3,
+        "project_id": "21c19e59088a7027c14ac4c6baa2e09b14cfef4f64d3415f90c935167a1c2584",
+        "readiness": "UNKNOWN",
+        "reason": "blocked: upstream dependency",
+        "stale_evidence_since": null,
+        "waiting_reason": null
+      },
+      {
+        "blocked_reason": null,
+        "changed_at": null,
+        "dependencies": [],
+        "failed_reason": null,
+        "human_gate": null,
+        "lifecycle": "RUNNING",
+        "mission_id": "mission-outcome",
+        "next_action": null,
+        "outcome_recorded": false,
+        "phase": "",
+        "priority": 3,
+        "project_id": "21c19e59088a7027c14ac4c6baa2e09b14cfef4f64d3415f90c935167a1c2584",
+        "readiness": "UNKNOWN",
+        "reason": "missing outcome feedback",
+        "stale_evidence_since": null,
+        "waiting_reason": null
+      }
+    ],
+    "canonical": false,
+    "drilldown": {
+      "note": "Git/agent internals are drill-down evidence, not primary UI",
+      "operations": "realworld/operations/dogfood-cockpit/operations.json",
+      "outcome_ledger": "realworld/outcomes/ledger.jsonl"
+    },
+    "family": "DECISION_COCKPIT",
+    "generated_at": "2026-09-19T21:42:31Z",
+    "intelligence": {
+      "note": "predictions are advisory; actual outcomes are measured or explicitly entered",
+      "predictions": [
+        {
+          "prediction": 720.65,
+          "source": "outcome ledger",
+          "target": "duration_s",
+          "uncertainty": "reported per prediction"
+        }
+      ],
+      "reconciliation": {
+        "followed_recommendation_rate": null,
+        "kind": "outcome_reconciliation_summary",
+        "link_count": 20,
+        "mean_absolute_error": 720.65,
+        "mean_relative_error": 0.6153461538461539,
+        "outcome_capture_completeness": 1.0,
+        "partial": 0,
+        "read_only": true,
+        "reconciled": 20,
+        "schema_version": 1,
+        "unknown": 0
+      }
+    },
+    "kind": "decision_cockpit_view",
+    "next_actions": [
+      {
+        "action": "Resolve mission-gate: human decision required: GO COMMIT",
+        "alternatives": [
+          "escalate to the accountable owner"
+        ],
+        "confidence": null,
+        "dependencies": [],
+        "expected_effort": null,
+        "kind": "HUMAN_DECISION",
+        "rationale": "human decision required: GO COMMIT",
+        "source": "mission:mission-gate",
+        "uncertainty": "HIGH",
+        "urgency": "CRITICAL"
+      },
+      {
+        "action": "Resolve mission-blocked: blocked: upstream dependency",
+        "alternatives": [
+          "reassign resources",
+          "reduce scope and continue"
+        ],
+        "confidence": null,
+        "dependencies": [],
+        "expected_effort": null,
+        "kind": "UNBLOCK",
+        "rationale": "blocked: upstream dependency",
+        "source": "mission:mission-blocked",
+        "uncertainty": "MEDIUM",
+        "urgency": "HIGH"
+      },
+      {
+        "action": "Resolve mission-outcome: missing outcome feedback",
+        "alternatives": [
+          "record an explicit UNKNOWN outcome"
+        ],
+        "confidence": null,
+        "dependencies": [],
+        "expected_effort": null,
+        "kind": "OUTCOME_FEEDBACK",
+        "rationale": "missing outcome feedback",
+        "source": "mission:mission-outcome",
+        "uncertainty": "MEDIUM",
+        "urgency": "MEDIUM"
+      }
+    ],
+    "projects": [
+      {
+        "lifecycle": "ACTIVE",
+        "name": "Dogfood operations",
+        "project_id": "21c19e59088a7027c14ac4c6baa2e09b14cfef4f64d3415f90c935167a1c2584",
+        "status": "BLOCKED",
+        "summary": "1 blocked/failed mission(s) out of 3"
+      }
+    ],
+    "read_only": true,
+    "realworld_version": "m064-m071.1",
+    "schema_version": 1,
+    "workflow_id": "dogfood-cockpit"
+  },
+  "fixture_row_count": 0,
+  "generated_at": "2026-09-19T21:42:31Z",
+  "history_note": "extracted read-only from .trajectory-pi/runs; rows are labelled REAL and no missing metric is imputed",
+  "history_source": "REAL",
+  "kind": "m064_m071_dogfood_evidence",
+  "life_sciences_artifacts": [
+    "business-cases.md",
+    "entities.md",
+    "evidence-map.md",
+    "monitoring-digest.md",
+    "opportunities.md",
+    "recurring-problems.md",
+    "themes.md",
+    "trends.md"
+  ],
+  "life_sciences_input": "SAMPLE",
+  "limitations": [
+    "prediction error is the canonical run ETA-range midpoint vs measured elapsed_seconds; it is a point estimate"
+  ],
+  "marker": "M064_M071_REAL_WORLD_OS_PORTFOLIO_PROOF_COMPLETE",
+  "model_refresh": {
+    "rationale": [
+      "primary metric: auc",
+      "champion=0.5222222222222223 challenger=0.5222222222222223",
+      "beats champion by required margin: 0.0",
+      "calibration acceptable: True",
+      "drift acceptable: True",
+      "promotion withheld because an evidence threshold was not met"
+    ],
+    "sample_count": 153,
+    "snapshot_id": "faeeb934289eb75c608214c1a609c586",
+    "state": "NO_PROMOTION"
+  },
+  "operations": {
+    "attention": [
+      {
+        "blocked_reason": "waiting on upstream dependency",
+        "changed_at": null,
+        "dependencies": [],
+        "failed_reason": null,
+        "human_gate": null,
+        "lifecycle": "RUNNING",
+        "mission_id": "mission-blocked",
+        "next_action": null,
+        "outcome_recorded": true,
+        "phase": "",
+        "priority": 3,
+        "project_id": "21c19e59088a7027c14ac4c6baa2e09b14cfef4f64d3415f90c935167a1c2584",
+        "readiness": "UNKNOWN",
+        "reason": "blocked: waiting on upstream dependency",
+        "stale_evidence_since": null,
+        "waiting_reason": null
+      },
+      {
+        "blocked_reason": null,
+        "changed_at": null,
+        "dependencies": [],
+        "failed_reason": null,
+        "human_gate": "GO COMMIT",
+        "lifecycle": "RUNNING",
+        "mission_id": "mission-gate",
+        "next_action": null,
+        "outcome_recorded": true,
+        "phase": "",
+        "priority": 3,
+        "project_id": "21c19e59088a7027c14ac4c6baa2e09b14cfef4f64d3415f90c935167a1c2584",
+        "readiness": "UNKNOWN",
+        "reason": "human decision required: GO COMMIT",
+        "stale_evidence_since": null,
+        "waiting_reason": null
+      },
+      {
+        "blocked_reason": null,
+        "changed_at": null,
+        "dependencies": [],
+        "failed_reason": null,
+        "human_gate": null,
+        "lifecycle": "RUNNING",
+        "mission_id": "mission-stale",
+        "next_action": null,
+        "outcome_recorded": true,
+        "phase": "",
+        "priority": 3,
+        "project_id": "21c19e59088a7027c14ac4c6baa2e09b14cfef4f64d3415f90c935167a1c2584",
+        "readiness": "UNKNOWN",
+        "reason": "stale evidence since 2025-12-01",
+        "stale_evidence_since": "2025-12-01",
+        "waiting_reason": null
+      },
+      {
+        "blocked_reason": null,
+        "changed_at": null,
+        "dependencies": [],
+        "failed_reason": null,
+        "human_gate": null,
+        "lifecycle": "RUNNING",
+        "mission_id": "mission-outcome",
+        "next_action": null,
+        "outcome_recorded": false,
+        "phase": "",
+        "priority": 3,
+        "project_id": "21c19e59088a7027c14ac4c6baa2e09b14cfef4f64d3415f90c935167a1c2584",
+        "readiness": "UNKNOWN",
+        "reason": "missing outcome feedback",
+        "stale_evidence_since": null,
+        "waiting_reason": null
+      }
+    ],
+    "blocked": [
+      {
+        "blocked_reason": "waiting on upstream dependency",
+        "changed_at": null,
+        "dependencies": [],
+        "failed_reason": null,
+        "human_gate": null,
+        "lifecycle": "RUNNING",
+        "mission_id": "mission-blocked",
+        "next_action": null,
+        "outcome_recorded": true,
+        "phase": "",
+        "priority": 3,
+        "project_id": "21c19e59088a7027c14ac4c6baa2e09b14cfef4f64d3415f90c935167a1c2584",
+        "readiness": "UNKNOWN",
+        "reason": "blocked: waiting on upstream dependency",
+        "stale_evidence_since": null,
+        "waiting_reason": null
+      }
+    ],
+    "can_wait": [
+      {
+        "blocked_reason": null,
+        "changed_at": null,
+        "dependencies": [],
+        "failed_reason": null,
+        "human_gate": null,
+        "lifecycle": "RUNNING",
+        "mission_id": "mission-wait",
+        "next_action": null,
+        "outcome_recorded": true,
+        "phase": "",
+        "priority": 1,
+        "project_id": "21c19e59088a7027c14ac4c6baa2e09b14cfef4f64d3415f90c935167a1c2584",
+        "readiness": "UNKNOWN",
+        "reason": "low priority and not blocked; safe to defer",
+        "stale_evidence_since": null,
+        "waiting_reason": null
+      }
+    ],
+    "canonical": false,
+    "changed": [
+      {
+        "blocked_reason": null,
+        "changed_at": "2026-09-19T21:42:31Z",
+        "dependencies": [],
+        "failed_reason": null,
+        "human_gate": null,
+        "lifecycle": "RUNNING",
+        "mission_id": "mission-plan",
+        "next_action": "Review the plan change",
+        "outcome_recorded": true,
+        "phase": "",
+        "priority": 3,
+        "project_id": "21c19e59088a7027c14ac4c6baa2e09b14cfef4f64d3415f90c935167a1c2584",
+        "readiness": "UNKNOWN",
+        "reason": "changed at 2026-09-19T21:42:31Z",
+        "stale_evidence_since": null,
+        "waiting_reason": null
+      }
+    ],
+    "family": "LIFEOS_OPERATIONAL_INTELLIGENCE",
+    "generated_at": "2026-09-19T21:42:31Z",
+    "kind": "lifeos_operations_report",
+    "next_actions": [
+      {
+        "action": "Resolve mission-blocked: blocked: waiting on upstream dependency",
+        "alternatives": [
+          "reassign resources",
+          "reduce scope and continue"
+        ],
+        "confidence": null,
+        "dependencies": [],
+        "expected_effort": null,
+        "kind": "UNBLOCK",
+        "rationale": "blocked: waiting on upstream dependency",
+        "source": "mission:mission-blocked",
+        "uncertainty": "MEDIUM",
+        "urgency": "HIGH"
+      },
+      {
+        "action": "Resolve mission-gate: human decision required: GO COMMIT",
+        "alternatives": [
+          "escalate to the accountable owner"
+        ],
+        "confidence": null,
+        "dependencies": [],
+        "expected_effort": null,
+        "kind": "HUMAN_DECISION",
+        "rationale": "human decision required: GO COMMIT",
+        "source": "mission:mission-gate",
+        "uncertainty": "HIGH",
+        "urgency": "CRITICAL"
+      },
+      {
+        "action": "Resolve mission-stale: stale evidence since 2025-12-01",
+        "alternatives": [
+          "re-ingest the source",
+          "mark the evidence as acceptable"
+        ],
+        "confidence": null,
+        "dependencies": [],
+        "expected_effort": null,
+        "kind": "REFRESH_EVIDENCE",
+        "rationale": "stale evidence since 2025-12-01",
+        "source": "mission:mission-stale",
+        "uncertainty": "MEDIUM",
+        "urgency": "MEDIUM"
+      },
+      {
+        "action": "Resolve mission-outcome: missing outcome feedback",
+        "alternatives": [
+          "record an explicit UNKNOWN outcome"
+        ],
+        "confidence": null,
+        "dependencies": [],
+        "expected_effort": null,
+        "kind": "OUTCOME_FEEDBACK",
+        "rationale": "missing outcome feedback",
+        "source": "mission:mission-outcome",
+        "uncertainty": "MEDIUM",
+        "urgency": "MEDIUM"
+      },
+      {
+        "action": "Review the change on mission-plan and decide next step",
+        "alternatives": [
+          "defer to the next review window"
+        ],
+        "confidence": null,
+        "dependencies": [],
+        "expected_effort": null,
+        "kind": "REVIEW",
+        "rationale": "changed at 2026-09-19T21:42:31Z",
+        "source": "mission:mission-plan",
+        "uncertainty": "LOW",
+        "urgency": "MEDIUM"
+      },
+      {
+        "action": "Defer mission-wait while higher-priority work proceeds",
+        "alternatives": [
+          "start it now if capacity is free"
+        ],
+        "confidence": null,
+        "dependencies": [],
+        "expected_effort": null,
+        "kind": "DEFER",
+        "rationale": "not blocked, low priority; safe to wait",
+        "source": "mission:mission-wait",
+        "uncertainty": "LOW",
+        "urgency": "LOW"
+      }
+    ],
+    "project": "Dogfood operations",
+    "project_id": "21c19e59088a7027c14ac4c6baa2e09b14cfef4f64d3415f90c935167a1c2584",
+    "realworld_version": "m064-m071.1",
+    "schema_version": 1,
+    "workflow_id": "dogfood-operations"
+  },
+  "outcome_reconciliation": {
+    "followed_recommendation_rate": null,
+    "kind": "outcome_reconciliation_summary",
+    "link_count": 20,
+    "mean_absolute_error": 720.65,
+    "mean_relative_error": 0.6153461538461539,
+    "outcome_capture_completeness": 1.0,
+    "partial": 0,
+    "read_only": true,
+    "reconciled": 20,
+    "schema_version": 1,
+    "unknown": 0
+  },
+  "portfolio": {
+    "documents": [
+      "README.md",
+      "architecture.dot",
+      "architecture.txt",
+      "build-in-public.json",
+      "case-studies.md",
+      "evidence-pack.json",
+      "executive-overview.md",
+      "reproducibility.md"
+    ],
+    "evidence": {
+      "acceptance": {
+        "passed": 98,
+        "total": 98
+      },
+      "case_studies": [
+        {
+          "approach": [
+            "typed claims",
+            "requirement extraction",
+            "evidence mapping"
+          ],
+          "architecture": [
+            "Objective -> Workflow -> Knowledge -> Evidence map -> Next actions"
+          ],
+          "case_id": "career",
+          "evidence": [
+            "ai-data-opportunity.md",
+            "business-problem-hypotheses.md",
+            "company-analysis.md",
+            "evidence-map.md",
+            "gaps.md",
+            "interview-brief.md",
+            "role-fit.md",
+            "value-proposition.md"
+          ],
+          "inputs": [
+            "role description",
+            "company evidence",
+            "profile/portfolio evidence"
+          ],
+          "lessons": [
+            "typed claims make overclaiming visible"
+          ],
+          "limitations": [
+            "evidence quality depends on supplied inputs"
+          ],
+          "problem": "Convert a role description and supplied evidence into a complete, evidence-typed application package.",
+          "result": [
+            "complete artifact set",
+            "no invented personal or company fact"
+          ],
+          "title": "Career Intelligence"
+        },
+        {
+          "approach": [
+            "deterministic theme classification",
+            "entity detection",
+            "opportunity hypotheses"
+          ],
+          "architecture": [
+            "Evidence -> Themes -> Trends -> Opportunities -> Business cases"
+          ],
+          "case_id": "life-sciences",
+          "evidence": [
+            "business-cases.md",
+            "entities.md",
+            "evidence-map.md",
+            "monitoring-digest.md",
+            "opportunities.md",
+            "recurring-problems.md",
+            "themes.md",
+            "trends.md"
+          ],
+          "inputs": [
+            "dated monitoring records"
+          ],
+          "lessons": [
+            "uncertainty must stay visible"
+          ],
+          "limitations": [
+            "opportunity value is a hypothesis, not measured"
+          ],
+          "problem": "Classify a monitoring evidence set into themes, entities and cautious trends, then propose opportunities.",
+          "result": [
+            "recurring themes and hypotheses with provenance"
+          ],
+          "title": "Life Sciences Intelligence"
+        },
+        {
+          "approach": [
+            "outcome reconciliation",
+            "champion/challenger evaluation"
+          ],
+          "architecture": [
+            "Prediction -> Decision -> Execution -> Outcome -> Learning"
+          ],
+          "case_id": "adaptive-learning",
+          "evidence": [
+            "outcome ledger",
+            "model-refresh report"
+          ],
+          "inputs": [
+            "canonical runtime history",
+            "outcome ledger"
+          ],
+          "lessons": [
+            "guarded refresh prevents silent regressions"
+          ],
+          "limitations": [
+            "small samples are reported as insufficient"
+          ],
+          "problem": "Reconcile predictions with real outcomes and guard model refresh.",
+          "result": [
+            "prediction error persisted; no automatic promotion"
+          ],
+          "title": "Adaptive execution / predictive learning"
+        }
+      ],
+      "corrections_required": 0,
+      "dogfood": {
+        "history_source": "REAL",
+        "real_rows": 153,
+        "workflow_families": [
+          "CAREER_INTELLIGENCE",
+          "LIFE_SCIENCES_INTELLIGENCE",
+          "LIFEOS_OPERATIONAL_INTELLIGENCE"
+        ]
+      },
+      "generated_at": "2026-09-19T21:42:31Z",
+      "kind": "portfolio_evidence",
+      "limitations": [
+        "value metrics are computed from this dogfood run only",
+        "sample inputs are labelled SAMPLE and are not real client data"
+      ],
+      "outcomes": {
+        "links": 20,
+        "prediction_error": 720.65,
+        "reconciled": 20
+      },
+      "output_completeness": 1.0,
+      "realworld_version": "m064-m071.1",
+      "schema_version": 1,
+      "source_coverage": 16,
+      "time_to_deliverable_s": 0.2253,
+      "trust": {
+        "clean": true,
+        "scanned_files": 0
+      },
+      "unknowns": 5,
+      "version": "m064-m071.1"
+    }
+  },
+  "real_row_count": 153,
+  "realworld_version": "m064-m071.1",
+  "schema_version": 1,
+  "value_metrics": [
+    {
+      "evidence": true,
+      "name": "time_to_usable_deliverable_s",
+      "source": "dogfood timing",
+      "unit": "seconds",
+      "value": 0.2253
+    },
+    {
+      "evidence": true,
+      "name": "evidence_coverage",
+      "source": "acceptance matrix",
+      "unit": "ratio",
+      "value": 1.0
+    },
+    {
+      "evidence": true,
+      "name": "source_coverage",
+      "source": "ingestion manifest",
+      "unit": "sources",
+      "value": 16
+    },
+    {
+      "evidence": true,
+      "name": "output_completeness",
+      "source": "workflow artifacts",
+      "unit": "ratio",
+      "value": 1.0
+    },
+    {
+      "evidence": true,
+      "name": "prediction_error",
+      "source": "outcome ledger",
+      "unit": "mean_absolute_error",
+      "value": 720.65
+    },
+    {
+      "evidence": true,
+      "name": "outcome_capture_completeness",
+      "source": "outcome ledger",
+      "unit": "ratio",
+      "value": 1.0
+    },
+    {
+      "evidence": true,
+      "name": "unresolved_unknowns",
+      "source": "workflow unknowns",
+      "unit": "count",
+      "value": 5
+    },
+    {
+      "evidence": true,
+      "name": "corrections_required",
+      "source": "review findings",
+      "unit": "count",
+      "value": 0
+    },
+    {
+      "evidence": true,
+      "name": "reuse_across_workflow_families",
+      "source": "workflow families",
+      "unit": "families",
+      "value": 3
+    }
+  ]
+}
