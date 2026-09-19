@@ -1,0 +1,74 @@
+{
+  "acceptance": {
+    "artifact": "docs/missions/m048-m055/m048-m055-acceptance.json",
+    "status": "PASS",
+    "summary": {
+      "cases": 57,
+      "checks": 60,
+      "passed_cases": 57,
+      "passed_checks": 60
+    }
+  },
+  "acceptance_matrix_passed": true,
+  "baseline": "07ac6b97b07e535f2f49a7396d081f15074daee3",
+  "dogfood": {
+    "active": 1,
+    "artifact": "docs/missions/m048-m055/m048-m055-dogfood.json",
+    "pending_gates": [
+      "GO_COMMIT_REQUIRED"
+    ],
+    "queued": 1,
+    "real_missions": 5,
+    "real_projects": 3,
+    "simulated_machine_restart": true,
+    "simulated_process_death": {
+      "crash_detected": true,
+      "restarted": true,
+      "simulated": true,
+      "supervisor_status": "STOPPED"
+    },
+    "status": "PASS"
+  },
+  "dogfood_passed": true,
+  "generated_at": "2026-09-19T18:40:58Z",
+  "git_writes": 0,
+  "marker": "M048_M055_PERSISTENT_AUTONOMOUS_OPERATOR_PLATFORM_COMPLETE",
+  "platform_version": "m055.1",
+  "schema": "trajectory-m048-m055-bundle-evidence/1",
+  "semantic_patch": {
+    "changed_file_count": 22,
+    "changed_files": [
+      "README.md",
+      "docs/adr/ADR-026-persistent-autonomous-operator-platform.md",
+      "docs/missions/m048-m055/README.md",
+      "docs/missions/m048-m055/m048-m055-dogfood-evidence.md",
+      "scripts/m048_m055_bundle_evidence.py",
+      "src/trajectory_os/operator/cli.py",
+      "src/trajectory_os/platform/__init__.py",
+      "src/trajectory_os/platform/acceptance.py",
+      "src/trajectory_os/platform/api.py",
+      "src/trajectory_os/platform/cli.py",
+      "src/trajectory_os/platform/dogfood.py",
+      "src/trajectory_os/platform/efficiency.py",
+      "src/trajectory_os/platform/hardening.py",
+      "src/trajectory_os/platform/inbox.py",
+      "src/trajectory_os/platform/lifeos.py",
+      "src/trajectory_os/platform/model.py",
+      "src/trajectory_os/platform/projects.py",
+      "src/trajectory_os/platform/queue.py",
+      "src/trajectory_os/platform/supervisor.py",
+      "src/trajectory_os/platform/supervisor_main.py",
+      "tests/integration/test_platform_m048_m055_bundle.py",
+      "tests/unit/test_platform_m048_m055.py"
+    ],
+    "patch_bytes": 338306,
+    "semantic_patch_sha256": "35ec1c3343d2b5e3af92c1a69a5ccf978d54e5b3a325932b768937de14bf7c93",
+    "temp_index_isolated": true
+  },
+  "trust_boundary": {
+    "clean": true,
+    "offenders": [],
+    "scanned_files": 26
+  },
+  "trust_gates_unchanged": true
+}
