@@ -1,0 +1,287 @@
+{
+  "cases": [
+    {
+      "case": "1",
+      "checks": [
+        {
+          "case": "1",
+          "description": "mission root persists all canonical artifacts",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "1",
+          "description": "happy path reaches READY_FOR_COMMIT",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "1",
+          "description": "reviewed_patch == current_patch and final reviewer active",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Real happy-path mission -> READY_FOR_COMMIT"
+    },
+    {
+      "case": "2",
+      "checks": [
+        {
+          "case": "2",
+          "description": "validation reject cannot become READY_FOR_COMMIT",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "2",
+          "description": "no independent review runs after a validation reject",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Validation reject"
+    },
+    {
+      "case": "3",
+      "checks": [
+        {
+          "case": "3",
+          "description": "review reject triggers a bounded repair",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "3",
+          "description": "fresh PASS on the exact current patch",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Review reject -> bounded repair -> fresh PASS"
+    },
+    {
+      "case": "4",
+      "checks": [
+        {
+          "case": "4",
+          "description": "repair-budget exhaustion yields BLOCKED",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Repair-budget exhaustion -> BLOCKED"
+    },
+    {
+      "case": "5",
+      "checks": [
+        {
+          "case": "5",
+          "description": "invalid provider/model preflight BLOCKED",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "5",
+          "description": "no expensive phase runs after preflight reject",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Invalid provider/model -> preflight BLOCKED"
+    },
+    {
+      "case": "6",
+      "checks": [
+        {
+          "case": "6",
+          "description": "interruption is non-terminal and preserves identity",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "6",
+          "description": "resume keeps mission_id and append-only prior evidence",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "6",
+          "description": "interruption is recorded with a durable non-terminal closure",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Process interruption -> resume -> same identity"
+    },
+    {
+      "case": "7",
+      "checks": [
+        {
+          "case": "7",
+          "description": "cancel produces canonical CANCELLED",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "7",
+          "description": "cancel preserves evidence and closure",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "7",
+          "description": "repeated cancel is idempotent",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Cancel -> CANCELLED"
+    },
+    {
+      "case": "8",
+      "checks": [
+        {
+          "case": "8",
+          "description": "a stale reviewed patch is blocked",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Stale review -> BLOCKED"
+    },
+    {
+      "case": "9",
+      "checks": [
+        {
+          "case": "9",
+          "description": "COMPLETE + non-ready never renders as success",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "COMPLETE + non-ready never renders success"
+    },
+    {
+      "case": "10",
+      "checks": [
+        {
+          "case": "10",
+          "description": "closure reconstructs the READY mission",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "10",
+          "description": "closure reconstructs a CANCELLED terminal state",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Closure/reconstruct for terminal states"
+    },
+    {
+      "case": "11",
+      "checks": [
+        {
+          "case": "11",
+          "description": "status/follow/reconstruct are read-only",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "11",
+          "description": "follow exits at the terminal outcome",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Status/follow/reconstruct remain read-only"
+    },
+    {
+      "case": "12",
+      "checks": [
+        {
+          "case": "12",
+          "description": "current patch is an exact 64-hex semantic identity",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "12",
+          "description": "reviewed_patch equals the authoritative current patch",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "12",
+          "description": "recomputed semantic patch matches the durable identity",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "12",
+          "description": "closure records validation on the same patch",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Semantic patch identity remains authoritative"
+    },
+    {
+      "case": "13",
+      "checks": [
+        {
+          "case": "13",
+          "description": "final independent reviewer is active and explicit",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "13",
+          "description": "no phantom/default reviewer leaks into the status",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Reviewer roles correct; no phantom reviewer"
+    },
+    {
+      "case": "14",
+      "checks": [
+        {
+          "case": "14",
+          "description": "repeated resume after completion is idempotent",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Repeated resume after completion is idempotent"
+    }
+  ],
+  "generated_at": "2026-09-19T12:59:49Z",
+  "root": ".artifacts/m032-m035/m035",
+  "schema": "trajectory-acceptance/m035.1",
+  "status": "PASS",
+  "summary": {
+    "cases": 14,
+    "checks": 29,
+    "passed_cases": 14,
+    "passed_checks": 29
+  },
+  "version": "m035.1"
+}

@@ -270,6 +270,39 @@ closure evidence:
 
 See `docs/adr/ADR-022-end-to-end-mission-assembly.md`.
 
+## Real operator bundle (M032–M035)
+
+M032–M035 turn the assembled flow into a real, recoverable, controllable
+operator system:
+
+    scripts/trajectory-mission start --objective "..." --workload-file workload.json --mode LIVE
+    scripts/trajectory-mission status --mission-id MISSION_ID
+    scripts/trajectory-mission request-stop --mission-id MISSION_ID
+    scripts/trajectory-mission pause --mission-id MISSION_ID
+    scripts/trajectory-mission cancel --mission-id MISSION_ID
+    scripts/trajectory-mission recovery --mission-id MISSION_ID
+    scripts/trajectory-mission control-log --mission-id MISSION_ID
+    scripts/trajectory-mission acceptance --out acceptance.json
+
+* a real repository objective can be run as a mission-scoped `WorkloadSpec`
+  through the unchanged production path (`pi` + `deepseek-flash`, fresh
+  `qwen3.8:27b-q4_K_M` review), with exact semantic patch identity and a
+  terminal `READY_FOR_COMMIT` or explicit fail-closed state;
+* recovery is deterministic: real `SIGKILL`/`SIGTERM` leaves append-only
+  evidence intact and resume keeps the identical `mission_id == run_id` with
+  an explicit safe resume point; repeated resume after terminal is
+  byte-idempotent;
+* mission-level control is separate from observation: `request-stop` / `pause`
+  are durable graceful latches, `cancel` produces canonical `CANCELLED` plus
+  closure, stale/unknown mission ids fail closed, and no control performs a
+  Git trust-boundary write;
+* the M035 acceptance matrix (14 cases) is deterministic and machine-readable.
+
+Durable evidence lives under `docs/missions/m032-m035/`; the selected real
+objective, mission ids, patch identities, telemetry and terminal readiness are
+recorded there. See
+`docs/adr/ADR-023-mission-operator-control-recovery-acceptance.md`.
+
 ## Current status
 
 TrajectoryOS is under active experimental development.

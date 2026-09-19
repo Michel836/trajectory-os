@@ -21,7 +21,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from trajectory_os.assembly import model, store
+from trajectory_os.assembly import model, recovery, store
 from trajectory_os.observability import model as obs_model
 from trajectory_os.observability import store as obs_store
 
@@ -101,7 +101,7 @@ def reconstruct_mission(root: str | Path,
     mission_root = store.mission_root(root, mission_id)
     plan = (store.load_plan(root, mission_id)
             if store.plan_exists(root, mission_id) else None)
-    status = _load_optional(obs_store.load_status, mission_root)
+    status = recovery.load_identity_status(mission_root, mission_id)
     telemetry = _load_optional(obs_store.load_telemetry, mission_root)
     summary = _load_optional(obs_store.load_summary, mission_root)
     closure = (store.load_closure(root, mission_id)

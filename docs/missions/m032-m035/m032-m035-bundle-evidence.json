@@ -1,0 +1,514 @@
+{
+  "authoritative_artifacts": {
+    "final_review": "docs/missions/m032-m035/m032-m035-final-review.json",
+    "m032_blocked_attempt": "docs/missions/m032-m035/m032-live-mission-blocked-evidence.json",
+    "m032_live_mission": "docs/missions/m032-m035/m032-live-mission-evidence.json",
+    "m033_interruption": "docs/missions/m032-m035/m033-interruption-evidence.json",
+    "m035_acceptance_json": "docs/missions/m032-m035/m035-acceptance-report.json",
+    "m035_acceptance_txt": "docs/missions/m032-m035/m035-acceptance-report.txt"
+  },
+  "baseline": "39fc9b0029142abdf6d8e42759bd4f4679a3ac96",
+  "final_independent_review": {
+    "blocking_count": 0,
+    "generated_at": "2026-09-19T13:04:11Z",
+    "minors": [
+      "`acceptance.py` case 8 (`_case_stale_review`) calls the private `orchestrator._human_gate()` directly (suppressed with `# noqa: SLF001`). This is a minor encapsulation smell; a public test seam or a dedicated gate-verification helper would be more robust against refactoring.",
+      "`cli.py` `_cmd_control_log` performs a redundant `store.mission_exists()` check before calling `assembly_control.control_log()`, which itself constructs the path and returns `[]` if the file is absent. The CLI-level check is the correct guard (it raises a typed error), but the duplication is slightly noisy.",
+      "`orchestrator._checkpoint()` calls `recovery.detect_resume()` (which loads all events and status) at every phase boundary. For very long missions with large event logs this is a non-trivial read cost on the hot path. It is best-effort and bounded, so it is acceptable, but worth noting for future performance tuning.",
+      "`scripts/mission032_035_bundle_evidence.py` `trust_boundary_scan()` only checks for the literal pattern `\"git\", \"<verb>\"` / `'git', '<verb>'`. A more robust scan (e.g., regex for `subprocess.*git` or AST-based detection) would catch indirect invocations, though the existing `test_control_surface_has_no_git_or_process_writes` unit test provides a complementary guard."
+    ],
+    "outcome": "VALID_PASS",
+    "reason": "PASS_GO_COMMIT_NO_BLOCKING_FINDINGS",
+    "reviewed_patch_sha256": "a7699825fd047be084dc6b9b05d82454941ada86479e813caf6174a43fe1b322",
+    "reviewed_patch_still_current": true,
+    "reviewer_model": "qwen3.8:27b-q4_K_M"
+  },
+  "generated_at": "2026-09-19T13:04:16Z",
+  "issue": 236,
+  "m032_blocked_attempt": {
+    "attempts": 3,
+    "mission_id": "m032-real-status-identity",
+    "note": "Earlier real run: the independent reviewer produced a protocol-invalid PASS-with-blocking-findings verdict on a correct, validation-passing patch; the mission failed closed to BLOCKED after two bounded repairs.",
+    "readiness": "BLOCKED",
+    "repairs": 2,
+    "review_outcomes": [
+      {
+        "attempt": 0,
+        "outcome": "REVIEW_PROTOCOL_INVALID",
+        "patch": "7641e45b5a4b8b548cb276d2d582a1053f341c3b3ed26061a6d1a51bb943405f",
+        "reason": "PASS_WITH_BLOCKING_FINDINGS",
+        "result": "REJECT"
+      },
+      {
+        "attempt": 1,
+        "outcome": "VALID_REJECT",
+        "patch": "8de981588fc7afcfca1071762df08b83626f0f379562aa5664e416a919be35f3",
+        "reason": "REJECT_REPAIR_WITH_BLOCKING_FINDING",
+        "result": "REJECT"
+      },
+      {
+        "attempt": 2,
+        "outcome": "REVIEW_PROTOCOL_INVALID",
+        "patch": "200598d2cc8d75654cb39cd9d47357bb573fe02c9ad4f81ac8dbdadb24dc2b31",
+        "reason": "PASS_WITH_BLOCKING_FINDINGS",
+        "result": "REJECT"
+      }
+    ],
+    "terminal_reason": "blocking review findings or inactive reviewer",
+    "terminal_reason_code": "BLOCKED"
+  },
+  "m032_real_mission": {
+    "artifacts": {
+      "closure.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/closure.json",
+      "events.jsonl": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/events.jsonl",
+      "mission.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/mission.json",
+      "plan.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/plan.json",
+      "recovery.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/recovery.json",
+      "status.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/status.json",
+      "summary.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/summary.json",
+      "telemetry.json": ".artifacts/m032-m035/m032b/m032-real-status-identity-b/telemetry.json"
+    },
+    "attempts": 1,
+    "backend": "pi",
+    "current_patch": "98a4587a5326def0cd38bf4a80f613e11672680a007362549535ec814dfab2ff",
+    "lifecycle": "COMPLETE",
+    "mission_id": "m032-real-status-identity-b",
+    "mode": "LIVE",
+    "model": "deepseek-flash",
+    "objective_implemented_in_workspace": true,
+    "phase_transitions": [
+      "MISSION_CREATED",
+      "PREFLIGHT_COMPLETED",
+      "PLAN_PERSISTED",
+      "PREFLIGHT_COMPLETED",
+      "PATCH_CAPTURED",
+      "VALIDATION_COMPLETED",
+      "REVIEW_COMPLETED",
+      "RUN_COMPLETED",
+      "HUMAN_GATE_REACHED",
+      "MISSION_CLOSED"
+    ],
+    "provider": "deepseek",
+    "readiness": "READY_FOR_COMMIT",
+    "repairs": 0,
+    "review_results": [
+      {
+        "active": true,
+        "at": "2026-09-19T12:42:48Z",
+        "attempt": 0,
+        "outcome": "VALID_PASS",
+        "patch": "98a4587a5326def0cd38bf4a80f613e11672680a007362549535ec814dfab2ff",
+        "reason": "PASS_GO_COMMIT_NO_BLOCKING_FINDINGS",
+        "result": "PASS",
+        "reviewer": "qwen3.8:27b-q4_K_M"
+      }
+    ],
+    "reviewed_patch": "98a4587a5326def0cd38bf4a80f613e11672680a007362549535ec814dfab2ff",
+    "reviewer_model": "qwen3.8:27b-q4_K_M",
+    "run_id": "m032-real-status-identity-b",
+    "selected_objective": "Harden `trajectory-mission status` and `follow` against stale mission identity. In `src/trajectory_os/assembly/cli.py`, status is loaded with `obs_store.load_status(store.mission_root(root, mission_id))` without checking that the loaded document's `run_id` equals the requested `mission_id`. A stale or mismatched `status.json` (for example from a copied or corrupt mission root) can therefore be rendered as the requested mission. Fail closed when the loaded status `run_id` does not match the requested mission id, and reject an unknown mission id. Do not change the canonical status schema, the observability model, or any Git behaviour.",
+    "telemetry_summary": {
+      "metrics": {
+        "cost_usd": {
+          "source": "UNAVAILABLE",
+          "value": null
+        },
+        "repairs": {
+          "source": "LOCAL",
+          "value": 0
+        },
+        "review_rejects": {
+          "source": "LOCAL",
+          "value": 0
+        },
+        "total_duration_ms": {
+          "source": "DERIVED",
+          "value": 42521
+        },
+        "total_tokens": {
+          "source": "UNAVAILABLE",
+          "value": null
+        },
+        "trial_count": {
+          "source": "LOCAL",
+          "value": 1
+        },
+        "validation_failures": {
+          "source": "LOCAL",
+          "value": 0
+        }
+      },
+      "mode": "benchmark",
+      "waste": {
+        "cost_wasted_in_failed_cycles": null,
+        "failed_cycle_count": 0,
+        "time_wasted_in_failed_cycles_ms": null,
+        "tokens_wasted_in_failed_cycles": null
+      }
+    },
+    "terminal_reason": "all gates passed",
+    "terminal_reason_code": "COMPLETE",
+    "validation_results": [
+      {
+        "at": "2026-09-19T12:42:13Z",
+        "attempt": 0,
+        "command": [
+          "{python} validate_real_mission.py"
+        ],
+        "exit_code": 0,
+        "patch": "98a4587a5326def0cd38bf4a80f613e11672680a007362549535ec814dfab2ff",
+        "reason": "OK",
+        "result": "PASS"
+      }
+    ],
+    "why_chosen": "Discovered while implementing the M034 mission-level operator control requirements: controls must target an explicit mission/run identity and stale/unknown mission ids must fail closed. The observation surface had the same identity gap, so a mismatched status could be displayed as the requested mission. It is a small, real, auditable repository hardening defect with a deterministic validation gate and no architectural change."
+  },
+  "m033_interruption_resume": {
+    "checks": [
+      {
+        "description": "implementation phase observed before the kill",
+        "ok": true,
+        "scenario": "SIGKILL"
+      },
+      {
+        "description": "canonical evidence loads after the kill",
+        "ok": true,
+        "scenario": "SIGKILL"
+      },
+      {
+        "description": "no closure exists after the kill",
+        "ok": true,
+        "scenario": "SIGKILL"
+      },
+      {
+        "description": "resume keeps the identical mission_id",
+        "ok": true,
+        "scenario": "SIGKILL"
+      },
+      {
+        "description": "append-only prior evidence survives",
+        "ok": true,
+        "scenario": "SIGKILL"
+      },
+      {
+        "description": "resume reaches READY_FOR_COMMIT",
+        "ok": true,
+        "scenario": "SIGKILL"
+      },
+      {
+        "description": "no duplicate READY_FOR_COMMIT transition",
+        "ok": true,
+        "scenario": "SIGKILL"
+      },
+      {
+        "description": "repeated resume after terminal is idempotent",
+        "ok": true,
+        "scenario": "SIGKILL"
+      },
+      {
+        "description": "implementation phase observed before the kill",
+        "ok": true,
+        "scenario": "SIGTERM"
+      },
+      {
+        "description": "canonical evidence loads after the kill",
+        "ok": true,
+        "scenario": "SIGTERM"
+      },
+      {
+        "description": "no closure exists after the kill",
+        "ok": true,
+        "scenario": "SIGTERM"
+      },
+      {
+        "description": "resume keeps the identical mission_id",
+        "ok": true,
+        "scenario": "SIGTERM"
+      },
+      {
+        "description": "append-only prior evidence survives",
+        "ok": true,
+        "scenario": "SIGTERM"
+      },
+      {
+        "description": "resume reaches READY_FOR_COMMIT",
+        "ok": true,
+        "scenario": "SIGTERM"
+      },
+      {
+        "description": "no duplicate READY_FOR_COMMIT transition",
+        "ok": true,
+        "scenario": "SIGTERM"
+      },
+      {
+        "description": "repeated resume after terminal is idempotent",
+        "ok": true,
+        "scenario": "SIGTERM"
+      }
+    ],
+    "generated_at": "2026-09-19T12:40:50Z",
+    "mission": "M033",
+    "results": {
+      "SIGKILL": {
+        "child_exit_code": -9,
+        "closure_absent_after_kill": true,
+        "current_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+        "events_after_resume": 12,
+        "events_before_resume": 4,
+        "evidence_loadable_after_kill": true,
+        "lifecycle_after_resume": "COMPLETE",
+        "no_duplicate_ready_transition": true,
+        "observed_implementing_marker": true,
+        "prior_evidence_preserved": true,
+        "readiness_after_resume": "READY_FOR_COMMIT",
+        "ready_for_commit_transitions": 1,
+        "repeated_resume_byte_idempotent": true,
+        "resume_exit_code": 0,
+        "resume_point": {
+          "events": 4,
+          "execution_finalized": false,
+          "idempotent": false,
+          "kind": "RESUME_EXECUTION",
+          "lifecycle": "IMPLEMENTING",
+          "mission_id": "m033-sigkill",
+          "readiness": "INDETERMINATE",
+          "reason": "durable plan present; resume at execution",
+          "resume_point": "EXECUTION",
+          "terminal": false
+        },
+        "resume_stderr": "",
+        "reviewed_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+        "same_mission_id": true,
+        "second_resume_exit_code": 0,
+        "signal": "SIGKILL",
+        "status_before_resume": "IMPLEMENTING"
+      },
+      "SIGTERM": {
+        "child_exit_code": -15,
+        "closure_absent_after_kill": true,
+        "current_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+        "events_after_resume": 12,
+        "events_before_resume": 4,
+        "evidence_loadable_after_kill": true,
+        "lifecycle_after_resume": "COMPLETE",
+        "no_duplicate_ready_transition": true,
+        "observed_implementing_marker": true,
+        "prior_evidence_preserved": true,
+        "readiness_after_resume": "READY_FOR_COMMIT",
+        "ready_for_commit_transitions": 1,
+        "repeated_resume_byte_idempotent": true,
+        "resume_exit_code": 0,
+        "resume_point": {
+          "events": 4,
+          "execution_finalized": false,
+          "idempotent": false,
+          "kind": "RESUME_EXECUTION",
+          "lifecycle": "IMPLEMENTING",
+          "mission_id": "m033-sigterm",
+          "readiness": "INDETERMINATE",
+          "reason": "durable plan present; resume at execution",
+          "resume_point": "EXECUTION",
+          "terminal": false
+        },
+        "resume_stderr": "",
+        "reviewed_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+        "same_mission_id": true,
+        "second_resume_exit_code": 0,
+        "signal": "SIGTERM",
+        "status_before_resume": "IMPLEMENTING"
+      }
+    },
+    "root": ".artifacts/m032-m035/m033",
+    "status": "PASS"
+  },
+  "m034_operator_control": {
+    "cancel": "ACCEPTED",
+    "cancel_readiness": "CANCELLED",
+    "clear_stop": "CLEARED",
+    "control_log": [
+      {
+        "action": "REQUEST_STOP",
+        "actor": "operator",
+        "at": "2026-09-19T13:04:16Z",
+        "lifecycle": "PENDING",
+        "mission_id": "m034-control-proof",
+        "readiness": "INDETERMINATE",
+        "reason": "bundle control proof",
+        "result": "ACCEPTED",
+        "sequence": 1,
+        "terminal": false
+      },
+      {
+        "action": "CLEAR_STOP",
+        "actor": "operator",
+        "at": "2026-09-19T13:04:16Z",
+        "lifecycle": "PENDING",
+        "mission_id": "m034-control-proof",
+        "readiness": "INDETERMINATE",
+        "reason": "resume",
+        "result": "CLEARED",
+        "sequence": 2,
+        "terminal": false
+      },
+      {
+        "action": "CANCEL",
+        "actor": "operator",
+        "at": "2026-09-19T13:04:16Z",
+        "lifecycle": "COMPLETE",
+        "mission_id": "m034-control-proof",
+        "readiness": "CANCELLED",
+        "reason": "bundle control proof",
+        "result": "ACCEPTED",
+        "sequence": 3,
+        "terminal": true
+      }
+    ],
+    "request_stop": "ACCEPTED",
+    "stop_latch_after_cancel": false,
+    "unknown_mission_fails_closed": true
+  },
+  "m035_acceptance": {
+    "cases": [
+      {
+        "case": "1",
+        "checks": [
+          "mission root persists all canonical artifacts",
+          "happy path reaches READY_FOR_COMMIT",
+          "reviewed_patch == current_patch and final reviewer active"
+        ],
+        "ok": true,
+        "title": "Real happy-path mission -> READY_FOR_COMMIT"
+      },
+      {
+        "case": "2",
+        "checks": [
+          "validation reject cannot become READY_FOR_COMMIT",
+          "no independent review runs after a validation reject"
+        ],
+        "ok": true,
+        "title": "Validation reject"
+      },
+      {
+        "case": "3",
+        "checks": [
+          "review reject triggers a bounded repair",
+          "fresh PASS on the exact current patch"
+        ],
+        "ok": true,
+        "title": "Review reject -> bounded repair -> fresh PASS"
+      },
+      {
+        "case": "4",
+        "checks": [
+          "repair-budget exhaustion yields BLOCKED"
+        ],
+        "ok": true,
+        "title": "Repair-budget exhaustion -> BLOCKED"
+      },
+      {
+        "case": "5",
+        "checks": [
+          "invalid provider/model preflight BLOCKED",
+          "no expensive phase runs after preflight reject"
+        ],
+        "ok": true,
+        "title": "Invalid provider/model -> preflight BLOCKED"
+      },
+      {
+        "case": "6",
+        "checks": [
+          "interruption is non-terminal and preserves identity",
+          "resume keeps mission_id and append-only prior evidence",
+          "interruption is recorded with a durable non-terminal closure"
+        ],
+        "ok": true,
+        "title": "Process interruption -> resume -> same identity"
+      },
+      {
+        "case": "7",
+        "checks": [
+          "cancel produces canonical CANCELLED",
+          "cancel preserves evidence and closure",
+          "repeated cancel is idempotent"
+        ],
+        "ok": true,
+        "title": "Cancel -> CANCELLED"
+      },
+      {
+        "case": "8",
+        "checks": [
+          "a stale reviewed patch is blocked"
+        ],
+        "ok": true,
+        "title": "Stale review -> BLOCKED"
+      },
+      {
+        "case": "9",
+        "checks": [
+          "COMPLETE + non-ready never renders as success"
+        ],
+        "ok": true,
+        "title": "COMPLETE + non-ready never renders success"
+      },
+      {
+        "case": "10",
+        "checks": [
+          "closure reconstructs the READY mission",
+          "closure reconstructs a CANCELLED terminal state"
+        ],
+        "ok": true,
+        "title": "Closure/reconstruct for terminal states"
+      },
+      {
+        "case": "11",
+        "checks": [
+          "status/follow/reconstruct are read-only",
+          "follow exits at the terminal outcome"
+        ],
+        "ok": true,
+        "title": "Status/follow/reconstruct remain read-only"
+      },
+      {
+        "case": "12",
+        "checks": [
+          "current patch is an exact 64-hex semantic identity",
+          "reviewed_patch equals the authoritative current patch",
+          "recomputed semantic patch matches the durable identity",
+          "closure records validation on the same patch"
+        ],
+        "ok": true,
+        "title": "Semantic patch identity remains authoritative"
+      },
+      {
+        "case": "13",
+        "checks": [
+          "final independent reviewer is active and explicit",
+          "no phantom/default reviewer leaks into the status"
+        ],
+        "ok": true,
+        "title": "Reviewer roles correct; no phantom reviewer"
+      },
+      {
+        "case": "14",
+        "checks": [
+          "repeated resume after completion is idempotent"
+        ],
+        "ok": true,
+        "title": "Repeated resume after completion is idempotent"
+      }
+    ],
+    "status": "PASS",
+    "summary": {
+      "cases": 14,
+      "checks": 29,
+      "passed_cases": 14,
+      "passed_checks": 29
+    }
+  },
+  "marker": "M032_M035_REAL_OPERATOR_BUNDLE_COMPLETE",
+  "program": "M032-M035",
+  "trust_boundary": {
+    "clean": true,
+    "offenders": []
+  }
+}

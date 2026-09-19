@@ -12,6 +12,12 @@
 #   reconstruct  reconstruct the mission from durable artifacts
 #   plan         print the durable mission plan (JSON)
 #   closure      print the durable closure evidence (JSON)
+#   request-stop request a graceful, resumable stop
+#   pause        pause a mission (resumable graceful stop)
+#   cancel       cancel a mission -> canonical CANCELLED
+#   control-log  print the mission-scoped control log
+#   recovery     print the explicit recovery/resume decision
+#   acceptance   run the deterministic M035 acceptance matrix
 #   version      CLI version
 #
 # Observation commands are strictly read-only. No subcommand performs a Git

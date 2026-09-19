@@ -1,8 +1,8 @@
-"""``trajectory_os.assembly`` — M031 end-to-end mission assembly.
+"""``trajectory_os.assembly`` — M031–M035 mission assembly and operator flow.
 
-Assembles the capabilities delivered through M023–M030 into one coherent,
+Assembles the capabilities delivered through M023–M034 into one coherent,
 trust-gated mission flow from objective intake to ``READY_FOR_COMMIT`` /
-``BLOCKED`` with durable closure evidence::
+``BLOCKED`` / ``CANCELLED`` with durable closure evidence::
 
     Mission -> Preflight -> Plan -> Execution -> Validation
             -> Review -> Repair -> Human Gate -> Closure
@@ -17,8 +17,10 @@ This package owns mission-level composition only. It reuses:
   review protocol;
 * the M029/M030 preflight and legacy-free reviewer identity model.
 
-It introduces no competing architecture, no second status model, and no Git
-trust-boundary write.
+M032–M035 add real-task support, deterministic recovery/resume-point
+selection, mission-scoped operator control and a production acceptance
+matrix. They introduce no competing architecture, no second status model and
+no Git trust-boundary write.
 """
 
 from trajectory_os.assembly.model import (  # noqa: F401
@@ -31,6 +33,7 @@ from trajectory_os.assembly.model import (  # noqa: F401
     MissionPlan,
     PlanStep,
     TrustPolicy,
+    mission_workload,
 )
 
 __all__ = [
@@ -43,4 +46,5 @@ __all__ = [
     "MissionPlan",
     "PlanStep",
     "TrustPolicy",
+    "mission_workload",
 ]
