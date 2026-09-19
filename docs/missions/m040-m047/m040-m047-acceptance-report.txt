@@ -1,0 +1,91 @@
+========================================================================
+TRAJECTORY-OS OPERATOR ACCEPTANCE (m047.1)
+status : PASS
+root   : .artifacts/m040-m047/bundle-repair/acceptance
+at     : 2026-09-19T16:57:11Z
+------------------------------------------------------------------------
+[PASS] 1: Complete mission + release happy path
+    ok   complete mission + release happy path closes
+    ok   release closure carries the exact reviewed patch
+[PASS] 2: Self-hosting dogfood path
+    ok   self-hosting fixture proof completes the whole path
+    ok   live dogfood reaches READY_FOR_COMMIT safely
+    ok   durable self-hosting evidence is persisted
+[PASS] 3: Stale review blocks release
+    ok   stale review blocks GO COMMIT
+[PASS] 4: Changed semantic patch blocks GO COMMIT
+    ok   changed semantic patch blocks GO COMMIT
+[PASS] 5: Moved branch blocks GO COMMIT
+    ok   moved branch blocks GO COMMIT
+[PASS] 6: Moved HEAD blocks GO COMMIT
+    ok   moved HEAD blocks GO COMMIT
+[PASS] 7: Unavailable backend fails closed
+    ok   unavailable backend fails closed
+[PASS] 8: Explicit fallback works and is persisted
+    ok   explicit deterministic fallback is used
+    ok   fallback decision is persisted with its reason
+[PASS] 9: Phantom reviewer cannot appear
+    ok   a disabled reviewer never carries a phantom model
+    ok   the legacy phantom reviewer is refused
+[PASS] 10: Reviewer routing identity is explicit
+    ok   reviewer routing identity is explicit and exact
+[PASS] 11: Execution crash resumes safely
+    ok   execution interruption resumes at execution
+    ok   resumed execution reaches READY_FOR_COMMIT
+[PASS] 12: Review crash resumes safely
+    ok   review interruption resumes safely
+    ok   review resume reaches READY_FOR_COMMIT
+[PASS] 13: Handoff crash resumes safely
+    ok   handoff interruption is discovered, not repeated
+    ok   rebuilt handoff carries the identical patch
+[PASS] 14: Commit-result crash does not duplicate commit
+    ok   a commit-result crash never duplicates the commit
+[PASS] 15: PR-bind crash does not duplicate PR
+    ok   a PR-bind crash never duplicates the pull request
+[PASS] 16: CI watch is exact-head only
+    ok   CI watch is exact-head only
+[PASS] 17: Missing CI blocks merge
+    ok   missing exact-head CI blocks merge
+[PASS] 18: Failed CI blocks merge
+    ok   failed exact-head CI blocks merge
+[PASS] 19: Moved PR head blocks merge
+    ok   moved PR head blocks merge
+[PASS] 20: Merge requires human authorization
+    ok   merge requires explicit human authorization
+[PASS] 21: Merge is not duplicated after recovery
+    ok   a merge is never duplicated after recovery
+[PASS] 22: Release closure reconstructs exact identities
+    ok   release closure reconstructs exact identities
+[PASS] 23: Event replay reconstructs unified projection
+    ok   event replay reconstructs the unified projection
+[PASS] 24: Repeated replay is idempotent
+    ok   repeated event replay is idempotent
+[PASS] 25: Observation is read-only
+    ok   observation commands are read-only
+[PASS] 26: Operator controls remain isolated
+    ok   operator controls remain isolated from release evidence
+    ok   control actions are recorded in their own log
+[PASS] 27: Runtime control cannot perform release writes
+    ok   runtime control cannot perform release writes
+[PASS] 28: Implementation/review agents cannot write Git
+    ok   implementation/review modules never write Git
+    ok   agents cannot mint a release authorization
+[PASS] 29: Release profile preserves both human gates
+    ok   release profile preserves both human gates
+    ok   release human/CI gates cannot be disabled
+[PASS] 30: Policy resolution is deterministic
+    ok   policy resolution is deterministic
+    ok   the environment cannot mutate policy
+[PASS] 31: Legacy M030-M039 artifacts remain readable
+    ok   legacy M030-M039 artifacts remain readable
+[PASS] 32: Dashboard status matches canonical artifacts
+    ok   dashboard state matches the canonical artifacts
+[PASS] 33: Terminal lifecycle remains distinct from readiness
+    ok   terminal lifecycle stays distinct from readiness
+[PASS] 34: Semantic staging identity remains authoritative
+    ok   semantic staging identity remains authoritative
+[PASS] 35: No success is inferred from prose
+    ok   no success is inferred from prose or status alone
+------------------------------------------------------------------------
+35/35 cases, 47/47 checks
+========================================================================

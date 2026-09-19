@@ -1,0 +1,613 @@
+{
+  "cases": [
+    {
+      "case": "1",
+      "checks": [
+        {
+          "case": "1",
+          "description": "complete mission + release happy path closes",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "1",
+          "description": "release closure carries the exact reviewed patch",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Complete mission + release happy path"
+    },
+    {
+      "case": "2",
+      "checks": [
+        {
+          "case": "2",
+          "description": "self-hosting fixture proof completes the whole path",
+          "detail": {
+            "fixture": {
+              "ci_head_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+              "ci_state": "success",
+              "commit_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+              "durable_linkage": {
+                "ci_head_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+                "commit_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+                "merge_sha": "72af73376152c7a74b706cd7990df96febfc7251",
+                "mission_id": "m040-fixture-proof",
+                "pr_head_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+                "pr_number": 1,
+                "reviewed_patch_sha256": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1"
+              },
+              "merge_method": "squash",
+              "merge_sha": "72af73376152c7a74b706cd7990df96febfc7251",
+              "mission_id": "m040-fixture-proof",
+              "ok": true,
+              "pr_head_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+              "pr_number": 1,
+              "recovery_action": "ALREADY_COMPLETE",
+              "release_stage": {
+                "base_branch": "main",
+                "branch": "m040-fixture-proof",
+                "ci_state": "success",
+                "commit_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+                "merge_sha": "72af73376152c7a74b706cd7990df96febfc7251",
+                "mission_id": "m040-fixture-proof",
+                "pr_head_sha": "56d38a5d5c7f07c1776d69445ca6073797e023b1",
+                "pr_number": 1,
+                "reason": "OK",
+                "release_version": "m039.1",
+                "schema_version": 1,
+                "stage": "RELEASED",
+                "updated_at": "2026-09-21T00:00:44Z"
+              },
+              "release_status": "CLOSED",
+              "remote_branch": "m040-fixture-proof",
+              "reviewed_patch": "756ac91c0586d6a66479a1ef213f0ebd24586d21716e1ae0b5c464c88396e4c1",
+              "target_branch_verified": true
+            }
+          },
+          "ok": true
+        },
+        {
+          "case": "2",
+          "description": "live dogfood reaches READY_FOR_COMMIT safely",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "2",
+          "description": "durable self-hosting evidence is persisted",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Self-hosting dogfood path"
+    },
+    {
+      "case": "3",
+      "checks": [
+        {
+          "case": "3",
+          "description": "stale review blocks GO COMMIT",
+          "detail": {
+            "code": "READINESS_CHANGED"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Stale review blocks release"
+    },
+    {
+      "case": "4",
+      "checks": [
+        {
+          "case": "4",
+          "description": "changed semantic patch blocks GO COMMIT",
+          "detail": {
+            "code": "READINESS_CHANGED"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Changed semantic patch blocks GO COMMIT"
+    },
+    {
+      "case": "5",
+      "checks": [
+        {
+          "case": "5",
+          "description": "moved branch blocks GO COMMIT",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Moved branch blocks GO COMMIT"
+    },
+    {
+      "case": "6",
+      "checks": [
+        {
+          "case": "6",
+          "description": "moved HEAD blocks GO COMMIT",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Moved HEAD blocks GO COMMIT"
+    },
+    {
+      "case": "7",
+      "checks": [
+        {
+          "case": "7",
+          "description": "unavailable backend fails closed",
+          "detail": {
+            "code": "BACKEND_UNAVAILABLE"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Unavailable backend fails closed"
+    },
+    {
+      "case": "8",
+      "checks": [
+        {
+          "case": "8",
+          "description": "explicit deterministic fallback is used",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "8",
+          "description": "fallback decision is persisted with its reason",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Explicit fallback works and is persisted"
+    },
+    {
+      "case": "9",
+      "checks": [
+        {
+          "case": "9",
+          "description": "a disabled reviewer never carries a phantom model",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "9",
+          "description": "the legacy phantom reviewer is refused",
+          "detail": {
+            "code": "PHANTOM_REVIEWER"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Phantom reviewer cannot appear"
+    },
+    {
+      "case": "10",
+      "checks": [
+        {
+          "case": "10",
+          "description": "reviewer routing identity is explicit and exact",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Reviewer routing identity is explicit"
+    },
+    {
+      "case": "11",
+      "checks": [
+        {
+          "case": "11",
+          "description": "execution interruption resumes at execution",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "11",
+          "description": "resumed execution reaches READY_FOR_COMMIT",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Execution crash resumes safely"
+    },
+    {
+      "case": "12",
+      "checks": [
+        {
+          "case": "12",
+          "description": "review interruption resumes safely",
+          "detail": {
+            "action": "RESUME_EXECUTION"
+          },
+          "ok": true
+        },
+        {
+          "case": "12",
+          "description": "review resume reaches READY_FOR_COMMIT",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Review crash resumes safely"
+    },
+    {
+      "case": "13",
+      "checks": [
+        {
+          "case": "13",
+          "description": "handoff interruption is discovered, not repeated",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "13",
+          "description": "rebuilt handoff carries the identical patch",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Handoff crash resumes safely"
+    },
+    {
+      "case": "14",
+      "checks": [
+        {
+          "case": "14",
+          "description": "a commit-result crash never duplicates the commit",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Commit-result crash does not duplicate commit"
+    },
+    {
+      "case": "15",
+      "checks": [
+        {
+          "case": "15",
+          "description": "a PR-bind crash never duplicates the pull request",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "PR-bind crash does not duplicate PR"
+    },
+    {
+      "case": "16",
+      "checks": [
+        {
+          "case": "16",
+          "description": "CI watch is exact-head only",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "CI watch is exact-head only"
+    },
+    {
+      "case": "17",
+      "checks": [
+        {
+          "case": "17",
+          "description": "missing exact-head CI blocks merge",
+          "detail": {
+            "code": "EXACT_HEAD_CI_NOT_GREEN",
+            "state": "missing"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Missing CI blocks merge"
+    },
+    {
+      "case": "18",
+      "checks": [
+        {
+          "case": "18",
+          "description": "failed exact-head CI blocks merge",
+          "detail": {
+            "code": "EXACT_HEAD_CI_NOT_GREEN",
+            "state": "failure"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Failed CI blocks merge"
+    },
+    {
+      "case": "19",
+      "checks": [
+        {
+          "case": "19",
+          "description": "moved PR head blocks merge",
+          "detail": {
+            "code": "PULL_REQUEST_HEAD_MOVED"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Moved PR head blocks merge"
+    },
+    {
+      "case": "20",
+      "checks": [
+        {
+          "case": "20",
+          "description": "merge requires explicit human authorization",
+          "detail": {
+            "code": "EXPLICIT_OPERATOR_AUTHORIZATION_REQUIRED"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Merge requires human authorization"
+    },
+    {
+      "case": "21",
+      "checks": [
+        {
+          "case": "21",
+          "description": "a merge is never duplicated after recovery",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Merge is not duplicated after recovery"
+    },
+    {
+      "case": "22",
+      "checks": [
+        {
+          "case": "22",
+          "description": "release closure reconstructs exact identities",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Release closure reconstructs exact identities"
+    },
+    {
+      "case": "23",
+      "checks": [
+        {
+          "case": "23",
+          "description": "event replay reconstructs the unified projection",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Event replay reconstructs unified projection"
+    },
+    {
+      "case": "24",
+      "checks": [
+        {
+          "case": "24",
+          "description": "repeated event replay is idempotent",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Repeated replay is idempotent"
+    },
+    {
+      "case": "25",
+      "checks": [
+        {
+          "case": "25",
+          "description": "observation commands are read-only",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Observation is read-only"
+    },
+    {
+      "case": "26",
+      "checks": [
+        {
+          "case": "26",
+          "description": "operator controls remain isolated from release evidence",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "26",
+          "description": "control actions are recorded in their own log",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Operator controls remain isolated"
+    },
+    {
+      "case": "27",
+      "checks": [
+        {
+          "case": "27",
+          "description": "runtime control cannot perform release writes",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Runtime control cannot perform release writes"
+    },
+    {
+      "case": "28",
+      "checks": [
+        {
+          "case": "28",
+          "description": "implementation/review modules never write Git",
+          "detail": {
+            "offenders": []
+          },
+          "ok": true
+        },
+        {
+          "case": "28",
+          "description": "agents cannot mint a release authorization",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Implementation/review agents cannot write Git"
+    },
+    {
+      "case": "29",
+      "checks": [
+        {
+          "case": "29",
+          "description": "release profile preserves both human gates",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "29",
+          "description": "release human/CI gates cannot be disabled",
+          "detail": {
+            "codes": [
+              "INVALID_POLICY_COMBINATION",
+              "INVALID_POLICY_COMBINATION",
+              "INVALID_POLICY_COMBINATION"
+            ]
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Release profile preserves both human gates"
+    },
+    {
+      "case": "30",
+      "checks": [
+        {
+          "case": "30",
+          "description": "policy resolution is deterministic",
+          "detail": {},
+          "ok": true
+        },
+        {
+          "case": "30",
+          "description": "the environment cannot mutate policy",
+          "detail": {
+            "code": "POLICY_ENVIRONMENT_MUTATION_FORBIDDEN"
+          },
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Policy resolution is deterministic"
+    },
+    {
+      "case": "31",
+      "checks": [
+        {
+          "case": "31",
+          "description": "legacy M030-M039 artifacts remain readable",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Legacy M030-M039 artifacts remain readable"
+    },
+    {
+      "case": "32",
+      "checks": [
+        {
+          "case": "32",
+          "description": "dashboard state matches the canonical artifacts",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Dashboard status matches canonical artifacts"
+    },
+    {
+      "case": "33",
+      "checks": [
+        {
+          "case": "33",
+          "description": "terminal lifecycle stays distinct from readiness",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Terminal lifecycle remains distinct from readiness"
+    },
+    {
+      "case": "34",
+      "checks": [
+        {
+          "case": "34",
+          "description": "semantic staging identity remains authoritative",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "Semantic staging identity remains authoritative"
+    },
+    {
+      "case": "35",
+      "checks": [
+        {
+          "case": "35",
+          "description": "no success is inferred from prose or status alone",
+          "detail": {},
+          "ok": true
+        }
+      ],
+      "ok": true,
+      "title": "No success is inferred from prose"
+    }
+  ],
+  "generated_at": "2026-09-19T16:57:11Z",
+  "root": ".artifacts/m040-m047/bundle-repair/acceptance",
+  "schema": "trajectory-operator-acceptance/m047.1",
+  "status": "PASS",
+  "summary": {
+    "cases": 35,
+    "checks": 47,
+    "passed_cases": 35,
+    "passed_checks": 47
+  },
+  "version": "m047.1"
+}
