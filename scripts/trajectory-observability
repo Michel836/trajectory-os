@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# trajectory-observability — M030 canonical live-run observability CLI.
+#
+# Thin, stable shim over src/trajectory_os/observability. It resolves the
+# repository root, prepends the src layout to PYTHONPATH and execs the CLI.
+#
+# Subcommands:
+#   run        run one observable implementation/validation/review/repair loop
+#   status     render the canonical status (CLI / TUI / Web)
+#   follow     follow a run until a terminal lifecycle/readiness outcome
+#   telemetry  print the canonical run telemetry document
+#   preflight  run the fail-fast preflight check
+#   project    render a canonical document for a named frontend surface
+#   version    CLI version
+#
+# Observation commands are strictly read-only. No subcommand performs a Git
+# trust-boundary write.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+SRC="${ROOT}/src"
+
+if [[ ! -d "${SRC}/trajectory_os/observability" ]]; then
+  printf 'trajectory-observability: internal error: missing trajectory_os/observability package (expected %s)\n' "${SRC}/trajectory_os/observability" >&2
+  exit 2
+fi
+
+export PYTHONPATH="${SRC}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m trajectory_os.observability.cli "$@"

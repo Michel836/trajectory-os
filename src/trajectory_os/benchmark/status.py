@@ -83,12 +83,15 @@ def status_document(root: str | Path, benchmark_run_id: str, *,
         latest.backend if latest else _first_backend(manifest))
     telemetry = latest.telemetry if latest else None
     actors = _actors(latest)
+    last_event_at = event_list[-1].at if event_list else None
     return {
         "schema_version": model.SCHEMA_VERSION,
         "benchmark_run_id": benchmark_run_id,
         "state": str(state.get("state", model.RUN_RUNNING)),
         "phase": phase,
         "elapsed_s": elapsed_s,
+        "last_event_at": last_event_at,
+        "updated_at": last_event_at,
         "current": (current_plan.trial_id if current_plan else None),
         "next": (next_plan.trial_id if next_plan else None),
         "trial": (current_plan.trial_id if current_plan

@@ -198,6 +198,43 @@ M029 adds a decision-grade, repeatable A/B benchmark between the proven
 See `docs/adr/ADR-020-pi-vs-harness-benchmark.md` and
 `docs/development/BENCHMARK.md`.
 
+## Live run observability and telemetry (M030)
+
+M030 converges every runtime adapter onto one canonical, backend-neutral
+observability contract shared by the CLI, TUI and Web surfaces:
+
+    runtime adapters -> events.jsonl -> status.json -> CLI / TUI / Web
+
+    scripts/trajectory-observability run --run-id RUN_ID --reviewer pass
+    scripts/trajectory-observability status --run-id RUN_ID
+    scripts/trajectory-observability follow --run-id RUN_ID
+    scripts/trajectory-observability telemetry --run-id RUN_ID
+    scripts/trajectory-observability preflight --provider ollama --model deepseek-flash
+    scripts/trajectory-pi-status --run RUN_ID --follow
+
+* the canonical status persists `run_id`, lifecycle `state`/`stage`/`phase`/
+  `attempt`, backend/provider/model, the separate inline/final reviewer
+  roles, `previous_gate`/`previous_result`, `reviewed_patch`/`current_patch`,
+  `next_action`, heartbeat/last-event timestamps and an explicit readiness;
+* lifecycle completion and trust readiness are independent — a lifecycle
+  `COMPLETE` state never implies `READY_FOR_COMMIT`;
+* reviewer identity is role-explicit: an inactive reviewer is never displayed
+  with a phantom/default model (`--no-review` shows no reviewer);
+* telemetry modes `off` / `standard` / `benchmark` bound overhead; every
+  metric carries provenance and an unavailable metric is `null` + a stable
+  reason, never estimated;
+* deterministic derived metrics include tokens/cost/seconds per successful
+  task, cache-hit ratio, repair/review-reject/protocol-error rates, wasted
+  failed-cycle tokens/cost/time and time-to-first-useful-patch;
+* fail-fast preflight rejects knowable errors (including invalid provider/
+  model combinations) before validation/review/repair;
+* read-only follow heartbeat (default 12 s) exits at every terminal/
+  readiness outcome with an explicit `RUN TERMINÉ` banner, with optional
+  `notify-send` that is never a correctness dependency;
+* no Git trust-boundary write and no local polling loop in the reader.
+
+See `docs/adr/ADR-021-live-run-observability-telemetry.md`.
+
 ## Current status
 
 TrajectoryOS is under active experimental development.
