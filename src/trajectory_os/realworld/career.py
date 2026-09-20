@@ -47,6 +47,12 @@ FAMILY = "CAREER_INTELLIGENCE"
 
 MAX_EXCERPT = 600
 
+#: Maximum characters in one persisted role-description evidence segment.
+#: Derived from (and strictly below) the global claim statement bound so that a
+#: realistic long job description is split into several valid claims without
+#: weakening the claim-size invariant.
+ROLE_DESCRIPTION_SEGMENT_MAX = model.MAX_CLAIM_STATEMENT_LEN // 2
+
 _ARTIFACT_NAMES = (
     "company-analysis.md",
     "role-fit.md",
@@ -193,6 +199,69 @@ def _excerpt_claim(source: EvidenceSource, label: str, index: int,
 def _matched_signals(text: str) -> tuple[str, ...]:
     lowered = text.lower()
     return tuple(sorted(signal for signal in _SIGNALS if signal in lowered))
+
+
+def _role_description_segments(
+    text: str, maximum: int = ROLE_DESCRIPTION_SEGMENT_MAX,
+) -> tuple[str, ...]:
+    """Split a role description into deterministic, bounded segments.
+
+    Boundaries are chosen at whitespace where possible; every non-whitespace
+    character is preserved in order. A description that already fits the bound
+    yields a single segment identical to its stripped form, so the previous
+    single-claim behaviour is preserved for short descriptions.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return ()
+    if len(stripped) <= maximum:
+        return (stripped,)
+    segments: list[str] = []
+    remaining = stripped
+    while len(remaining) > maximum:
+        window = remaining[:maximum]
+        split_at = window.rfind(" ")
+        if split_at <= 0:
+            split_at = maximum
+        segment = remaining[:split_at].strip()
+        if segment:
+            segments.append(segment)
+        remaining = remaining[split_at:].lstrip()
+    if remaining:
+        segments.append(remaining)
+    return tuple(segments)
+
+
+def _role_description_claims(
+    inputs: CareerInputs, workflow_id: str,
+) -> tuple[model.Claim, ...]:
+    """Persist the supplied role description as bounded USER_INPUT evidence.
+
+    Requirement extraction and matching still receive the full, unmodified
+    role description; only the persisted evidence is segmented. A single
+    segment keeps the legacy ``role-description:<id>`` source ref so short
+    descriptions remain provenance-compatible, while a split description
+    exposes an explicit, stable ``...:segment:<index>`` ref per segment.
+    """
+    segments = _role_description_segments(inputs.role_description)
+    if not segments:
+        return (model.Claim(
+            statement=f"role: {inputs.role}",
+            label=model.EVIDENCE, source_kind=model.SRC_USER_INPUT,
+            source_ref=f"role-description:{workflow_id}").validate(),)
+    if len(segments) == 1:
+        return (model.Claim(
+            statement=segments[0], label=model.EVIDENCE,
+            source_kind=model.SRC_USER_INPUT,
+            source_ref=f"role-description:{workflow_id}").validate(),)
+    return tuple(
+        model.Claim(
+            statement=segment, label=model.EVIDENCE,
+            source_kind=model.SRC_USER_INPUT,
+            source_ref=f"role-description:{workflow_id}:segment:{index}",
+            note=f"role description segment {index} of {len(segments)}"
+        ).validate()
+        for index, segment in enumerate(segments))
 
 
 def _render_claim_bullets(claims: Sequence[model.Claim]) -> list[str]:
@@ -504,12 +573,8 @@ def run_career_intelligence(
     for index, source in enumerate(inputs.research_sources):
         claims.append(_excerpt_claim(source, model.EVIDENCE, index, "research"))
 
-    role_claim = model.Claim(
-        statement=inputs.role_description.strip() or
-        f"role: {inputs.role}",
-        label=model.EVIDENCE, source_kind=model.SRC_USER_INPUT,
-        source_ref=f"role-description:{workflow_id}").validate()
-    claims.append(role_claim)
+    role_claims = _role_description_claims(inputs, workflow_id)
+    claims.extend(role_claims)
 
     requirements = workflows.extract_requirements(inputs.role_description)
     experiences = tuple(

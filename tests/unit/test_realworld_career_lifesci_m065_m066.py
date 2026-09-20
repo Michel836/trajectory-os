@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from trajectory_os.operator import cli as operator_cli
 from trajectory_os.realworld import career, lifesci, model
 
@@ -193,3 +195,108 @@ def test_career_cli_portfolio_and_research_are_typed(
                for claim in portfolio_claims)
     assert all(claim["source_kind"] == model.SRC_SUPPLIED_EVIDENCE
                for claim in research_claims)
+
+
+# --- issue #250: long real-world role descriptions ---------------------------
+
+
+def _long_role_description() -> str:
+    """A realistic role description comfortably beyond the claim bound."""
+    lines = [
+        f"Responsibility {index}: lead the design and delivery of governed "
+        "data products across regulated healthcare and life-sciences "
+        "programmes, including requirements gathering, stakeholder "
+        "alignment and measurable adoption outcomes."
+        for index in range(30)
+    ]
+    lines.append(
+        "Tail requirement: demonstrated experience with oncology "
+        "real-world evidence pipelines.")
+    return "\n".join(lines)
+
+
+def test_career_long_role_description_is_bounded_and_valid(
+        tmp_path: Path) -> None:
+    role_description = _long_role_description()
+    # The global claim-size invariant is intentionally unchanged.
+    assert len(role_description) > model.MAX_CLAIM_STATEMENT_LEN
+
+    result = career.run_career_intelligence(
+        career.CareerInputs(
+            company="Talan", role="Healthcare Data Lead",
+            role_description=role_description, inputs_are_fixture=True),
+        root=str(tmp_path), workflow_id="long-role",
+        generated_at="2026-01-01T00:00:00Z")
+
+    role_claims = [claim for claim in result.claims
+                   if claim.source_ref.startswith("role-description:")]
+    assert len(role_claims) > 1
+    assert all(claim.label == model.EVIDENCE for claim in role_claims)
+    assert all(claim.source_kind == model.SRC_USER_INPUT
+               for claim in role_claims)
+    assert all(len(claim.statement) <= model.MAX_CLAIM_STATEMENT_LEN
+               for claim in result.claims)
+    # Explicit, stable and gapless segment provenance.
+    assert [claim.source_ref for claim in role_claims] == [
+        f"role-description:long-role:segment:{index}"
+        for index in range(len(role_claims))]
+    # Every in-memory claim, and every claim as persisted and reloaded,
+    # satisfies the unchanged global claim validator.
+    assert all(claim.validate() for claim in result.claims)
+    analysis = career.load_career_intelligence(
+        str(tmp_path), workflow_id="long-role")
+    assert analysis is not None
+    assert all(model.Claim.from_dict(claim).validate()
+               for claim in analysis["claims"])
+
+
+def test_career_long_role_description_keeps_full_extraction(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    role_description = _long_role_description()
+    seen: dict[str, str] = {}
+    real_extract = career.workflows.extract_requirements
+
+    def _capture(text: str) -> tuple[str, ...]:
+        seen["text"] = text
+        return real_extract(text)
+
+    monkeypatch.setattr(career.workflows, "extract_requirements", _capture)
+    result = career.run_career_intelligence(
+        career.CareerInputs(
+            company="Talan", role="Healthcare Data Lead",
+            role_description=role_description, inputs_are_fixture=True),
+        root=str(tmp_path), workflow_id="long-role",
+        generated_at="2026-01-01T00:00:00Z")
+
+    # Requirement extraction receives the full, unsegmented description.
+    assert seen["text"] == role_description
+    # A requirement that only appears well beyond the claim bound is still
+    # extracted and rendered in the role-fit artifact.
+    assert "oncology real-world evidence pipelines" in (
+        result.artifacts["role-fit.md"])
+
+
+def test_career_short_and_empty_role_descriptions_stay_compatible(
+        tmp_path: Path) -> None:
+    short = "Must have experience with regulatory reporting."
+    short_result = career.run_career_intelligence(
+        career.CareerInputs(
+            company="Acme", role="Analyst", role_description=short,
+            inputs_are_fixture=True),
+        root=str(tmp_path), workflow_id="short-role",
+        generated_at="2026-01-01T00:00:00Z")
+    short_role = [claim for claim in short_result.claims
+                  if claim.source_ref.startswith("role-description:")]
+    assert [(claim.statement, claim.source_ref) for claim in short_role] == [
+        (short, "role-description:short-role")]
+
+    empty_result = career.run_career_intelligence(
+        career.CareerInputs(
+            company="Acme", role="Analyst", role_description="   ",
+            inputs_are_fixture=True),
+        root=str(tmp_path), workflow_id="empty-role",
+        generated_at="2026-01-01T00:00:00Z")
+    empty_role = [claim for claim in empty_result.claims
+                  if claim.source_ref.startswith("role-description:")]
+    assert [(claim.statement, claim.source_ref) for claim in empty_role] == [
+        ("role: Analyst", "role-description:empty-role")]
