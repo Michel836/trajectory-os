@@ -40,6 +40,11 @@ SCHEMA_VERSION = intel_model.SCHEMA_VERSION
 #: Bundle version string (additive, human/machine readable).
 REALWORLD_VERSION = "m064-m071.1"
 
+#: Global upper bound on a single claim statement. This is the invariant that
+#: keeps every persisted claim bounded; callers that need to preserve longer
+#: source material must segment it rather than relax this bound.
+MAX_CLAIM_STATEMENT_LEN = intel_model.MAX_STR_LEN * 8
+
 #: Epistemic labels (closed set).
 FACT = "FACT"
 OBSERVATION = "OBSERVATION"
@@ -105,7 +110,7 @@ class Claim:
                              f"unknown claim source {self.source_kind!r}")
         if not self.statement:
             intel_model.fail(intel_model.E_MALFORMED, "empty claim")
-        if len(self.statement) > intel_model.MAX_STR_LEN * 8:
+        if len(self.statement) > MAX_CLAIM_STATEMENT_LEN:
             intel_model.fail(intel_model.E_MALFORMED, "claim too long")
         if not self.source_ref:
             intel_model.fail(intel_model.E_MALFORMED,
@@ -241,6 +246,7 @@ __all__ = [
     "GROUNDED_LABELS",
     "HYPOTHESIS",
     "INFERENCE",
+    "MAX_CLAIM_STATEMENT_LEN",
     "OBSERVATION",
     "REALWORLD_VERSION",
     "SCHEMA_VERSION",
