@@ -81,15 +81,28 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
                              for k, v in manifest.status_counts().items()))
 
 
+def _evidence_sources(paths: Any) -> tuple[career_module.EvidenceSource, ...]:
+    """Load caller-supplied files as typed career evidence sources."""
+    return tuple(
+        career_module.EvidenceSource(path, _read_text(path))
+        for path in (paths or ()))
+
+
 def _cmd_career(args: argparse.Namespace) -> int:
     brief = _read_text(args.brief_file) if args.brief_file else ""
-    evidence = tuple(
-        career_module.EvidenceSource(path, _read_text(path))
-        for path in (args.evidence or ()))
+    # Each evidence class is supplied and labelled separately. The legacy
+    # ``--evidence`` flag is a documented alias for ``--company-evidence``
+    # only: it never carries profile, portfolio or research material.
+    company_paths = (tuple(args.company_evidence or ())
+                     + tuple(getattr(args, "evidence", None) or ()))
     result = career_module.run_career_intelligence(
         career_module.CareerInputs(
             company=args.company, role=args.role,
-            role_description=brief, company_evidence=evidence,
+            role_description=brief,
+            company_evidence=_evidence_sources(company_paths),
+            profile_evidence=_evidence_sources(args.profile_evidence),
+            portfolio_artifacts=_evidence_sources(args.portfolio_artifact),
+            research_sources=_evidence_sources(args.research_source),
             inputs_are_fixture=bool(args.sample)),
         root=args.root, workflow_id=args.workflow_id)
     return _emit(args, result.to_dict(),
@@ -259,7 +272,30 @@ def register(sub: Any) -> None:
     career.add_argument("--company", required=True)
     career.add_argument("--role", required=True)
     career.add_argument("--brief-file", dest="brief_file", default=None)
-    career.add_argument("--evidence", action="append", default=None)
+    career.add_argument(
+        "--company-evidence", dest="company_evidence", action="append",
+        default=None, metavar="FILE",
+        help="external company/role evidence document (repeatable; "
+             "emitted as SUPPLIED_EVIDENCE)")
+    career.add_argument(
+        "--profile-evidence", dest="profile_evidence", action="append",
+        default=None, metavar="FILE",
+        help="user-supplied CV/profile evidence (repeatable; emitted as "
+             "USER_INPUT/profile:* and usable for role fit)")
+    career.add_argument(
+        "--portfolio-artifact", dest="portfolio_artifact", action="append",
+        default=None, metavar="FILE",
+        help="user-supplied portfolio artifact (repeatable; emitted as "
+             "USER_INPUT/portfolio:* and usable for role fit)")
+    career.add_argument(
+        "--research-source", dest="research_source", action="append",
+        default=None, metavar="FILE",
+        help="external research source (repeatable; emitted as "
+             "SUPPLIED_EVIDENCE)")
+    career.add_argument(
+        "--evidence", action="append", default=None, metavar="FILE",
+        help="DEPRECATED alias for --company-evidence only; it never "
+             "labels profile/portfolio/research material")
     career.add_argument("--workflow-id", dest="workflow_id",
                         default="career")
     career.add_argument("--sample", action="store_true")

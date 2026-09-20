@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from trajectory_os.operator import cli as operator_cli
 from trajectory_os.realworld import career, lifesci, model
 
 
@@ -77,3 +78,118 @@ def test_life_sciences_entity_detection_is_deterministic() -> None:
     assert "Novartis" in entities
     assert "Roche" in entities
     assert entities == tuple(sorted(entities))
+
+
+# --- M065 CLI evidence provenance wiring -------------------------------------
+
+
+def _write(path: Path, text: str) -> str:
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def _run_career_cli(*extra: str, root: Path, tmp_path: Path) -> None:
+    code = operator_cli.main([
+        "realworld", "career", "--root", str(root),
+        "--company", "Acme Pharma", "--role", "Head of Data & AI",
+        *extra])
+    assert code == 0
+
+
+def test_career_cli_parser_exposes_typed_evidence_flags() -> None:
+    parser = operator_cli.build_parser()
+    args = parser.parse_args([
+        "realworld", "career", "--root", "r", "--company", "c",
+        "--role", "x", "--company-evidence", "a",
+        "--profile-evidence", "b", "--portfolio-artifact", "c",
+        "--research-source", "d", "--evidence", "e"])
+    assert args.company_evidence == ["a"]
+    assert args.profile_evidence == ["b"]
+    assert args.portfolio_artifact == ["c"]
+    assert args.research_source == ["d"]
+    assert args.evidence == ["e"]
+
+
+def test_career_cli_profile_evidence_is_user_input_and_fits_role(
+        tmp_path: Path) -> None:
+    brief = _write(
+        tmp_path / "brief.md",
+        "Experience with regulatory reporting is required.\n")
+    cv = _write(
+        tmp_path / "cv.md",
+        "Built a regulatory reporting data platform.\n")
+    root = tmp_path / "root"
+    _run_career_cli("--brief-file", brief, "--profile-evidence", cv,
+                    root=root, tmp_path=tmp_path)
+
+    analysis = career.load_career_intelligence(str(root))
+    assert analysis is not None
+    profile_claims = [claim for claim in analysis["claims"]
+                      if claim["source_ref"].startswith("profile:")]
+    assert profile_claims
+    assert all(claim["source_kind"] == model.SRC_USER_INPUT
+               for claim in profile_claims)
+    # A supplied CV must never be relabelled as company evidence.
+    assert all(not claim["source_ref"].startswith("company:")
+               for claim in profile_claims)
+    role_fit = (root / "realworld" / "career" / "career" /
+                "role-fit.md").read_text(encoding="utf-8")
+    assert "[MATCHED]" in role_fit
+    assert "regulatory reporting" in role_fit
+
+
+def test_career_cli_legacy_evidence_is_company_evidence_only(
+        tmp_path: Path) -> None:
+    brief = _write(tmp_path / "brief.md", "Data quality is a problem.\n")
+    legacy = _write(
+        tmp_path / "legacy-company.md",
+        "Acme faces a data quality problem and rising costs.\n")
+    cv = _write(
+        tmp_path / "cv.md",
+        "A profile block that must not become company evidence.\n")
+    root = tmp_path / "root"
+    _run_career_cli(
+        "--brief-file", brief, "--evidence", legacy,
+        "--profile-evidence", cv, root=root, tmp_path=tmp_path)
+
+    analysis = career.load_career_intelligence(str(root))
+    assert analysis is not None
+    company_claims = [claim for claim in analysis["claims"]
+                      if claim["source_ref"].startswith("company:")]
+    assert company_claims
+    assert all(claim["source_kind"] == model.SRC_SUPPLIED_EVIDENCE
+               for claim in company_claims)
+    assert all("legacy-company.md" in claim["source_ref"]
+               for claim in company_claims)
+    assert all("cv.md" not in claim["source_ref"]
+               for claim in company_claims)
+    profile_claims = [claim for claim in analysis["claims"]
+                      if claim["source_ref"].startswith("profile:")]
+    assert profile_claims and all("cv.md" in claim["source_ref"]
+                                  for claim in profile_claims)
+
+
+def test_career_cli_portfolio_and_research_are_typed(
+        tmp_path: Path) -> None:
+    brief = _write(tmp_path / "brief.md", "Data quality is a problem.\n")
+    portfolio = _write(tmp_path / "portfolio.md",
+                       "Led a cross-functional data team.\n")
+    research = _write(
+        tmp_path / "research.md",
+        "Regulated markets reward governed data products.\n")
+    root = tmp_path / "root"
+    _run_career_cli(
+        "--brief-file", brief, "--portfolio-artifact", portfolio,
+        "--research-source", research, root=root, tmp_path=tmp_path)
+
+    analysis = career.load_career_intelligence(str(root))
+    assert analysis is not None
+    portfolio_claims = [claim for claim in analysis["claims"]
+                        if claim["source_ref"].startswith("portfolio:")]
+    research_claims = [claim for claim in analysis["claims"]
+                       if claim["source_ref"].startswith("research:")]
+    assert portfolio_claims and research_claims
+    assert all(claim["source_kind"] == model.SRC_USER_INPUT
+               for claim in portfolio_claims)
+    assert all(claim["source_kind"] == model.SRC_SUPPLIED_EVIDENCE
+               for claim in research_claims)
