@@ -67,6 +67,32 @@ _ALLOWED_BY_ACTION: dict[str, frozenset[str]] = {
     ENRICH_DELIVERABLES: frozenset({DELIVERABLE}),
 }
 
+#: Response schema for the on-demand enrichment actions. Deliberately
+#: distinct from the importer ``_LLM_SCHEMA``: enrichment returns a top-level
+#: ``suggestions`` array whose kinds (NEXT_ACTION, DEPENDENCY, ...) are not
+#: part of the import taxonomy. The enum reuses :data:`SUGGESTION_KINDS`.
+_SUGGESTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "suggestions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string",
+                             "enum": sorted(SUGGESTION_KINDS)},
+                    "title": {"type": "string"},
+                    "detail": {"type": "string"},
+                    "source_title": {"type": "string"},
+                    "target_title": {"type": "string"},
+                },
+                "required": ["kind", "title"],
+            },
+        },
+    },
+    "required": ["suggestions"],
+}
+
 
 class EnrichmentError(Exception):
     """An enrichment request cannot be satisfied (fail closed)."""
@@ -132,6 +158,8 @@ class EnrichmentResult:
     generated_at: str
     suggestions: tuple[EnrichmentSuggestion, ...]
     estimated_cost_usd: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -142,6 +170,8 @@ class EnrichmentResult:
             "pricing_state": self.pricing_state,
             "generated_at": self.generated_at,
             "estimated_cost_usd": self.estimated_cost_usd,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
             "suggestions": [s.to_dict() for s in self.suggestions],
             "ai_generated_items": len(self.suggestions),
             "auto_accepted": 0,
@@ -190,6 +220,20 @@ def _write_suggestions(
         "suggestions": [s.to_dict() for s in suggestions],
     }
     intel_model.write_json(_store_path(root, project_id), payload)
+
+
+def _load_meta(root: str | Path, project_id: str) -> dict[str, Any]:
+    """Return the stored engine/model/usage metadata for a project.
+
+    Used by accept/reject so reviewing one suggestion never drops the engine,
+    model, pricing, usage or generation timestamp recorded by ``generate``.
+    """
+    payload = intel_model.read_json(_store_path(root, project_id))
+    if not isinstance(payload, Mapping):
+        return {}
+    return {key: value for key, value in payload.items()
+            if key not in {"schema_version", "kind", "project_id",
+                           "suggestions"}}
 
 
 # --- generation ---------------------------------------------------------------
@@ -277,11 +321,13 @@ def generate(
     resolved_llm = llm
     resolved_model_name = ""
     if resolved_llm is None:
-        # Resolve the explicitly-selected (or time-based default) engine; a
-        # selection that cannot be honoured fails closed with no fallback.
+        # Resolve the explicitly-selected (or time-based default) engine with
+        # the enrichment response schema; a selection that cannot be honoured
+        # fails closed with no fallback.
         try:
             resolved_llm, _engine_id, resolved_model = \
-                importer.make_engine_llm(selection.engine)
+                importer.make_engine_llm(
+                    selection.engine, schema=_SUGGESTION_SCHEMA)
         except importer.PortfolioImportError as exc:
             raise EnrichmentError(str(exc)) from exc
         resolved_model_name = resolved_model
@@ -297,9 +343,15 @@ def generate(
     except importer.PortfolioImportError as exc:
         raise EnrichmentError(str(exc)) from exc
     suggestions = _parse_suggestions(raw, kind, instant)
+    input_tokens = importer._usage_int(raw, "input_tokens")
+    output_tokens = importer._usage_int(raw, "output_tokens")
 
-    existing = tuple(s for s in load_suggestions(root, project_id)
-                     if s.state != PENDING)
+    # Replace only the pending suggestions produced by this same action; keep
+    # pending suggestions generated for the other enrichment actions.
+    allowed = _ALLOWED_BY_ACTION[kind]
+    existing = tuple(
+        s for s in load_suggestions(root, project_id)
+        if s.state != PENDING or s.kind not in allowed)
     merged = existing + suggestions
     final_model = resolved_model_name or model_name or selection.model
     _write_suggestions(root, project_id, merged, {
@@ -307,6 +359,8 @@ def generate(
         "model": final_model,
         "pricing_state": selection.pricing_state,
         "generated_at": intel_model.utc_now(),
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
     })
     return EnrichmentResult(
         project_id=project_id,
@@ -317,6 +371,8 @@ def generate(
         generated_at=intel_model.utc_now(),
         suggestions=suggestions,
         estimated_cost_usd=selection.estimated_cost_usd,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
     )
 
 
@@ -374,6 +430,7 @@ def reject(root: str | Path, project_id: str, suggestion_id: str) -> dict[str, A
         replace(s, state=REJECTED) if s.suggestion_id == suggestion_id else s
         for s in suggestions)
     _write_suggestions(root, project_id, updated, {
+        **_load_meta(root, project_id),
         "reviewed_at": intel_model.utc_now()})
     return {"suggestion_id": suggestion_id, "state": REJECTED,
             "portfolio_changed": False}
@@ -397,6 +454,7 @@ def accept(
         if s.suggestion_id == suggestion_id else s
         for s in suggestions)
     _write_suggestions(root, project_id, updated, {
+        **_load_meta(root, project_id),
         "reviewed_at": intel_model.utc_now()})
     return {"suggestion_id": suggestion_id, "state": ACCEPTED,
             "portfolio_changed": True, **applied}

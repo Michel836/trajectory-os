@@ -609,7 +609,8 @@ class LocalLlm:
         self.timeout = float(os.environ.get(
             "TRAJECTORY_MVP_LLM_TIMEOUT", timeout))
 
-    def complete_json(self, system: str, user: str) -> dict[str, Any]:
+    def complete_json(self, system: str, user: str,
+                      schema: Mapping[str, Any] | None = None) -> dict[str, Any]:
         payload = {
             "model": self.model,
             "messages": [
@@ -617,7 +618,7 @@ class LocalLlm:
                 {"role": "user", "content": user},
             ],
             "stream": False,
-            "format": _LLM_SCHEMA,
+            "format": schema if schema is not None else _LLM_SCHEMA,
             "options": {"temperature": 0},
         }
         body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
@@ -660,7 +661,8 @@ class DeepSeekLlm:
     def configured(self) -> bool:
         return bool(self.api_key)
 
-    def complete_json(self, system: str, user: str) -> dict[str, Any]:
+    def complete_json(self, system: str, user: str,
+                      schema: Mapping[str, Any] | None = None) -> dict[str, Any]:
         if not self.api_key:
             raise PortfolioImportError(
                 "DeepSeek not configured (set DEEPSEEK_API_KEY)")
@@ -674,7 +676,7 @@ class DeepSeekLlm:
             "temperature": 0,
             "response_format": {
                 "type": "json_object",
-                "json_schema": _LLM_SCHEMA,
+                "json_schema": schema if schema is not None else _LLM_SCHEMA,
             },
         }
         body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
@@ -759,9 +761,16 @@ def make_import_llm(engine: str | None = None) -> (
     return None
 
 
-def make_engine_llm(engine: str | None = None) -> tuple[
+def make_engine_llm(engine: str | None = None, *,
+                    schema: Mapping[str, Any] | None = None) -> tuple[
         Callable[[str, str], Mapping[str, Any]] | None, str, str]:
-    """Return ``(llm, engine_id, model)`` for an explicit selection."""
+    """Return ``(llm, engine_id, model)`` for an explicit selection.
+
+    ``schema`` optionally overrides the JSON response schema sent to the
+    selected engine. When it is omitted the importer schema (``_LLM_SCHEMA``)
+    is used, so existing import callers are unchanged. The selection is
+    honoured exactly: an unavailable engine fails closed with no fallback.
+    """
     try:
         selected = import_engine.normalize_engine(
             import_engine.ENGINE_LOCAL if engine is None else engine)
@@ -773,12 +782,31 @@ def make_engine_llm(engine: str | None = None) -> tuple[
         model = os.environ.get("TRAJECTORY_MVP_IMPORT_MODEL", DEFAULT_LLM_MODEL)
         if os.environ.get("TRAJECTORY_MVP_IMPORT_OFFLINE"):
             return None, selected, model
-        return LocalLlm(model=model).complete_json, selected, model
+        local = LocalLlm(model=model)
+        return _bind_schema(local.complete_json, schema), selected, model
     llm = DeepSeekLlm()
     if not llm.configured:
         raise PortfolioImportError(
             "DeepSeek Flash selected but DEEPSEEK_API_KEY is not set")
-    return llm.complete_json, selected, llm.model
+    return _bind_schema(llm.complete_json, schema), selected, llm.model
+
+
+def _bind_schema(
+    complete: Callable[..., Mapping[str, Any]],
+    schema: Mapping[str, Any] | None,
+) -> Callable[[str, str], Mapping[str, Any]]:
+    """Bind an optional response schema onto a completion callable.
+
+    Without a schema the original bound method is returned untouched, which
+    preserves importer behavior and introspection (e.g. ``__self__``).
+    """
+    if schema is None:
+        return complete
+
+    def _with_schema(system: str, user: str) -> Mapping[str, Any]:
+        return complete(system, user, schema=schema)
+
+    return _with_schema
 
 
 def _post_json(url: str, body: bytes, timeout: float) -> bytes:
