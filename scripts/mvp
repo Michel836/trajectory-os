@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# mvp — TrajectoryOS personal execution & decision system (V0 Trajectory Mirror).
+#
+# A thin, stable shim over src/trajectory_os/mvp: it resolves the repository
+# root, prepends the src layout to PYTHONPATH and execs the CLI.
+#
+# Commands:
+#   init load plan today week ready blocked projects wbs
+#   record export-sp dashboard demo
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
+ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+SRC="${ROOT}/src"
+
+if [[ ! -d "${SRC}/trajectory_os/mvp" ]]; then
+  printf 'mvp: internal error: missing trajectory_os/mvp package (expected %s)\n' "${SRC}/trajectory_os/mvp" >&2
+  exit 2
+fi
+
+export PYTHONPATH="${SRC}${PYTHONPATH:+:${PYTHONPATH}}"
+exec python3 -m trajectory_os.mvp.cli "$@"
