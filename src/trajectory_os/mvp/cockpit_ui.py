@@ -189,6 +189,17 @@ input,select,textarea{font:inherit;padding:.35rem .45rem;border:1px solid
 var(--line);border-radius:6px;width:100%;background:#fff}
 .inline{width:auto}
 .insufficient{color:var(--warn);font-style:italic}
+.imp-error{margin:.6rem 0;padding:.5rem .6rem;border:1px solid #f0c8c4;
+background:#fdecea;color:#b3261e;border-radius:8px;font-size:.85rem}
+.imp-blockers{margin:.6rem 0;padding:.6rem;border:1px solid #f0c8c4;
+background:#fff8f7;border-radius:8px}
+.imp-block{padding:.5rem 0;border-bottom:1px dashed #f0c8c4}
+.imp-block:last-child{border-bottom:none}
+.imp-ready{margin:.6rem 0;padding:.6rem;border:1px solid #b7dfc0;
+background:#f2fbf4;border-radius:8px;font-size:.9rem}
+.handoff{margin:.6rem 0;padding:.6rem;border:1px solid #cdd7e5;
+background:#f6f9fd;border-radius:8px}
+.handoff h3{margin:.1rem 0 .35rem 0}
 .tmnode{cursor:pointer}
 .flowcol{background:#fbfcfe;border:1px dashed var(--line);border-radius:8px;
 padding:.4rem;min-width:150px}
@@ -274,6 +285,54 @@ function tableSortRows(kind,rows,sorts){
       if(c)return c;}
     return 0;});
   return arr;}
+// Presentation-only ordering for the Kanban, Today and Ready views. The
+// baseline order (default/recommended) is always preserved exactly; the
+// alternate keys never re-derive readiness, priority or status. Sorting is
+// stable: equal values keep their original baseline position.
+var PRESENTATION_DEFAULT_DIR = {
+  priority:'asc', urgency:'desc', impact:'desc', effort:'asc',
+  name:'asc', project:'asc'};
+function presentationSortValue(kind,sort,o){
+  if(o==null)return null;
+  switch(sort){
+    case 'priority':return o.priority_rank==null?null:Number(o.priority_rank);
+    case 'urgency':return tableUrgencyRank(o.urgency);
+    case 'impact':return tableImpactRank(o.impact);
+    case 'effort':return tableEffort(kind,o);
+    case 'name':return o.title==null?null:String(o.title);
+    case 'project':return o.project==null?null:String(o.project);
+    default:return null;}}
+function presentationSortRows(kind,rows,sort,direction){
+  var arr=(rows||[]).slice();
+  if(!sort||sort==='default'||sort==='recommended')return arr;
+  if(PRESENTATION_DEFAULT_DIR[sort]==null)return arr;
+  var dir=direction;
+  if(dir!=='asc'&&dir!=='desc')dir=PRESENTATION_DEFAULT_DIR[sort];
+  var indexed=arr.map(function(o,i){return {o:o,i:i};});
+  indexed.sort(function(a,b){
+    var av=presentationSortValue(kind,sort,a.o);
+    var bv=presentationSortValue(kind,sort,b.o);
+    var an=(av==null),bn=(bv==null);
+    if(an||bn){if(an&&bn)return a.i-b.i;return an?1:-1;}
+    var c;
+    if(typeof av==='number'&&typeof bv==='number'){c=av-bv;}
+    else{c=String(av).localeCompare(String(bv),undefined,
+      {numeric:true,sensitivity:'base'});}
+    if(c)return dir==='desc'?-c:c;
+    return a.i-b.i;});
+  return indexed.map(function(x){return x.o;});}
+// Kanban column membership is a pure status/readiness projection; it is
+// deliberately independent from presentation sorting so drag/drop semantics
+// can never be changed by an ordering choice.
+function kanbanColumn(o,mode){
+  if(mode==='projects'){return o.status;}
+  if(o.status==='COMPLETED'||o.status==='ABANDONED')return 'DONE';
+  if(o.status==='DEFERRED')return 'DEFERRED';
+  if(o.readiness==='BLOCKED')return 'BLOCKED';
+  if(o.readiness==='WAITING')return 'WAITING';
+  if(o.status==='IN_PROGRESS')return 'IN_PROGRESS';
+  if(o.ready)return 'READY';
+  return 'TODO';}
 // Tri-state cycle: asc -> desc -> none. Shift adds/replaces a secondary term.
 function tableNextSort(sorts,column,additive){
   var copy=(sorts||[]).map(function(s){
@@ -357,7 +416,7 @@ function searchMatches(o,terms){
 
 PAGE_JS = TABLE_JS_HELPERS + r"""
 const VIEWS = [
-  ['today','Today'],['ready','Ready'],
+  ['today','Today'],['ready','Ready'],['tomorrow','Tomorrow'],['week','Week'],
   ['list','List'],['kanban','Kanban'],['wbs','WBS'],['graph','Dependency Graph'],
   ['gantt','Gantt'],['eisenhower','Eisenhower'],['impact_effort','Impact / Effort'],
   ['portfolio_map','Portfolio Map'],['treemap','Treemap'],['progress','Progress'],
@@ -379,7 +438,12 @@ const S = {
   collapsed:{}, treemapFocus:'portfolio', wbsSelected:null,
   importJob:null, importPoll:null, importEngines:null,
   importEngineChoice:null,
-  enrichment:{}, enrichmentOpen:{}, enrichmentBusy:null, enrichmentEngine:null
+  enrichment:{}, enrichmentOpen:{}, enrichmentBusy:null, enrichmentEngine:null,
+  kanbanSort:'default', kanbanSortDir:'default',
+  todaySort:'recommended', readySort:'recommended',
+  tomorrowSort:'planned', weekSort:'manual',
+  tomorrowDraft:{main:[],optional:[]}, reviewDraft:{main:[],optional:[]},
+  weekDraft:null, review:null
 };
 const $ = id => document.getElementById(id);
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;')
@@ -396,8 +460,8 @@ async function api(path,method,body){const opts={method:method||'GET',headers:{}
     opts.body=JSON.stringify(body);}
   const res=await fetch(path,opts);let data={};
   try{data=await res.json();}catch(e){/* ignore */}
-  if(!res.ok){throw new Error(data.detail||data.error||data.status||
-    ('HTTP '+res.status));}
+  if(!res.ok){const err=new Error(data.detail||data.error||data.status||
+    ('HTTP '+res.status));err.data=data;throw err;}
   return data;}
 function obj(id){return S.views&&S.views.object_index?
   S.views.object_index[id]:null;}
@@ -432,16 +496,66 @@ function applyPrefs(p){if(!p)return;S.prefs=p;
   S.filters=Object.assign({scope:'all',scope_id:null,level:'all',
     status:[],evidence:[]},p.filters||{});
   S.view=p.view||S.view;S.tables=normaliseTables(p.tables);
-  S.selection=p.selected||null;}
+  S.selection=p.selected||null;
+  S.kanbanSort=p.kanban_sort||'default';
+  S.kanbanSortDir=p.kanban_sort_direction||'default';
+  S.todaySort=p.today_sort||'recommended';
+  S.readySort=p.ready_sort||'recommended';
+  S.tomorrowSort=p.tomorrow_sort||'planned';
+  S.weekSort=p.week_sort||'manual';}
 async function refresh(){
   try{
     const res=await api('/api/views');
     S.views=res;
     applyPrefs(res.preferences);
+    initPlanningDrafts();
     renderAll();notice('');
   }catch(err){notice(err.message);}
 }
+// Planning drafts start empty unless a plan already exists for the exact
+// target day. No carry-over is ever pre-selected for the user.
+function planIds(plan){
+  if(!plan)return {main:[],optional:[]};
+  return {main:(plan.main_task_ids||[]).slice(),
+    optional:(plan.optional_task_ids||[]).slice()};}
+function initPlanningDrafts(){
+  const tv=S.views&&S.views.tomorrow_view;
+  S.tomorrowDraft=planIds(tv&&tv.saved_plan);
+  S.reviewDraft={main:[],optional:[]};
+  const wv=S.views&&S.views.week_view;
+  S.weekDraft=(wv&&wv.outcomes||[]).map(function(o,i){
+    return {rid:i,outcome_id:o.outcome_id,project_id:o.project_id,
+      title:o.title,note:o.note,state:o.state,project:o.project,
+      progress_signal:o.progress_signal,progress_ratio:o.progress_ratio,
+      urgency:o.urgency};});
+}
 function setView(v){S.view=v;persistPrefs({view:v});renderAll();}
+// Presentation-only ordering controls (Kanban / Today / Ready). The chosen
+// key is persisted in ui_state.json and never reorders portfolio data.
+var KANBAN_SORT_OPTIONS=[['default','Default'],['priority','Priority'],
+  ['urgency','Urgency'],['impact','Impact'],['effort','Effort'],
+  ['name','Name'],['project','Project']];
+var KANBAN_DIR_OPTIONS=[['default','Auto'],['asc','Asc'],['desc','Desc']];
+var ORDER_SORT_OPTIONS=[['recommended','Recommended'],['priority','Priority'],
+  ['urgency','Urgency'],['impact','Impact'],['effort','Effort'],
+  ['name','Name'],['project','Project']];
+function sortSelect(id,current,options,handler){
+  return '<select id="'+id+'" class="inline" onchange="'+handler+
+    '(this.value)">'+options.map(function(o){
+      return '<option value="'+o[0]+'"'+(current===o[0]?' selected':'')+
+        '>'+esc(o[1])+'</option>';}).join('')+'</select>';}
+function kanbanSortChange(v){S.kanbanSort=v;
+  persistPrefs({kanban_sort:v});renderAll();}
+function kanbanDirChange(v){S.kanbanSortDir=v;
+  persistPrefs({kanban_sort_direction:v});renderAll();}
+function todaySortChange(v){S.todaySort=v;
+  persistPrefs({today_sort:v});renderAll();}
+function readySortChange(v){S.readySort=v;
+  persistPrefs({ready_sort:v});renderAll();}
+function tomorrowSortChange(v){S.tomorrowSort=v;
+  persistPrefs({tomorrow_sort:v});renderAll();}
+function weekSortChange(v){S.weekSort=v;
+  persistPrefs({week_sort:v});renderAll();}
 function selectObject(id){S.selection=id;
   if(id&&obj(id)&&obj(id).kind==='project'){S.treemapFocus='project:'+
     obj(id).project_id;}
@@ -573,7 +687,8 @@ function renderSummary(){
 // --- dispatcher --------------------------------------------------------------
 function renderView(){
   if(!S.views){$('view-root').innerHTML='<p class="muted">loading…</p>';return;}
-  const fn={today:renderToday,ready:renderReady,list:renderList,
+  const fn={today:renderToday,ready:renderReady,tomorrow:renderTomorrow,
+    week:renderWeek,list:renderList,
     kanban:renderKanban,wbs:renderWbs,graph:renderGraph,
     gantt:renderGantt,eisenhower:renderEisenhower,impact_effort:renderImpactEffort,
     portfolio_map:renderPortfolioMap,treemap:renderTreemap,progress:renderProgress,
@@ -862,15 +977,6 @@ function tableReset(kind){
   withViewScroll(renderAll);}
 
 // --- Kanban ------------------------------------------------------------------
-function kanbanColumn(o,mode){
-  if(mode==='projects'){return o.status;}
-  if(o.status==='COMPLETED'||o.status==='ABANDONED')return 'DONE';
-  if(o.status==='DEFERRED')return 'DEFERRED';
-  if(o.readiness==='BLOCKED')return 'BLOCKED';
-  if(o.readiness==='WAITING')return 'WAITING';
-  if(o.status==='IN_PROGRESS')return 'IN_PROGRESS';
-  if(o.ready)return 'READY';
-  return 'TODO';}
 function renderKanban(){
   const mode=S.kanbanMode;
   const cols=mode==='projects'?KANBAN_PROJECT:KANBAN_TASK;
@@ -879,11 +985,19 @@ function renderKanban(){
     '" onclick="S.kanbanMode=\'tasks\';renderAll()">Tasks</button>'+
     '<button class="small '+(mode==='projects'?'active':'')+
     '" onclick="S.kanbanMode=\'projects\';renderAll()">Projects</button>'+
+    '<span class="muted">Sort cards by</span>'+
+    sortSelect('kanban-sort',S.kanbanSort,KANBAN_SORT_OPTIONS,
+      'kanbanSortChange')+
+    sortSelect('kanban-dir',S.kanbanSortDir,KANBAN_DIR_OPTIONS,
+      'kanbanDirChange')+
     '<span class="muted">drag a card to a valid column to change status; '+
     'READY/WAITING are derived and not directly editable.</span></div>'+
     '<div class="kanban">';
+  const sortKind=mode==='projects'?'project':'task';
   cols.forEach(function(col){
-    const items=rows.filter(function(o){return kanbanColumn(o,mode)===col;});
+    const items=presentationSortRows(sortKind,
+      rows.filter(function(o){return kanbanColumn(o,mode)===col;}),
+      S.kanbanSort,S.kanbanSortDir);
     h+='<div class="kcol" ondragover="event.preventDefault();this.classList.add(\'drop\')" '+
       'ondragleave="this.classList.remove(\'drop\')" ondrop="dropKanban(event,\''+
       col+'\',\''+mode+'\')"><h4><span>'+col+'</span><span>'+
@@ -1667,18 +1781,22 @@ async function saveTask(){const id=S.selection&&S.selection.indexOf('task:')===0
     closeTask();await refresh();}catch(err){notice(err.message);}}
 
 // --- document import (factual first, explicit engine) ------------------------
-let importState={draft_id:null,analysis:null};
+let importState={draft_id:null,analysis:null,validation:null,validated:false,
+  overrides:{}};
 function importEngine(){return $('import-engine')?$('import-engine').value:'local';}
 function fmtUsd(v){if(v==null||v===0)return '$0';return '$'+Number(v).toFixed(4);}
 function fmtSec(ms){if(ms==null)return '—';const s=Math.max(0,Math.round(ms/1000));
   const m=Math.floor(s/60);return m?m+'m'+(s%60)+'s':s+'s';}
-function openImport(){importState={draft_id:null,analysis:null};
+function openImport(){importState={draft_id:null,analysis:null,validation:null,
+    validated:false,overrides:{}};
   S.importEngineChoice=null;
   clearImportPoll();$('import-picker').style.display='';
   $('import-preview').innerHTML='';$('import-progress').style.display='none';
   $('import-progress').innerHTML='';$('import-report').innerHTML='';
+  $('import-validation').innerHTML='';
   $('import-actions').style.display='none';
-  $('import-overlay').classList.add('open');notice('');loadEngineCatalog();}
+  $('import-overlay').classList.add('open');notice('');
+  loadEngineCatalog();loadDraftList();}
 function closeImport(){clearImportPoll();
   $('import-overlay').classList.remove('open');}
 function clearImportPoll(){if(S.importPoll){clearInterval(S.importPoll);
@@ -1686,6 +1804,34 @@ function clearImportPoll(){if(S.importPoll){clearInterval(S.importPoll);
 async function loadEngineCatalog(chars){
   try{const res=await api('/api/import/engines?chars='+(chars||0));
     S.importEngines=res;renderEngineBox();}
+  catch(err){notice(err.message);}}
+// Reopen a persisted draft after a reload/restart instead of re-running a
+// long analysis. Presentation-only; the draft is read back from disk.
+async function loadDraftList(){
+  const el=$('import-drafts');if(!el)return;
+  el.innerHTML='<span class="muted">loading saved drafts…</span>';
+  try{const res=await api('/api/import/drafts');
+    const drafts=res.drafts||[];
+    if(!drafts.length){el.innerHTML='';return;}
+    el.innerHTML='<label>Reopen a saved analysis</label>'+
+      '<div class="bar"><select id="import-draft-select">'+
+      drafts.map(function(d){return '<option value="'+esc(d.draft_id)+'">'+
+        esc(d.source_name||d.draft_id)+' — '+(d.items||0)+' items · '+
+        esc((d.imported_at||'').slice(0,16))+'</option>';}).join('')+
+      '</select><button class="small primary" onclick="reopenDraft()">'+
+      'Reopen</button></div>';}
+  catch(err){el.innerHTML='';}}
+async function reopenDraft(){
+  const sel=$('import-draft-select');if(!sel||!sel.value)return;
+  try{const res=await api('/api/import/drafts/'+
+      encodeURIComponent(sel.value));
+    importState.draft_id=res.draft_id;importState.analysis=res.analysis;
+    importState.overrides={};importState.validated=false;
+    importState.validation=null;
+    $('import-picker').style.display='none';
+    $('import-progress').style.display='none';$('import-report').innerHTML='';
+    clearImportPoll();renderImportPreview();
+    notice('Saved draft reopened: '+(res.analysis.source_name||res.draft_id));}
   catch(err){notice(err.message);}}
 function renderEngineBox(){
   const box=$('import-engine-box');if(!box)return;
@@ -1822,7 +1968,8 @@ function impEditForm(c,isProject,isTask){
     'padding-top:.5rem"><label>Title</label><input id="imp-title-'+
     c.candidate_id+'" value="'+esc(c.title)+'">'+
     (isTask?'<label>Project</label><select id="imp-project-'+
-      c.candidate_id+'">'+impProjectOptions('')+'</select>':'')+
+      c.candidate_id+'" onchange="importDecisionChanged()">'+
+      impProjectOptions('')+'</select>':'')+
     '<div class="form-row"><div><label>Status</label>'+
       sel('imp-status-'+c.candidate_id,statuses,c.suggested_status||'')+
       '</div><div><label>Urgency</label>'+
@@ -1867,6 +2014,7 @@ function impToggleSuggestions(){const el=$('imp-suggestions');if(!el)return;
     b.getAttribute('data-count')+') '+(hidden?'[Hide]':'[Show]');}
 function renderImportPreview(){const a=importState.analysis;const s=a.summary||{};
   $('import-picker').style.display='none';$('import-actions').style.display='';
+  $('import-validation').innerHTML='';importState.validated=false;
   let h='<p class="muted"><strong>'+esc(a.source_name)+'</strong> · '+
     (s.items||0)+' factual items · mode '+esc(a.mode||'factual')+' · engine '+
     esc(a.engine||'')+'</p>';
@@ -1888,17 +2036,56 @@ function renderImportPreview(){const a=importState.analysis;const s=a.summary||{
       suggested.map(impRow).join('')+'</div>';}
   $('import-preview').innerHTML=h;}
 function impActionChange(cid){const merge=$('imp-merge-'+cid);if(merge){
-    merge.style.display=$('imp-action-'+cid).value==='merge'?'':'none';}}
-async function confirmImport(){const decisions=importState.analysis.candidates.map(
-    function(c){const raw=$('imp-action-'+c.candidate_id).value;
+    merge.style.display=$('imp-action-'+cid).value==='merge'?'':'none';}
+  importDecisionChanged();}
+function importDecisionChanged(){importState.validated=false;
+  importState.validation=null;$('import-validation').innerHTML='';}
+function importError(msg){const el=$('import-validation');if(!el)return;
+  el.innerHTML='<div class="imp-error"><strong>Import error</strong>'+
+    '<div>'+esc(msg)+'</div></div>';}
+function projectOptionsHtml(){
+  return objects().filter(function(o){return o.kind==='project';}).sort(
+    function(a,b){return a.title.localeCompare(b.title);}).map(function(p){
+      return '<option value="'+esc(p.project_id)+'">'+esc(p.title)+
+        '</option>';}).join('');}
+function groupById(gid){return (importState.validation&&
+  importState.validation.groups||[]).filter(function(g){
+    return g.group_id===gid;})[0];}
+function assignGroupNew(gid){const g=groupById(gid);if(!g)return;
+  g.candidate_ids.forEach(function(cid){
+    importState.overrides[cid]={action:'import',project_id:'new:'+gid,
+      new_project_title:g.proposed_title};});
+  importDecisionChanged();confirmImport();}
+function assignGroupExisting(gid,projectId){if(!projectId)return;
+  const g=groupById(gid);if(!g)return;
+  g.candidate_ids.forEach(function(cid){
+    importState.overrides[cid]={action:'import',project_id:projectId};});
+  importDecisionChanged();confirmImport();}
+function skipGroup(gid){const g=groupById(gid);if(!g)return;
+  g.candidate_ids.forEach(function(cid){
+    importState.overrides[cid]={action:'skip'};});
+  importDecisionChanged();confirmImport();}
+function assignOne(cid,projectId){if(!projectId)return;
+  importState.overrides[cid]={action:'import',project_id:projectId};
+  importDecisionChanged();confirmImport();}
+function skipOne(cid){importState.overrides[cid]={action:'skip'};
+  importDecisionChanged();confirmImport();}
+function collectImportDecisions(){
+  return importState.analysis.candidates.map(function(c){
+    const ov=importState.overrides[c.candidate_id]||{};
+    const actionEl=$('imp-action-'+c.candidate_id);
+    let raw=(ov.action!=null?ov.action:(actionEl?actionEl.value:'import'));
     const d={candidate_id:c.candidate_id,action:raw==='merge'?'import':raw};
     if(raw==='merge'){const merge=$('imp-merge-'+c.candidate_id);
-      if(!merge||!merge.value)throw new Error('choose a merge target');
+      if(!merge||!merge.value)throw new Error(
+        'choose a merge target for one project before importing');
       d.merge_project_id=merge.value;}
+    const project=$('imp-project-'+c.candidate_id);
+    if(ov.project_id!=null)d.project_id=ov.project_id;
+    else if(project&&project.value)d.project_id=project.value;
+    if(ov.new_project_title)d.new_project_title=ov.new_project_title;
     const title=$('imp-title-'+c.candidate_id);
     if(title&&title.value&&title.value!==c.title)d.title=title.value;
-    const project=$('imp-project-'+c.candidate_id);
-    if(project&&project.value)d.project_id=project.value;
     const status=$('imp-status-'+c.candidate_id);
     if(status&&status.value)d.status=status.value;
     const urg=$('imp-urg-'+c.candidate_id);
@@ -1908,11 +2095,71 @@ async function confirmImport(){const decisions=importState.analysis.candidates.m
     const effort=$('imp-effort-'+c.candidate_id);
     if(effort&&effort.value&&effort.value.trim()!=='')d.effort_minutes=
       parseInt(effort.value,10);
-    return d;});
-  try{const res=await api('/api/import/confirm','POST',{draft_id:
-    importState.draft_id,decisions:decisions});
+    return d;});}
+function renderImportReady(report){
+  const s=report.summary||{};const el=$('import-validation');
+  const repaired=(report.repaired||[]).length;
+  el.innerHTML='<div class="imp-ready"><strong>Ready to import: '+
+    (s.projects||0)+' project(s), '+(s.tasks||0)+' task(s), '+
+    (s.merges||0)+' merge(s), '+(s.skips||0)+' skipped</strong>'+
+    (repaired?'<div class="muted">'+repaired+' hierarchy link(s) '+
+      'restored from the source structure</div>':'')+
+    '<div class="muted">Review the list, then click <strong>'+
+    'Confirm import</strong> again to apply. Nothing is written until then.'+
+    '</div></div>';}
+function renderImportBlockers(report){
+  const el=$('import-validation');const issues=report.unresolved||[];
+  const groups=report.groups||[];
+  let h='<div class="imp-blockers"><strong>'+issues.length+
+    ' item(s) need attention before import</strong>';
+  groups.forEach(function(g){
+    h+='<div class="imp-block"><div><strong>Possible new project: '+
+      esc(g.proposed_title)+'</strong> <span class="muted">(confidence '+
+      g.confidence+')</span></div><div class="muted">'+
+      g.titles.map(esc).join(' · ')+'</div><div class="bar">'+
+      '<button class="small primary" onclick="assignGroupNew(\''+g.group_id+
+      '\')">Accept project grouping</button>'+
+      '<select id="imp-group-project-'+g.group_id+'" onchange="'+
+      'assignGroupExisting(\''+g.group_id+'\',this.value)" class="inline">'+
+      '<option value="">choose existing project…</option>'+
+      projectOptionsHtml()+'</select>'+
+      '<button class="small" onclick="skipGroup(\''+g.group_id+'\')">'+
+      'Leave unresolved / skip</button></div></div>';});
+  const grouped={};(groups||[]).forEach(function(g){
+    g.candidate_ids.forEach(function(cid){grouped[cid]=true;});});
+  issues.forEach(function(it){
+    if(grouped[it.candidate_id])return;
+    h+='<div class="imp-block"><div><strong>'+esc(it.title)+'</strong></div>'+
+      '<div class="muted">reason: '+esc(it.reason)+' · action: '+
+      esc((importState.overrides[it.candidate_id]||{}).action||'import')+
+      '</div><div class="bar">'+
+      '<select id="imp-block-project-'+it.candidate_id+'" class="inline" '+
+      'onchange="assignOne(\''+it.candidate_id+'\',this.value)">'+
+      '<option value="">choose existing project…</option>'+
+      projectOptionsHtml()+'</select>'+
+      '<button class="small" onclick="skipOne(\''+it.candidate_id+'\')">'+
+      'Skip</button></div></div>';});
+  h+='</div>';el.innerHTML=h;}
+async function confirmImport(){
+  let decisions;
+  try{decisions=collectImportDecisions();}
+  catch(err){importError(err.message);return;}
+  if(importState.validated){await runConfirmedImport(decisions);return;}
+  try{
+    const report=await api('/api/import/validate','POST',
+      {draft_id:importState.draft_id,decisions:decisions});
+    importState.validation=report;
+    if(!report.ok){importState.validated=false;
+      renderImportBlockers(report);return;}
+    importState.validated=true;renderImportReady(report);}
+  catch(err){importError(err.message);}}
+async function runConfirmedImport(decisions){
+  try{const res=await api('/api/import/confirm','POST',
+      {draft_id:importState.draft_id,decisions:decisions});
     notice('Imported '+res.imported+' · merged '+res.merged+' · skipped '+
-    res.skipped);closeImport();await refresh();}catch(err){notice(err.message);}}
+      res.skipped);closeImport();await refresh();}
+  catch(err){if(err.data&&err.data.unresolved){importState.validation=err.data;
+      renderImportBlockers(err.data);}else{importError(err.message);}}}
 
 // --- on-demand AI enrichment (SUGGESTED until explicitly accepted) -----------
 function enrEngineOptions(){const cat=S.importEngines;
@@ -2036,9 +2283,61 @@ function decisionRow(o,rank,reasons){
     '<td>'+esc(o.urgency)+'</td><td>'+esc(o.impact)+'</td>'+
     '<td>'+fmtMin(o.estimated_minutes)+'</td>'+
     '<td class="muted">'+why+'</td></tr>';}
+// Presentation-only ordering for Today/Ready. Uses the same cockpit object
+// (and therefore the same priority/urgency/impact/effort fields) as the rest
+// of the UI; "recommended" returns the server's deterministic order untouched.
+function viewSortRow(item){
+  const o=obj('task:'+item.task_id);
+  if(o)return o;
+  return {id:'task:'+item.task_id,ref_id:item.task_id,title:item.title,
+    project:item.project||item.project_name,urgency:item.urgency,
+    impact:item.impact,priority_rank:null,
+    estimated_minutes:item.estimated_minutes!=null?item.estimated_minutes:
+      item.effort_minutes,
+    effort_minutes:item.effort_minutes};}
+function sortViewItems(items,sort){
+  const arr=(items||[]).slice();
+  if(!sort||sort==='recommended')return arr;
+  const byId={};arr.forEach(function(it){byId[it.task_id]=it;});
+  return presentationSortRows('task',arr.map(viewSortRow),sort).map(
+    function(o){return byId[o.ref_id]||{task_id:o.ref_id,title:o.title,
+      reasons:[]};});}
+// --- Today handoff from the saved Tomorrow plan -------------------------------
+function handoffRow(item,index){
+  const o=obj('task:'+item.task_id);
+  const blocked=item.blocked;
+  const readiness=item.readiness||item.status;
+  return '<tr class="'+(o&&S.selection===o.id?'selected':'')+'"'+
+    (o?' onclick="selectObject(\'task:'+esc(item.task_id)+'\')"':'')+'>'+
+    '<td>'+pill(item.role,'')+'</td><td>'+index+'</td>'+
+    '<td>'+esc(item.title)+'</td><td>'+esc(item.project)+'</td>'+
+    '<td>'+pill(blocked?'BLOCKED':readiness,'badge-'+
+      (blocked?'BLOCKED':(item.ready?'READY':readiness)))+'</td>'+
+    '<td>'+esc(item.urgency)+'</td><td>'+esc(item.impact)+'</td>'+
+    '<td>'+fmtMin(item.estimated_minutes)+'</td>'+
+    '<td class="muted">'+esc(blocked?(item.blocked_reason||'blocked'):
+      (item.role==='MAIN'?'explicitly planned as main':'explicitly planned'))+
+      (item.completed?' '+pill('DONE','badge-COMPLETED'):'')+'</td></tr>';}
+function handoffSection(){
+  const ho=S.views.today_handoff;
+  if(!ho||!ho.active)return '';
+  const rows=(ho.main||[]).concat(ho.optional||[]);
+  if(!rows.length)return '';
+  let h='<div class="handoff"><h3>Planned — your explicit choice for today'+
+    '</h3><p class="muted">'+(ho.main||[]).length+' main · '+
+    (ho.optional||[]).length+' optional · '+ho.blocked_count+
+    ' currently blocked. This is a human override; blocked work is shown '+
+    'with its blocker and is never pretended to be executable. The '+
+    'deterministic recommendation remains below.</p>'+
+    '<table><tr><th>Plan</th><th>#</th><th>Task</th><th>Project</th>'+
+    '<th>Readiness</th><th>Urgency</th><th>Impact</th><th>Effort</th>'+
+    '<th>Why / blocker</th></tr>';
+  rows.forEach(function(item,i){h+=handoffRow(item,i+1);});
+  return h+'</table></div>';}
 function renderToday(){
   const plan=S.views.today_plan;
   if(!plan){$('view-root').innerHTML='<p class="muted">no plan</p>';return;}
+  const planned=sortViewItems(plan.planned,S.todaySort);
   let h='<h2>Today — what to do now, and why</h2>'+
     '<p class="muted">capacity '+fmtMin(plan.total_capacity)+' · calendar '+
     fmtMin(plan.calendar_minutes)+' · buffer '+fmtMin(plan.buffer_minutes)+
@@ -2046,15 +2345,22 @@ function renderToday(){
     fmtMin(plan.plan_capacity)+'</p>'+
     '<div class="bar"><button class="small primary" '+
     'onclick="openExportPreview()">Preview Super Productivity export</button>'+
+    '<button class="small" onclick="setView(\'tomorrow\')">Plan tomorrow'+
+    '</button>'+
+    '<button class="small" onclick="openReview()">End-of-day review</button>'+
+    '<span class="muted">Order by</span>'+
+    sortSelect('today-sort',S.todaySort,ORDER_SORT_OPTIONS,'todaySortChange')+
     '<span class="muted">select tasks below to hand a deliberate set to '+
     'Super Productivity</span></div>';
-  h+='<table><tr><th></th><th>#</th><th>Task</th><th>Project</th>'+
+  h+=handoffSection();
+  h+='<h3>Recommended baseline (readiness &amp; priority)</h3>'+
+    '<table><tr><th></th><th>#</th><th>Task</th><th>Project</th>'+
     '<th>Readiness</th><th>Urgency</th><th>Impact</th><th>Effort</th>'+
     '<th>Why selected</th></tr>'+
-    plan.planned.map(function(item,index){
+    planned.map(function(item,index){
       return decisionRow(obj('task:'+item.task_id),index+1,item.reasons);
     }).join('')+'</table>';
-  if(!plan.planned.length){h+='<p class="muted">nothing fits in today\'s '+
+  if(!planned.length){h+='<p class="muted">nothing fits in today\'s '+
     'remaining capacity</p>';}
   if((plan.unknown_effort||[]).length){
     h+='<h3>Ready but effort unknown ('+plan.unknown_effort.length+')</h3>'+
@@ -2084,10 +2390,12 @@ function renderReady(){
     ' deferred · '+wf.counts.project_closed+' in closed projects</p>'+
     '<div class="bar"><button class="small primary" '+
     'onclick="openExportPreview()">Preview Super Productivity export</button>'+
+    '<span class="muted">Order by</span>'+
+    sortSelect('ready-sort',S.readySort,ORDER_SORT_OPTIONS,'readySortChange')+
     '<span class="muted">the export uses the tasks checked in Today, or the '+
     'top ready tasks</span></div>';
   wf.group_order.forEach(function(g){
-    const items=wf.groups[g]||[];
+    const items=sortViewItems(wf.groups[g]||[],S.readySort);
     if(!items.length)return;
     h+='<h3>'+esc(labels[g]||g)+' ('+items.length+')</h3>';
     h+='<table><tr><th>Task</th><th>Project</th><th>Urgency</th>'+
@@ -2108,6 +2416,323 @@ function renderReady(){
           pill(item.blocking_kind,''):'')+'</td></tr>';});
     h+='</table>';});
   $('view-root').innerHTML=h;}
+
+// --- Tomorrow ----------------------------------------------------------------
+var TOMORROW_SORT_OPTIONS=[['planned','Planned first'],['priority','Priority'],
+  ['urgency','Urgency'],['impact','Impact'],['effort','Effort'],
+  ['name','Name'],['project','Project']];
+var WEEK_SORT_OPTIONS=[['manual','Manual'],['project','Project'],
+  ['progress','Progress'],['urgency','Urgency']];
+function tomorrowPick(id,role,checked){
+  const d=S.tomorrowDraft;
+  if(checked){
+    if(role==='main'){
+      if(d.main.indexOf(id)<0&&d.main.length>=3){notice('Up to 3 main tasks');
+        renderTomorrow();return;}
+      d.optional=d.optional.filter(function(x){return x!==id;});
+      if(d.main.indexOf(id)<0)d.main.push(id);
+    }else{
+      if(d.optional.indexOf(id)<0&&d.optional.length>=2){
+        notice('Up to 2 optional tasks');renderTomorrow();return;}
+      d.main=d.main.filter(function(x){return x!==id;});
+      if(d.optional.indexOf(id)<0)d.optional.push(id);}
+  }else{
+    if(role==='main')d.main=d.main.filter(function(x){return x!==id;});
+    else d.optional=d.optional.filter(function(x){return x!==id;});}
+  renderTomorrow();}
+function sortCandidates(items){
+  const arr=(items||[]).slice();
+  if(S.tomorrowSort==='planned'){
+    return arr.sort(function(a,b){
+      const ap=a.planned?0:1,bp=b.planned?0:1;return ap-bp;});}
+  return presentationSortRows('task',arr.map(viewSortRow),S.tomorrowSort);}
+function candidateRow(c){
+  const d=S.tomorrowDraft;
+  const isMain=d.main.indexOf(c.task_id)>=0;
+  const isOpt=d.optional.indexOf(c.task_id)>=0;
+  const o=obj('task:'+c.task_id);
+  return '<tr class="'+(o&&S.selection===o.id?'selected':'')+'">'+
+    '<td><input type="checkbox" '+(isMain?'checked':'')+
+    ' onchange="tomorrowPick(\''+esc(c.task_id)+'\',\'main\',this.checked)">'+
+    '</td><td><input type="checkbox" '+(isOpt?'checked':'')+
+    ' onchange="tomorrowPick(\''+esc(c.task_id)+'\',\'optional\',this.checked)">'+
+    '</td><td>'+(c.priority_rank||'')+'</td>'+
+    '<td><a onclick="selectObject(\'task:'+esc(c.task_id)+'\')">'+
+    esc(c.title)+'</a></td>'+
+    '<td>'+esc(c.project)+'</td>'+
+    '<td>'+pill(c.blocked?'BLOCKED':c.readiness,'badge-'+
+      (c.blocked?'BLOCKED':(c.ready?'READY':c.readiness)))+'</td>'+
+    '<td>'+esc(c.urgency)+'</td><td>'+esc(c.impact)+'</td>'+
+    '<td>'+fmtMin(c.estimated_minutes)+'</td>'+
+    '<td>'+esc(c.deadline||'—')+'</td>'+
+    '<td class="muted">'+esc((c.why||[]).join('; '))+'</td></tr>';}
+function renderTomorrow(){
+  const tv=S.views&&S.views.tomorrow_view;
+  if(!tv){$('view-root').innerHTML='<p class="muted">no tomorrow data</p>';
+    return;}
+  const d=S.tomorrowDraft;
+  const byId={};(tv.candidates||[]).forEach(function(c){byId[c.task_id]=c;});
+  (tv.candidates||[]).forEach(function(c){
+    c.planned=(d.main.indexOf(c.task_id)>=0)?'MAIN':
+      (d.optional.indexOf(c.task_id)>=0?'OPTIONAL':null);});
+  const ordered=sortCandidates(tv.candidates);
+  function summary(id){const c=byId[id]||{};
+    return '<li>'+esc(c.title||id)+' <span class="muted">'+
+      esc(c.project||'')+'</span></li>';}
+  let h='<h2>Plan tomorrow</h2>'+
+    '<p class="muted">Target '+esc(tv.target)+' ('+esc(tv.target_weekday)+
+    '). Choose up to '+tv.max_main+' main and '+tv.max_optional+' optional '+
+    'tasks. Nothing is scheduled silently and no clock times are required.</p>';
+  if(tv.saved_plan){
+    h+='<div class="handoff"><strong>Saved plan for '+esc(tv.saved_plan.date)+
+      '</strong><div>Main: '+((tv.saved_plan.main_task_ids||[]).map(function(id){
+        const c=byId[id];return '<span class="pill">'+esc(c?c.title:id)+
+        '</span>';}).join(' ')||'—')+'</div>'+
+      ((tv.saved_plan.optional_task_ids||[]).length?
+      '<div>Optional: '+(tv.saved_plan.optional_task_ids||[]).map(function(id){
+        const c=byId[id];return '<span class="pill">'+esc(c?c.title:id)+
+        '</span>';}).join(' ')+'</div>':'')+'</div>';}
+  h+='<div class="bar"><button class="small primary" '+
+    'onclick="saveTomorrowPlan()">Save plan</button>'+
+    '<button class="small" onclick="openReview()">End-of-day review</button>'+
+    '<span class="muted">Selected: '+d.main.length+' main · '+
+    d.optional.length+' optional</span>'+
+    '<span class="muted">Order by</span>'+
+    sortSelect('tomorrow-sort',S.tomorrowSort,TOMORROW_SORT_OPTIONS,
+      'tomorrowSortChange')+'</div>';
+  if(d.main.length||d.optional.length){
+    h+='<div class="grid2"><div class="card"><h4>Main</h4><ol>'+
+      d.main.map(summary).join('')+'</ol></div>'+
+      '<div class="card"><h4>Optional</h4><ul>'+
+      d.optional.map(summary).join('')+'</ul></div></div>';}
+  h+='<table><tr><th>Main</th><th>Opt</th><th>#</th><th>Task</th>'+
+    '<th>Project</th><th>Readiness</th><th>Urgency</th><th>Impact</th>'+
+    '<th>Effort</th><th>Deadline</th><th>Why suggested</th></tr>'+
+    ordered.map(candidateRow).join('')+'</table>'+
+    '<p class="muted">Candidates come from ready tasks, urgent / near-'+
+    'deadline work, today\'s unfinished items and blocked/waiting context. '+
+    'Blocked tasks are listed with their blocker; planning does not make '+
+    'them executable.</p>';
+  $('view-root').innerHTML=h;}
+async function saveTomorrowPlan(){
+  const d=S.tomorrowDraft;
+  const tv=S.views.tomorrow_view;
+  try{
+    const res=await api('/api/planning/tomorrow','POST',
+      {date:tv.target,main_task_ids:d.main,optional_task_ids:d.optional});
+    S.views.planning=res.planning;S.views.tomorrow_view=res.tomorrow;
+    await refresh();notice('Tomorrow plan saved.');}
+  catch(err){notice(err.message);}}
+
+// --- Week --------------------------------------------------------------------
+function outcomeRow(o,index,rid){
+  const projects=objects().filter(function(x){return x.kind==='project';})
+    .sort(function(a,b){return a.title.localeCompare(b.title);});
+  return '<div class="card" style="margin:.4rem 0"><div class="bar">'+
+    '<strong>'+(index+1)+'</strong>'+
+    '<select id="wk-project-'+rid+'" class="inline">'+
+    '<option value="">(no project)</option>'+
+    projects.map(function(p){return '<option value="'+esc(p.project_id)+'"'+
+      (o.project_id===p.project_id?' selected':'')+'>'+esc(p.title)+
+      '</option>';}).join('')+'</select>'+
+    '<span class="pill badge-'+esc(o.state||'OPEN')+'">'+
+      esc(o.state||'OPEN')+'</span>'+
+    (o.progress_signal?'<span class="muted">'+esc(o.progress_signal)+
+      '</span>':'')+'</div>'+
+    '<input id="wk-title-'+rid+'" class="inline" style="width:58%" '+
+    'placeholder="outcome / deliverable" value="'+esc(o.title||'')+'">'+
+    '<input id="wk-note-'+rid+'" class="inline" style="width:34%" '+
+    'placeholder="note" value="'+esc(o.note||'')+'">'+
+    (o.outcome_id?'<div class="bar"><button class="small" onclick="'+
+      'reviewOutcome(\''+esc(o.outcome_id)+'\',\'close\')">Close</button>'+
+      '<button class="small" onclick="reviewOutcome(\''+esc(o.outcome_id)+
+      '\',\'reopen\')">Reopen</button>'+
+      '<button class="small" onclick="reviewOutcome(\''+esc(o.outcome_id)+
+      '\',\'carry\')">Carry to next week</button></div>':'')+
+    '</div>';}
+function sortWeekOutcomes(items){
+  const arr=(items||[]).slice();
+  const s=S.weekSort;
+  if(!s||s==='manual')return arr;
+  function val(o){
+    if(s==='project')return String(o.project||'')+'|'+String(o.title||'');
+    if(s==='progress')return o.progress_ratio==null?null:
+      -Number(o.progress_ratio);
+    if(s==='urgency')return -(TABLE_URGENCY_RANK[o.urgency]||0);
+    return null;}
+  const indexed=arr.map(function(o,i){return {o:o,i:i};});
+  indexed.sort(function(a,b){
+    const av=val(a.o),bv=val(b.o);
+    const an=av==null,bn=bv==null;
+    if(an||bn){if(an&&bn)return a.i-b.i;return an?1:-1;}
+    let c;
+    if(typeof av==='number'&&typeof bv==='number')c=av-bv;
+    else c=String(av).localeCompare(String(bv));
+    if(c)return c;
+    return a.i-b.i;});
+  return indexed.map(function(x){return x.o;});}
+function renderWeek(){
+  const wv=S.views&&S.views.week_view;
+  if(!wv){$('view-root').innerHTML='<p class="muted">no week data</p>';
+    return;}
+  const outcomes=sortWeekOutcomes(S.weekDraft||[]);
+  let h='<h2>Week — outcomes that must move</h2>'+
+    '<p class="muted">'+esc(wv.week_label)+'. Choose '+wv.min_outcomes+
+    ' to '+wv.max_outcomes+' weekly outcomes. Outcome-level, not a task dump.</p>';
+  h+='<h3>Weekly outcomes ('+outcomes.length+')</h3>'+
+    outcomes.map(function(o,i){return outcomeRow(o,i,
+      o.rid!=null?o.rid:i);}).join('')+
+    '<div class="bar"><button class="small" onclick="addWeekOutcome()">'+
+    'Add outcome</button><button class="small primary" '+
+    'onclick="saveWeekPlan()">Save week plan</button>'+
+    '<span class="muted">Order outcomes by</span>'+
+    sortSelect('week-sort',S.weekSort,WEEK_SORT_OPTIONS,'weekSortChange')+
+    '</div>';
+  h+='<h3>Deadlines this week</h3>';
+  h+=wv.deadlines.length?'<ul>'+wv.deadlines.map(function(d){
+    return '<li><a onclick="selectObject(\'task:'+esc(d.task_id)+'\')">'+
+      esc(d.title)+'</a> <span class="muted">'+esc(d.project)+' · due '+
+      esc(d.deadline)+'</span></li>';}).join('')+'</ul>':
+    '<p class="muted">none</p>';
+  h+='<h3>Threats — blocked / waiting</h3>';
+  h+=wv.threats.length?'<ul>'+wv.threats.map(function(t){
+    return '<li><a onclick="selectObject(\'task:'+esc(t.task_id)+'\')">'+
+      esc(t.title)+'</a> '+pill(t.readiness,'badge-'+t.readiness)+
+      ' <span class="muted">'+esc(t.reason)+'</span></li>';}).join('')+'</ul>':
+    '<p class="muted">none threatening this week</p>';
+  h+='<h3>Projects with no meaningful next action</h3>';
+  h+=wv.projects_without_next_action.length?'<ul>'+
+    wv.projects_without_next_action.map(function(p){
+      return '<li><a onclick="selectObject(\'project:'+esc(p.project_id)+
+        '\')">'+esc(p.name)+'</a> <span class="muted">'+esc(p.reason)+
+        '</span></li>';}).join('')+'</ul>':'<p class="muted">none</p>';
+  h+='<h3>Tomorrow plan</h3>';
+  h+=wv.tomorrow?('<p>Main: '+((wv.tomorrow.main_titles||[]).map(esc).join(', ')
+    ||'—')+'<br>Optional: '+((wv.tomorrow.optional_titles||[]).map(esc)
+    .join(', ')||'—')+'</p>'):'<p class="muted">not planned yet · '+
+    '<a onclick="setView(\'tomorrow\')">plan tomorrow</a></p>';
+  $('view-root').innerHTML=h;}
+function addWeekOutcome(){
+  if((S.weekDraft||[]).length>=5){notice('Up to 5 weekly outcomes');return;}
+  S.weekDraft=S.weekDraft||[];
+  S.weekDraft.push({rid:S.weekDraft.length,title:'',note:'',project_id:null,
+    state:'OPEN'});
+  renderWeek();}
+function collectWeekOutcomes(){
+  return (S.weekDraft||[]).map(function(o,i){
+    const rid=(o.rid!=null?o.rid:i);
+    const title=$('wk-title-'+rid)?$('wk-title-'+rid).value:o.title;
+    const note=$('wk-note-'+rid)?$('wk-note-'+rid).value:o.note;
+    const project=$('wk-project-'+rid)?$('wk-project-'+rid).value:
+      o.project_id;
+    return {outcome_id:o.outcome_id,title:title,note:note,
+      project_id:project||null,state:o.state||'OPEN'};}).filter(function(o){
+    return o.title&&o.title.trim();});}
+async function saveWeekPlan(){
+  const outcomes=collectWeekOutcomes();
+  const wv=S.views.week_view;
+  try{
+    const res=await api('/api/planning/week','POST',
+      {week_start:wv.week_start,outcomes:outcomes});
+    S.views.planning=res.planning;S.views.week_view=res.week;
+    await refresh();notice('Week plan saved.');}
+  catch(err){notice(err.message);}}
+async function reviewOutcome(id,action){
+  const wv=S.views.week_view;
+  const body={action:action,outcome_id:id};
+  if(action==='carry'){
+    const start=new Date(wv.week_start+'T00:00:00');
+    start.setDate(start.getDate()+7);
+    body.new_week_start=start.toISOString().slice(0,10);}
+  const labels={close:'closed',reopen:'reopened',carry:'carried'};
+  try{const res=await api('/api/planning/week/review','POST',body);
+    S.views.planning=res.planning;S.views.week_view=res.week;
+    await refresh();notice('Outcome '+(labels[action]||action)+'.');}
+  catch(err){notice(err.message);}}
+
+// --- End-of-day review -------------------------------------------------------
+function openReview(){
+  S.review=S.views&&S.views.review;
+  S.reviewDraft={main:[],optional:[]};
+  renderReview();
+  $('review-overlay').classList.add('open');}
+function closeReview(){$('review-overlay').classList.remove('open');}
+function reviewPick(id,role,checked){
+  const d=S.reviewDraft;
+  if(checked){
+    if(role==='main'){
+      if(d.main.indexOf(id)<0&&d.main.length>=3){notice('Up to 3 main tasks');
+        renderReview();return;}
+      d.optional=d.optional.filter(function(x){return x!==id;});
+      if(d.main.indexOf(id)<0)d.main.push(id);
+    }else{
+      if(d.optional.indexOf(id)<0&&d.optional.length>=2){
+        notice('Up to 2 optional tasks');renderReview();return;}
+      d.main=d.main.filter(function(x){return x!==id;});
+      if(d.optional.indexOf(id)<0)d.optional.push(id);}
+  }else{
+    if(role==='main')d.main=d.main.filter(function(x){return x!==id;});
+    else d.optional=d.optional.filter(function(x){return x!==id;});}
+  renderReview();}
+function reviewCandidateRow(item){
+  const d=S.reviewDraft;
+  return '<tr><td><input type="checkbox" '+
+    (d.main.indexOf(item.task_id)>=0?'checked':'')+
+    ' onchange="reviewPick(\''+esc(item.task_id)+'\',\'main\',this.checked)">'+
+    '</td><td><input type="checkbox" '+
+    (d.optional.indexOf(item.task_id)>=0?'checked':'')+
+    ' onchange="reviewPick(\''+esc(item.task_id)+
+      '\',\'optional\',this.checked)"></td>'+
+    '<td>'+esc(item.title)+'</td><td>'+esc(item.project)+'</td>'+
+    '<td>'+pill(item.blocked?'BLOCKED':item.readiness,'badge-'+
+      (item.blocked?'BLOCKED':item.readiness))+'</td>'+
+    '<td class="muted">'+esc(item.blocked_reason||'')+'</td></tr>';}
+function renderReview(){
+  const el=$('review-body');if(!el)return;
+  const rv=S.review||(S.views&&S.views.review)||{};
+  const d=S.reviewDraft;
+  let h='<p class="muted">Review today, then explicitly choose what carries '+
+    'into tomorrow. Nothing rolls over automatically.</p>';
+  h+='<h4>Completed today</h4>'+
+    ((rv.completed||[]).length?'<ul>'+(rv.completed||[]).map(function(c){
+      return '<li>'+esc(c.title)+' <span class="muted">'+esc(c.project)+
+        (c.actual_minutes!=null?' · '+c.actual_minutes+'m':'')+'</span></li>';
+      }).join('')+'</ul>':'<p class="muted">none recorded</p>');
+  h+='<h4>Unfinished planned</h4>'+
+    ((rv.unfinished_planned||[]).length?'<ul>'+
+      (rv.unfinished_planned||[]).map(function(c){
+      return '<li>'+esc(c.title)+' <span class="muted">'+esc(c.project)+
+        '</span></li>';}).join('')+'</ul>':'<p class="muted">none</p>');
+  h+='<h4>Blocked</h4>'+
+    ((rv.blocked||[]).length?'<ul>'+(rv.blocked||[]).map(function(c){
+      return '<li>'+esc(c.title)+' <span class="muted">'+
+        esc(c.blocked_reason||'blocked')+'</span></li>';}).join('')+'</ul>':
+      '<p class="muted">none</p>');
+  h+='<h4>Carry into tomorrow (max 3 main, 2 optional)</h4>';
+  h+='<table><tr><th>Main</th><th>Opt</th><th>Task</th><th>Project</th>'+
+    '<th>Readiness</th><th>Blocker</th></tr>'+
+    (rv.carry_candidates||[]).map(reviewCandidateRow).join('')+'</table>';
+  h+='<h4>This week\'s outcomes</h4>'+
+    ((rv.weekly_outcomes||[]).length?'<ul>'+
+      (rv.weekly_outcomes||[]).map(function(o){return '<li>'+pill(o.state,'')+
+        ' '+esc(o.title)+'</li>';}).join('')+'</ul>':'<p class="muted">none</p>');
+  h+='<p class="muted">Selected for tomorrow: '+d.main.length+' main · '+
+    d.optional.length+' optional</p>';
+  el.innerHTML=h;}
+async function confirmReviewCarry(){
+  const d=S.reviewDraft;
+  const today=new Date();
+  const tomorrow=new Date(today.getTime());
+  tomorrow.setDate(today.getDate()+1);
+  const date=tomorrow.toISOString().slice(0,10);
+  try{const res=await api('/api/planning/tomorrow','POST',
+      {date:date,main_task_ids:d.main,optional_task_ids:d.optional});
+    S.views.planning=res.planning;S.views.tomorrow_view=res.tomorrow;
+    closeReview();await refresh();setView('tomorrow');
+    notice('Carried into tomorrow: '+d.main.length+' main · '+
+      d.optional.length+' optional.');}
+  catch(err){notice(err.message);}}
+function openTomorrow(){setView('tomorrow');}
 
 // --- Super Productivity handoff (dry-run preview only) -------------------------
 function openExportPreview(){
@@ -2275,6 +2900,7 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "<button class='small' onclick='openTaskForm(null)'>New Task</button>",
         "<button class='small' onclick='openImport()'>Import document</button>",
         "<button class='small' onclick='openCapture()'>Quick Capture</button>",
+        "<button class='small' onclick='openTomorrow()'>Plan tomorrow</button>",
         "<button class='small primary' onclick='boot()'>Refresh</button>",
         "</div></header>",
         "<nav id='viewbar'></nav>",
@@ -2325,12 +2951,14 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "or TXT. Factual import only mirrors what the document states; "
         "nothing is written until you confirm.</div>",
         "<div id='import-engine-box' style='margin-top:.5rem'></div>",
+        "<div id='import-drafts' style='margin-top:.5rem'></div>",
         "<div class='bar' style='justify-content:flex-start'>",
         "<button class='primary' onclick='analyzeFile()'>Analyze</button>",
         "<button onclick='closeImport()'>Cancel</button></div></div>",
         "<div id='import-progress' style='display:none;margin-top:.6rem'></div>",
         "<div id='import-report'></div>",
         "<div id='import-preview'></div>",
+        "<div id='import-validation'></div>",
         "<div class='bar' id='import-actions' style='display:none'>",
         "<button class='primary' onclick='confirmImport()'>Confirm import</button>",
         "<button onclick='closeImport()'>Cancel</button></div></div></div>",
@@ -2361,6 +2989,15 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "<div class='bar' style='justify-content:flex-end'>",
         "<button onclick='closeOutcomeForm()'>Cancel</button>",
         "<button class='primary' onclick='saveOutcomeForm()'>Record</button>",
+        "</div></div></div>",
+        # End-of-day review (review today -> plan tomorrow)
+        "<div class='overlay' id='review-overlay'><div class='modal' "
+        "style='max-width:860px'><h3>End-of-day review</h3>",
+        "<div id='review-body'></div>",
+        "<div class='bar' style='justify-content:flex-end'>",
+        "<button onclick='closeReview()'>Cancel</button>",
+        "<button class='primary' onclick='confirmReviewCarry()'>"
+        "Carry selected into tomorrow</button>",
         "</div></div></div>",
         "<script>", PAGE_JS, "</script>",
         "</body></html>",

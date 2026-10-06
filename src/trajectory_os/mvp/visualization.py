@@ -34,6 +34,7 @@ from trajectory_os.mvp import (
 )
 from trajectory_os.mvp import (
     model,
+    planning,
     scheduler,
     store,
     uistate,
@@ -161,6 +162,11 @@ def build_views(root: str | Path, *, today: date | None = None,
     week = scheduler.plan_week(portfolio, ranked, today)
     day = scheduler.plan_day(portfolio, ranked, today)
 
+    planning_state = planning.load_planning(root)
+    today_handoff = planning.build_today_handoff(
+        root, portfolio, today=today, readiness_map=readiness_map,
+        state=planning_state)
+
     return {
         "schema_version": model.SCHEMA_VERSION,
         "kind": "mvp_views",
@@ -183,7 +189,15 @@ def build_views(root: str | Path, *, today: date | None = None,
         "heatmap": _build_heatmap(portfolio, records, week),
         "goal_flow": _build_goal_flow(portfolio, task_objects, records),
         "today_plan": day.to_dict(),
+        "today_handoff": today_handoff,
         "ready_workflow": _ready_workflow(portfolio, readiness_map),
+        "planning": planning_state.to_dict(),
+        "tomorrow_view": planning.build_tomorrow_view(
+            root, today=today, portfolio=portfolio, state=planning_state),
+        "week_view": planning.build_week_view(
+            root, today=today, portfolio=portfolio, state=planning_state),
+        "review": planning.build_review(
+            root, today=today, portfolio=portfolio, state=planning_state),
         "attribute_catalog": list(ATTRIBUTE_CATALOG),
         "colour_modes": list(uistate.COLOR_MODES),
         "densities": list(uistate.DENSITIES),

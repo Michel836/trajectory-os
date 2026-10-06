@@ -44,6 +44,7 @@ DENSITIES = ("compact", "normal", "detailed")
 
 #: The visual view identifiers rendered by the cockpit.
 VIEWS = (
+    "today", "ready", "tomorrow", "week",
     "list", "kanban", "wbs", "graph", "gantt", "eisenhower",
     "impact_effort", "portfolio_map", "treemap", "progress", "heatmap",
     "goal_flow",
@@ -139,6 +140,19 @@ _MAX_FILTER_VALUE_LEN = 200
 _TABLE_SORT_DIRECTIONS = ("asc", "desc")
 _TABLE_KEYS = ("projects", "tasks")
 
+#: Presentation-only ordering keys shared by the Kanban, Today and Ready
+#: views. These never reorder portfolio data; they only change how existing
+#: cards/rows are drawn. ``default``/``recommended`` always means "keep the
+#: deterministic baseline order".
+KANBAN_SORTS = ("default", "priority", "urgency", "impact", "effort",
+                "name", "project")
+KANBAN_SORT_DIRECTIONS = ("default", "asc", "desc")
+ORDER_SORTS = ("recommended", "priority", "urgency", "impact", "effort",
+               "name", "project")
+TOMORROW_SORTS = ("planned", "priority", "urgency", "impact", "effort",
+                  "name", "project")
+WEEK_SORTS = ("manual", "project", "progress", "urgency")
+
 # --- Saved presentation views (filter presets) --------------------------------
 #
 # A saved view captures the *presentation* configuration only (active view,
@@ -209,6 +223,12 @@ class UIPreferences:
     filters: dict[str, Any] = field(default_factory=dict)
     tables: dict[str, Any] = field(default_factory=dict)
     saved_views: dict[str, dict[str, Any]] = field(default_factory=dict)
+    kanban_sort: str = "default"
+    kanban_sort_direction: str = "default"
+    today_sort: str = "recommended"
+    ready_sort: str = "recommended"
+    tomorrow_sort: str = "planned"
+    week_sort: str = "manual"
 
     def validate(self) -> UIPreferences:
         if self.schema_version != UI_SCHEMA_VERSION:
@@ -229,6 +249,18 @@ class UIPreferences:
         _validate_filters(self.filters)
         _validate_tables(self.tables)
         _validate_saved_views(self.saved_views)
+        if self.kanban_sort not in KANBAN_SORTS:
+            _fail(f"kanban_sort={self.kanban_sort!r} is not allowed")
+        if self.kanban_sort_direction not in KANBAN_SORT_DIRECTIONS:
+            _fail("kanban_sort_direction must be default/asc/desc")
+        if self.today_sort not in ORDER_SORTS:
+            _fail(f"today_sort={self.today_sort!r} is not allowed")
+        if self.ready_sort not in ORDER_SORTS:
+            _fail(f"ready_sort={self.ready_sort!r} is not allowed")
+        if self.tomorrow_sort not in TOMORROW_SORTS:
+            _fail(f"tomorrow_sort={self.tomorrow_sort!r} is not allowed")
+        if self.week_sort not in WEEK_SORTS:
+            _fail(f"week_sort={self.week_sort!r} is not allowed")
         return self
 
     def to_dict(self) -> dict[str, Any]:
@@ -244,6 +276,12 @@ class UIPreferences:
             "filters": dict(self.filters),
             "tables": _normalise_tables(self.tables),
             "saved_views": _normalise_saved_views(self.saved_views),
+            "kanban_sort": self.kanban_sort,
+            "kanban_sort_direction": self.kanban_sort_direction,
+            "today_sort": self.today_sort,
+            "ready_sort": self.ready_sort,
+            "tomorrow_sort": self.tomorrow_sort,
+            "week_sort": self.week_sort,
         }
 
     @staticmethod
@@ -265,6 +303,19 @@ class UIPreferences:
             filters=_normalise_filters(data.get("filters")),
             tables=_normalise_tables(data.get("tables")),
             saved_views=_normalise_saved_views(data.get("saved_views")),
+            kanban_sort=_normalise_choice(
+                data.get("kanban_sort"), KANBAN_SORTS, "default"),
+            kanban_sort_direction=_normalise_choice(
+                data.get("kanban_sort_direction"), KANBAN_SORT_DIRECTIONS,
+                "default"),
+            today_sort=_normalise_choice(
+                data.get("today_sort"), ORDER_SORTS, "recommended"),
+            ready_sort=_normalise_choice(
+                data.get("ready_sort"), ORDER_SORTS, "recommended"),
+            tomorrow_sort=_normalise_choice(
+                data.get("tomorrow_sort"), TOMORROW_SORTS, "planned"),
+            week_sort=_normalise_choice(
+                data.get("week_sort"), WEEK_SORTS, "manual"),
         )
 
 
@@ -302,6 +353,12 @@ def _filter_list(value: object, allowed: tuple[str, ...]) -> list[str]:
     if not isinstance(value, (list, tuple)):
         return []
     return sorted({str(item) for item in value if str(item) in allowed})
+
+
+def _normalise_choice(value: object, allowed: tuple[str, ...],
+                      default: str) -> str:
+    """Coerce a scalar preference to an allowed value (fail soft)."""
+    return value if isinstance(value, str) and value in allowed else default
 
 
 def _validate_filters(value: object) -> None:
@@ -556,6 +613,8 @@ def save_preferences(root: str | Path,
 _EDITABLE = frozenset({
     "color_by", "density", "view", "selected", "filters", "tables",
     "domain_colors", "project_colors", "highlights",
+    "kanban_sort", "kanban_sort_direction", "today_sort", "ready_sort",
+    "tomorrow_sort", "week_sort",
 })
 
 
@@ -590,6 +649,25 @@ def apply_update(prefs: UIPreferences,
     if "highlights" in payload:
         changes["highlights"] = _clean_map(payload["highlights"],
                                            allow_named=True)
+    if "kanban_sort" in payload:
+        changes["kanban_sort"] = _normalise_choice(
+            payload["kanban_sort"], KANBAN_SORTS, "default")
+    if "kanban_sort_direction" in payload:
+        changes["kanban_sort_direction"] = _normalise_choice(
+            payload["kanban_sort_direction"], KANBAN_SORT_DIRECTIONS,
+            "default")
+    if "today_sort" in payload:
+        changes["today_sort"] = _normalise_choice(
+            payload["today_sort"], ORDER_SORTS, "recommended")
+    if "ready_sort" in payload:
+        changes["ready_sort"] = _normalise_choice(
+            payload["ready_sort"], ORDER_SORTS, "recommended")
+    if "tomorrow_sort" in payload:
+        changes["tomorrow_sort"] = _normalise_choice(
+            payload["tomorrow_sort"], TOMORROW_SORTS, "planned")
+    if "week_sort" in payload:
+        changes["week_sort"] = _normalise_choice(
+            payload["week_sort"], WEEK_SORTS, "manual")
     return replace(prefs, **changes).validate()
 
 
@@ -657,7 +735,8 @@ def resolve_colour(mode: str, *, domain: str = "", project_id: str = "",
 __all__ = [
     "COLOR_MODES", "DENSITIES", "HIGHLIGHT_COLORS", "PALETTE",
     "SEMANTIC_COLORS", "UIStateError", "UI_STATE_NAME", "UI_SCHEMA_VERSION",
-    "UIPreferences", "VIEWS",
+    "UIPreferences", "VIEWS", "KANBAN_SORTS", "KANBAN_SORT_DIRECTIONS",
+    "ORDER_SORTS", "TOMORROW_SORTS", "WEEK_SORTS",
     "apply_update", "default_preferences", "delete_view", "load_preferences",
     "load_view", "rename_view", "resolve_colour", "save_view",
     "save_preferences", "set_highlight", "set_identity_colour",

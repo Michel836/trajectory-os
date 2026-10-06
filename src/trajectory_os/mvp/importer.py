@@ -80,6 +80,9 @@ ACTION_IMPORT = "import"
 ACTION_SKIP = "skip"
 ACTIONS = frozenset({ACTION_IMPORT, ACTION_SKIP})
 
+#: Prefix for a human-approved synthetic project id used to group orphans.
+NEW_PROJECT_PREFIX = "new:"
+
 MAX_TITLE_LEN = model.MAX_STR_LEN
 MAX_SOURCE_LEN = model.MAX_TEXT_LEN
 CHUNK_TARGET_CHARS = int(
@@ -502,6 +505,7 @@ class ImportDecision:
     impact: str | None = None
     effort_minutes: int | None = None
     kind: str | None = None
+    new_project_title: str | None = None
 
 
 # --- helpers ------------------------------------------------------------------
@@ -1977,6 +1981,8 @@ def parse_decisions(raw: Sequence[Mapping[str, Any]]) -> tuple[ImportDecision, .
             impact=_coerce_enum(entry.get("impact"), model.IMPACTS, None),
             effort_minutes=_coerce_int(entry.get("effort_minutes"), 1, 1440),
             kind=_coerce_str(entry.get("kind"), 32) or None,
+            new_project_title=_coerce_str(
+                entry.get("new_project_title"), MAX_TITLE_LEN) or None,
         ))
     return tuple(decisions)
 
@@ -2001,6 +2007,11 @@ def apply_decisions(
                 f"unknown candidate {raw_decision.candidate_id}")
         decision_map[raw_decision.candidate_id] = raw_decision
 
+    # Structural, evidence-based hierarchy repair: restore orphan tasks to a
+    # same-draft project candidate evidenced by adjacency/sibling metadata.
+    analysis = repair_hierarchy(analysis, tuple(decision_map.values()))
+    by_id = {c.candidate_id: c for c in analysis.candidates}
+
     children: dict[str | None, list[ImportCandidate]] = {}
     for candidate in analysis.candidates:
         key = candidate.parent_id if candidate.parent_id in by_id else None
@@ -2023,6 +2034,33 @@ def apply_decisions(
     parent_of = _parent_map(children)
     next_action_by_project: dict[str, str] = {}
     emitted_project_tasks: set[str] = set()
+
+    # Human-approved new projects for grouped orphans. The client assigns a
+    # synthetic project id (``new:<group>``) plus an explicit title; a project
+    # is only created because the user accepted the grouping.
+    new_project_ids: dict[str, str] = {}
+    for raw_decision in decisions:
+        synthetic = raw_decision.project_id or ""
+        if not synthetic.startswith(NEW_PROJECT_PREFIX):
+            continue
+        if synthetic in new_project_ids:
+            continue
+        title = (raw_decision.new_project_title or raw_decision.title
+                 or "Imported project group")
+        project_id = _unique_id(project_ids, _slug(title, "project"))
+        projects.append(model.Project(
+            project_id=project_id,
+            name=title,
+            objective=_provenance_note(analysis),
+            status=model.PS_DEFERRED,
+            domain="personal",
+            urgency=model.U_MEDIUM,
+            impact=model.I_MEDIUM,
+            description=_provenance_note(analysis),
+        ))
+        project_ids.add(project_id)
+        title_to_project[_normalize(title)] = project_id
+        new_project_ids[synthetic] = project_id
 
     # Pass 1: create projects for top-level / project-like candidates.
     for candidate in _walk(children, None):
@@ -2090,7 +2128,8 @@ def apply_decisions(
                  else candidate.title)
         project_id = _resolve_project(candidate, task_decision, children,
                                       title_to_project,
-                                      candidate_to_project, parent_of)
+                                      candidate_to_project, parent_of,
+                                      new_project_ids)
         workstream, deliverable = _grouping_of(candidate, children)
         status = _task_status(candidate, task_decision)
         next_action = candidate.suggested_next_action
@@ -2149,6 +2188,342 @@ def apply_decisions(
     return new_portfolio, entity_map
 
 
+# --- pre-confirm validation & structural hierarchy repair ---------------------
+
+
+@dataclass(frozen=True)
+class UnresolvedIssue:
+    """One import/merge decision that cannot be applied safely."""
+
+    candidate_id: str
+    title: str
+    reason: str
+    suggested_project_candidate_id: str = ""
+    suggested_existing_project_id: str = ""
+    confidence: float = 0.0
+    group_id: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "title": self.title,
+            "reason": self.reason,
+            "suggested_project_candidate_id":
+                self.suggested_project_candidate_id,
+            "suggested_existing_project_id": self.suggested_existing_project_id,
+            "confidence": self.confidence,
+            "group_id": self.group_id,
+        }
+
+
+class ImportValidationError(PortfolioImportError):
+    """Confirm was attempted while unresolved items remained (fail closed)."""
+
+    def __init__(self, payload: Mapping[str, Any]) -> None:
+        self.payload: dict[str, Any] = dict(payload)
+        super().__init__("import has unresolved items")
+
+
+def infer_orphan_parents(
+    analysis: ImportAnalysis,
+    decisions: Sequence[ImportDecision],
+) -> dict[str, str]:
+    """Reconstruct explicit source hierarchy for orphan task-like candidates.
+
+    An orphan (imported task with no parent, project hint or merge target) is
+    attached to a same-draft project-like candidate only when exactly one such
+    candidate is structurally evidenced by the orphan's immediate neighbours
+    (a preceding project candidate, or adjacent sibling tasks sharing that
+    parent) and that candidate is itself imported. This restores a relation
+    already present in the draft's adjacency/parent metadata; it never invents
+    semantics and never clears or rewrites an existing parent.
+    """
+    decision_map = {d.candidate_id: d for d in decisions}
+    candidates = analysis.candidates
+    by_id = {c.candidate_id: c for c in candidates}
+    order = [c.candidate_id for c in candidates]
+    imported = {cid for cid, d in decision_map.items()
+                if d.action == ACTION_IMPORT}
+
+    def kind_of(cid: str) -> str:
+        return _effective_kind(by_id[cid], decision_map)
+
+    def project_like(cid: str) -> bool:
+        return cid in by_id and kind_of(cid) in PROJECT_LIKE
+
+    def task_like(cid: str) -> bool:
+        return cid in by_id and kind_of(cid) in TASK_LIKE
+
+    inferred: dict[str, str] = {}
+    for i, cid in enumerate(order):
+        candidate = by_id[cid]
+        decision = decision_map.get(cid)
+        if decision is None or decision.action != ACTION_IMPORT:
+            continue
+        if not task_like(cid) or candidate.parent_id \
+                or candidate.project_hint or candidate.merge_project_id:
+            continue
+        anchors: set[str] = set()
+        for offset in (-1, 1):
+            j = i + offset
+            if not (0 <= j < len(order)):
+                continue
+            neighbour_id = order[j]
+            neighbour = by_id[neighbour_id]
+            if neighbour.parent_id and project_like(neighbour.parent_id):
+                anchors.add(neighbour.parent_id)
+            elif offset == -1 and project_like(neighbour_id):
+                anchors.add(neighbour_id)
+        if len(anchors) != 1:
+            continue
+        parent_id = next(iter(anchors))
+        if parent_id == cid or parent_id not in imported \
+                or not project_like(parent_id):
+            continue
+        inferred[cid] = parent_id
+    return inferred
+
+
+def repair_hierarchy(
+    analysis: ImportAnalysis,
+    decisions: Sequence[ImportDecision],
+) -> ImportAnalysis:
+    """Return a copy with structurally evidenced orphan parents restored."""
+    inferred = infer_orphan_parents(analysis, decisions)
+    if not inferred:
+        return analysis
+    repaired = tuple(
+        replace(c, parent_id=inferred[c.candidate_id])
+        if c.candidate_id in inferred else c
+        for c in analysis.candidates)
+    return replace(analysis, candidates=repaired)
+
+
+def _title_tokens(title: str) -> set[str]:
+    return set(_significant_tokens(title.lower()))
+
+
+def _common_ordered_tokens(titles: Sequence[str]) -> list[str]:
+    if not titles:
+        return []
+    token_lists = [[t for t in title.split() if t.lower() not in _STOPWORDS]
+                   for title in titles]
+    common = {t.lower() for t in token_lists[0]}
+    for tokens in token_lists[1:]:
+        common &= {t.lower() for t in tokens}
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for token in token_lists[0]:
+        key = token.lower()
+        if key in common and key not in seen:
+            seen.add(key)
+            ordered.append(token)
+    return ordered
+
+
+def _group_unresolved(
+    issues: Sequence[UnresolvedIssue],
+    analysis: ImportAnalysis,
+) -> list[dict[str, Any]]:
+    """Group contiguous projectless orphan tasks sharing significant tokens.
+
+    Purely deterministic; no AI call and no project is created here. The UI
+    presents each group as a single reviewable "possible new project".
+    """
+    by_id = {c.candidate_id: c for c in analysis.candidates}
+    order = [c.candidate_id for c in analysis.candidates]
+    index = {cid: i for i, cid in enumerate(order)}
+    orphan_ids = [i.candidate_id for i in issues
+                  if i.reason == "missing_project" and i.candidate_id in by_id]
+    orphan_set = set(orphan_ids)
+    used: set[str] = set()
+    groups: list[dict[str, Any]] = []
+    for cid in sorted(orphan_ids, key=lambda x: index[x]):
+        if cid in used:
+            continue
+        run = [cid]
+        common_tokens = _title_tokens(by_id[cid].title)
+        cursor = index[cid]
+        while True:
+            nxt = cursor + 1
+            if nxt >= len(order):
+                break
+            nid = order[nxt]
+            if nid not in orphan_set or nid in used:
+                break
+            shared = common_tokens & _title_tokens(by_id[nid].title)
+            if not shared:
+                break
+            run.append(nid)
+            common_tokens = shared
+            cursor = nxt
+        if len(run) < 2:
+            continue
+        titles = [by_id[x].title for x in run]
+        common = _common_ordered_tokens(titles)
+        proposed = " ".join(t[:1].upper() + t[1:] for t in common) \
+            or titles[0][:80]
+        base = max(1, len(_title_tokens(titles[0])))
+        groups.append({
+            "group_id": f"g{len(groups) + 1}",
+            "proposed_title": proposed,
+            "candidate_ids": run,
+            "titles": titles,
+            "confidence": round(len(common) / base, 3),
+        })
+        used.update(run)
+    return groups
+
+
+def _can_resolve_project(
+    candidate: ImportCandidate,
+    decision: ImportDecision | None,
+    by_id: Mapping[str, ImportCandidate],
+    children: Mapping[str | None, list[ImportCandidate]],
+    decision_map: Mapping[str, ImportDecision],
+    existing_project_ids: set[str],
+    existing_titles: Mapping[str, str],
+) -> bool:
+    if decision and decision.project_id:
+        if decision.project_id.startswith(NEW_PROJECT_PREFIX):
+            return bool(decision.new_project_title)
+        return decision.project_id in existing_project_ids
+    if candidate.merge_project_id:
+        return candidate.merge_project_id in existing_project_ids
+    node: str | None = candidate.parent_id
+    while node:
+        ancestor = by_id.get(node)
+        if ancestor is None:
+            break
+        kind = _effective_kind(ancestor, decision_map)
+        if kind in PROJECT_LIKE:
+            is_domain = kind == AREA and any(
+                _effective_kind(child, decision_map) in PROJECT_LIKE
+                for child in children.get(ancestor.candidate_id, ()))
+            if not is_domain:
+                return True
+        node = ancestor.parent_id
+    if candidate.project_hint:
+        key = _normalize(candidate.project_hint)
+        if key in existing_titles:
+            return True
+        for other in by_id.values():
+            if _effective_kind(other, decision_map) in PROJECT_LIKE \
+                    and _normalize(other.title) == key:
+                return True
+    return False
+
+
+def _decision_summary(
+    analysis: ImportAnalysis,
+    decision_map: Mapping[str, ImportDecision],
+    imported_ids: set[str],
+) -> dict[str, int]:
+    imports = merges = skips = projects = tasks = 0
+    for candidate in analysis.candidates:
+        decision = decision_map.get(candidate.candidate_id)
+        if decision is None:
+            continue
+        if decision.action == ACTION_SKIP:
+            skips += 1
+            continue
+        if decision.action != ACTION_IMPORT:
+            continue
+        imports += 1
+        if candidate.candidate_id not in imported_ids:
+            continue
+        kind = _effective_kind(candidate, decision_map)
+        if kind in PROJECT_LIKE:
+            if decision.merge_project_id or candidate.merge_project_id:
+                merges += 1
+            else:
+                projects += 1
+        elif kind in TASK_LIKE:
+            tasks += 1
+    return {"imports": imports, "merges": merges, "skips": skips,
+            "projects": projects, "tasks": tasks}
+
+
+def validate_decisions(
+    root: str | Path,
+    analysis: ImportAnalysis,
+    decisions: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Read-only pre-confirm validation (never writes the portfolio).
+
+    Returns a structured report: ``ok`` plus explicit ``unresolved`` issues,
+    deterministic ``groups`` for projectless orphan runs, and the structural
+    ``repaired`` hierarchy links. Raises only on malformed input.
+    """
+    parsed = parse_decisions(decisions)
+    decision_map = {d.candidate_id: d for d in parsed}
+    repaired = repair_hierarchy(analysis, parsed)
+    candidates = repaired.candidates
+    by_id = {c.candidate_id: c for c in candidates}
+    children: dict[str | None, list[ImportCandidate]] = {}
+    for candidate in candidates:
+        key = candidate.parent_id if candidate.parent_id in by_id else None
+        children.setdefault(key, []).append(candidate)
+    imported_ids = _imported_closure(by_id, children, decision_map)
+    portfolio = store.load_portfolio(root)
+    existing_project_ids = ({p.project_id for p in portfolio.projects}
+                            if portfolio else set())
+    existing_titles = ({_normalize(p.name): p.project_id
+                        for p in portfolio.projects} if portfolio else {})
+
+    issues: list[UnresolvedIssue] = []
+    for candidate in candidates:
+        decision = decision_map.get(candidate.candidate_id)
+        if decision is None or decision.action != ACTION_IMPORT:
+            continue
+        if candidate.candidate_id not in imported_ids:
+            continue
+        if candidate.parent_id and candidate.parent_id not in by_id:
+            issues.append(UnresolvedIssue(
+                candidate.candidate_id, candidate.title, "missing_parent",
+                confidence=candidate.confidence))
+            continue
+        if candidate.merge_project_id \
+                and candidate.merge_project_id not in existing_project_ids:
+            issues.append(UnresolvedIssue(
+                candidate.candidate_id, candidate.title,
+                "missing_merge_target", confidence=candidate.confidence))
+            continue
+        if decision.project_id \
+                and not decision.project_id.startswith(NEW_PROJECT_PREFIX) \
+                and decision.project_id not in existing_project_ids:
+            issues.append(UnresolvedIssue(
+                candidate.candidate_id, candidate.title, "unknown_project",
+                confidence=candidate.confidence))
+            continue
+        kind = _effective_kind(candidate, decision_map)
+        if kind in TASK_LIKE and not _can_resolve_project(
+                candidate, decision, by_id, children, decision_map,
+                existing_project_ids, existing_titles):
+            issues.append(UnresolvedIssue(
+                candidate.candidate_id, candidate.title, "missing_project",
+                confidence=candidate.confidence))
+
+    groups = _group_unresolved(issues, repaired)
+    group_of = {cid: group["group_id"] for group in groups
+                for cid in group["candidate_ids"]}
+    unresolved: list[dict[str, Any]] = []
+    for issue in issues:
+        item = issue.to_dict()
+        item["group_id"] = group_of.get(issue.candidate_id, "")
+        unresolved.append(item)
+    repaired_pairs = infer_orphan_parents(analysis, parsed)
+    return {
+        "ok": not issues,
+        "repaired": [
+            {"candidate_id": cid, "parent_candidate_id": pid}
+            for cid, pid in sorted(repaired_pairs.items())],
+        "unresolved": unresolved,
+        "groups": groups,
+        "summary": _decision_summary(repaired, decision_map, imported_ids),
+    }
+
+
 def _effective_kind(candidate: ImportCandidate,
                     decision_map: Mapping[str, ImportDecision]) -> str:
     decision = decision_map.get(candidate.candidate_id)
@@ -2197,9 +2572,30 @@ def _resolve_project(
     title_to_project: Mapping[str, str],
     candidate_to_project: Mapping[str, str],
     parent_of: Mapping[str, str | None],
+    new_project_ids: Mapping[str, str] | None = None,
 ) -> str:
+    resolved = _try_resolve_project(
+        candidate, decision, title_to_project, candidate_to_project,
+        parent_of, new_project_ids or {})
+    if resolved:
+        return resolved
+    raise PortfolioImportError(
+        f"cannot determine project for {candidate.candidate_id} "
+        f"{candidate.title!r}; provide project_id")
+
+
+def _try_resolve_project(
+    candidate: ImportCandidate,
+    decision: ImportDecision | None,
+    title_to_project: Mapping[str, str],
+    candidate_to_project: Mapping[str, str],
+    parent_of: Mapping[str, str | None],
+    new_project_ids: Mapping[str, str],
+) -> str | None:
+    """Resolve a task's durable project id, or ``None`` (never raises)."""
     if decision and decision.project_id:
-        return decision.project_id
+        synthetic = new_project_ids.get(decision.project_id)
+        return synthetic or decision.project_id
     if candidate.merge_project_id:
         return candidate.merge_project_id
     # Walk up the full ancestor chain to the nearest project/area.
@@ -2213,9 +2609,7 @@ def _resolve_project(
         key = _normalize(candidate.project_hint)
         if key in title_to_project:
             return title_to_project[key]
-    raise PortfolioImportError(
-        f"cannot determine project for {candidate.candidate_id} "
-        f"{candidate.title!r}; provide project_id")
+    return None
 
 
 def _parent_map(children: Mapping[str | None, list[ImportCandidate]]) \
@@ -2417,6 +2811,46 @@ def load_draft(root: str | Path, draft_id: str) -> ImportAnalysis:
     return ImportAnalysis.from_dict(data)
 
 
+def list_drafts(root: str | Path, *, limit: int = 20) -> list[dict[str, Any]]:
+    """List persisted import drafts (newest first) without loading them all.
+
+    Read-only and bounded; each entry carries only identity and summary counts
+    so a restart can reopen a long analysis instead of re-running it.
+    """
+    directory = Path(root) / "imports" / "drafts"
+    if not directory.is_dir():
+        return []
+    entries: list[dict[str, Any]] = []
+    for path in directory.glob("*.json"):
+        if not re.fullmatch(r"[0-9a-f]{12}", path.stem):
+            continue
+        try:
+            modified = path.stat().st_mtime
+        except OSError:
+            continue
+        summary: Mapping[str, Any] = {}
+        source_name = ""
+        imported_at = ""
+        data = intel_model.read_json(path)
+        if isinstance(data, Mapping):
+            raw_summary = data.get("summary")
+            if isinstance(raw_summary, Mapping):
+                summary = raw_summary
+            source_name = str(data.get("source_name", ""))
+            imported_at = str(data.get("imported_at", ""))
+        entries.append({
+            "draft_id": path.stem,
+            "source_name": source_name[:120],
+            "imported_at": imported_at[:40],
+            "modified": modified,
+            "items": int(summary.get("items", 0) or 0),
+            "projects": int(summary.get("projects", 0) or 0),
+            "tasks": int(summary.get("tasks", 0) or 0),
+        })
+    entries.sort(key=lambda entry: float(entry["modified"]), reverse=True)
+    return entries[:max(1, min(limit, 50))]
+
+
 __all__ = [
     "ACTION_IMPORT", "ACTION_SKIP", "ACTIONS",
     "AREA", "BLOCKER", "DELIVERABLE", "IDEA", "PROJECT", "QUESTION",
@@ -2434,9 +2868,10 @@ __all__ = [
     "ChildSuggestion", "DependencySuggestion", "ImportAnalysis",
     "ImportCandidate", "ImportDecision", "ImportMatch", "LocalLlm",
     "make_import_llm", "make_engine_llm",
-    "PortfolioImportError",
+    "PortfolioImportError", "ImportValidationError", "UnresolvedIssue",
     "analyze_document", "apply_decisions", "confirm_import",
-    "default_backup_path", "detect_duplicates", "load_draft",
+    "default_backup_path", "detect_duplicates", "load_draft", "list_drafts",
     "parse_decisions", "save_draft", "write_import_artifact",
+    "infer_orphan_parents", "repair_hierarchy", "validate_decisions",
     "best_project_match", "normalize_text", "text_similarity",
 ]

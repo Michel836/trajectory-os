@@ -34,6 +34,7 @@ from trajectory_os.mvp import (
     model,
     mutations,
     outcomes,
+    planning,
     render,
     store,
     superproductivity,
@@ -288,7 +289,9 @@ class Dashboard:
         except import_jobs.ImportJobError as exc:
             raise model.MvpError(model.E_UNKNOWN_ID, str(exc)) from exc
 
-    def confirm_import(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def _import_decisions(
+        self, payload: Mapping[str, Any],
+    ) -> tuple[str, list[Any], dict[str, Any]]:
         draft_id = payload.get("draft_id")
         if not isinstance(draft_id, str) or not draft_id:
             raise model.MvpError(model.E_MALFORMED, "draft_id required")
@@ -296,7 +299,144 @@ class Dashboard:
         if not isinstance(decisions, list):
             raise model.MvpError(model.E_MALFORMED, "decisions must be a list")
         analysis = importer.load_draft(self.root, draft_id)
+        return draft_id, decisions, importer.validate_decisions(
+            self.root, analysis, decisions)
+
+    def validate_import(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Read-only pre-confirm validation (no portfolio writes)."""
+        draft_id, _decisions, report = self._import_decisions(payload)
+        return {**report, "draft_id": draft_id}
+
+    def confirm_import(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        draft_id, decisions, report = self._import_decisions(payload)
+        analysis = importer.load_draft(self.root, draft_id)
+        if not report["ok"]:
+            raise importer.ImportValidationError(
+                {**report, "draft_id": draft_id})
         return importer.confirm_import(self.root, analysis, decisions)
+
+    def list_import_drafts(self) -> dict[str, Any]:
+        return {"drafts": importer.list_drafts(self.root)}
+
+    def get_import_draft(self, draft_id: str) -> dict[str, Any]:
+        analysis = importer.load_draft(self.root, draft_id)
+        return {"draft_id": draft_id, "analysis": analysis.to_dict()}
+
+    # --- week + tomorrow planning (presentation sidecar, no portfolio write) -
+
+    def planning_view(self) -> dict[str, Any]:
+        return planning.build_planning_view(self.root)
+
+    def tomorrow_view(self) -> dict[str, Any]:
+        return {"status": "OK", **planning.build_tomorrow_view(self.root)}
+
+    def week_view(self) -> dict[str, Any]:
+        return {"status": "OK", **planning.build_week_view(self.root)}
+
+    def end_of_day_review(self) -> dict[str, Any]:
+        return {"status": "OK", **planning.build_review(self.root)}
+
+    def save_tomorrow_plan(self,
+                           payload: Mapping[str, Any]) -> dict[str, Any]:
+        from datetime import date, timedelta
+
+        portfolio = self.portfolio()
+        day = payload.get("date")
+        target = (str(day) if isinstance(day, str) and day
+                  else (date.today() + timedelta(days=1)).isoformat())
+        main = payload.get("main_task_ids")
+        optional = payload.get("optional_task_ids")
+        if not isinstance(main, (list, tuple)):
+            raise model.MvpError(model.E_MALFORMED,
+                                 "main_task_ids must be a list")
+        if not isinstance(optional, (list, tuple)):
+            raise model.MvpError(model.E_MALFORMED,
+                                 "optional_task_ids must be a list")
+        note = payload.get("note")
+        state = planning.load_planning(self.root)
+        try:
+            updated = planning.plan_tomorrow(
+                state, portfolio, day=target,
+                main_task_ids=[str(x) for x in main],
+                optional_task_ids=[str(x) for x in optional],
+                note=(str(note) if isinstance(note, str) else ""),
+                saved_at=planning.utc_timestamp())
+        except model.MvpError as exc:
+            raise model.MvpError(exc.code, exc.detail) from exc
+        planning.save_planning(self.root, updated)
+        target_date = date.fromisoformat(target)
+        return {
+            "planning": updated.to_dict(),
+            "tomorrow": planning.build_tomorrow_view(
+                self.root, today=target_date - timedelta(days=1),
+                target=target_date, portfolio=portfolio),
+        }
+
+    def save_week_plan(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        from datetime import date
+
+        portfolio = self.portfolio()
+        week_start = payload.get("week_start")
+        if not isinstance(week_start, str) or not week_start:
+            week_start = planning.monday_of(date.today()).isoformat()
+        outcomes = payload.get("outcomes")
+        if not isinstance(outcomes, list):
+            raise model.MvpError(model.E_MALFORMED,
+                                 "outcomes must be a list")
+        note = payload.get("note")
+        state = planning.load_planning(self.root)
+        updated = planning.plan_week(
+            state, week_start=week_start, outcomes=outcomes,
+            note=(str(note) if isinstance(note, str) else ""),
+            saved_at=planning.utc_timestamp())
+        planning.save_planning(self.root, updated)
+        return {
+            "planning": updated.to_dict(),
+            "week": planning.build_week_view(
+                self.root, week_start=week_start, portfolio=portfolio),
+        }
+
+    def review_week(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        action = payload.get("action")
+        if not isinstance(action, str) or action not in (
+                "close", "reopen", "drop", "restate", "carry"):
+            raise model.MvpError(model.E_MALFORMED, "unknown review action")
+        outcome_id = payload.get("outcome_id")
+        if not isinstance(outcome_id, str) or not outcome_id:
+            raise model.MvpError(model.E_MALFORMED, "outcome_id required")
+        state = planning.load_planning(self.root)
+        if action == "close":
+            updated = planning.set_outcome_state(
+                state, outcome_id, planning.OUTCOME_DONE)
+        elif action == "drop":
+            updated = planning.set_outcome_state(
+                state, outcome_id, planning.OUTCOME_DROPPED)
+        elif action == "reopen":
+            updated = planning.set_outcome_state(
+                state, outcome_id, planning.OUTCOME_OPEN)
+        elif action == "restate":
+            title = payload.get("title")
+            note = payload.get("note")
+            project_id = payload.get("project_id")
+            updated = planning.restate_outcome(
+                state, outcome_id,
+                title=(str(title) if isinstance(title, str) else None),
+                note=(str(note) if isinstance(note, str) else None),
+                project_id=(str(project_id)
+                            if isinstance(project_id, str) else None),
+            )
+        else:
+            new_week_start = payload.get("new_week_start")
+            if not isinstance(new_week_start, str) or not new_week_start:
+                raise model.MvpError(model.E_MALFORMED,
+                                     "new_week_start required for carry")
+            updated = planning.carry_outcomes(
+                state, [outcome_id], new_week_start=new_week_start)
+        planning.save_planning(self.root, updated)
+        return {
+            "planning": updated.to_dict(),
+            "week": planning.build_week_view(self.root),
+        }
 
     # --- on-demand enrichment -------------------------------------------------
 
@@ -519,6 +659,18 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 if parts == ["api", "views"]:
                     self._send_json(HTTPStatus.OK, app.views())
                     return
+                if parts == ["api", "planning"]:
+                    self._send_json(HTTPStatus.OK, app.planning_view())
+                    return
+                if parts == ["api", "tomorrow"]:
+                    self._send_json(HTTPStatus.OK, app.tomorrow_view())
+                    return
+                if parts == ["api", "week"]:
+                    self._send_json(HTTPStatus.OK, app.week_view())
+                    return
+                if parts == ["api", "review"]:
+                    self._send_json(HTTPStatus.OK, app.end_of_day_review())
+                    return
                 if parts == ["api", "preferences"]:
                     self._send_json(
                         HTTPStatus.OK,
@@ -551,6 +703,15 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                     self._send_json(HTTPStatus.OK,
                                     app.get_import_job(parts[3]))
                     return
+                if parts == ["api", "import", "drafts"]:
+                    self._send_json(HTTPStatus.OK,
+                                    app.list_import_drafts())
+                    return
+                if len(parts) == 4 and parts[:3] == ["api", "import",
+                                                      "drafts"]:
+                    self._send_json(HTTPStatus.OK,
+                                    app.get_import_draft(parts[3]))
+                    return
                 if len(parts) == 3 and parts[:2] == ["api", "enrichment"]:
                     self._send_json(HTTPStatus.OK,
                                     app.get_enrichment(parts[2]))
@@ -576,6 +737,12 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
             except model.MvpError as exc:
                 self._send_error(exc)
                 return
+            except importer.ImportValidationError as exc:
+                self._send_json(HTTPStatus.CONFLICT,
+                                {"status": "ERROR",
+                                 "error": "IMPORT_UNRESOLVED",
+                                 **exc.payload})
+                return
             except (document.DocumentError, importer.PortfolioImportError) as exc:
                 self._send_json(HTTPStatus.BAD_REQUEST,
                                 {"status": "ERROR", "error": "IMPORT_ERROR",
@@ -596,6 +763,8 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                            payload: dict[str, Any]) -> dict[str, Any] | None:
             if parts == ["api", "import", "analyze"]:
                 return app.analyze_import(payload)
+            if parts == ["api", "import", "validate"]:
+                return app.validate_import(payload)
             if parts == ["api", "import", "jobs"]:
                 return app.start_import_job(payload)
             if len(parts) == 5 and parts[:3] == ["api", "import", "jobs"] \
@@ -650,6 +819,12 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.delete_saved_view(payload)
             if parts == ["api", "preferences"]:
                 return app.update_preferences(payload)
+            if parts == ["api", "planning", "tomorrow"]:
+                return app.save_tomorrow_plan(payload)
+            if parts == ["api", "planning", "week"]:
+                return app.save_week_plan(payload)
+            if parts == ["api", "planning", "week", "review"]:
+                return app.review_week(payload)
             if parts == ["api", "highlight"]:
                 return app.set_highlight(payload)
             if parts == ["api", "colour"]:
