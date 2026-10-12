@@ -2159,7 +2159,8 @@ async function demoteProject(id){
     {target_project_id:target,confirm_discard:true});await refresh();}
   catch(err){notice(err.message);}}
 async function completeOutcome(id){const o=obj('task:'+id);
-  const raw=prompt('Actual minutes (optional):',(o&&o.estimated_minutes)||'');
+  const hint=(o&&o.estimated_minutes)?' (estimated '+o.estimated_minutes+' min)':'';
+  const raw=prompt('Actual minutes'+hint+' - leave empty to skip:','');
   if(raw===null)return;const body={outcome:'COMPLETED'};
   if(raw!==''){const n=parseInt(raw,10);if(!isNaN(n))body.actual_minutes=n;}
   try{await api('/api/tasks/'+encodeURIComponent(id)+'/outcome','POST',body);
