@@ -429,6 +429,12 @@ def test_suggested_visual_distinction_present() -> None:
     assert "stroke-dasharray" in cockpit_ui.PAGE_JS
 
 
+def test_views_payload_exposes_triage(tmp_path: object) -> None:
+    views = _views(str(tmp_path))
+    assert isinstance(views["triage"], list)
+    assert "S.views.triage" in cockpit_ui.PAGE_JS
+
+
 def test_views_payload_is_json_serialisable(tmp_path: object) -> None:
     root = str(tmp_path)
     views = _views(root)

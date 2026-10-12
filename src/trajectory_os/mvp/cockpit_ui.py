@@ -3002,6 +3002,23 @@ function renderInbox(){
   let h='<h2>Inbox — ideas and someday notions to triage</h2>'+
     '<p class="muted">'+parked.length+' parked project(s); excluded from '+
     'readiness, priority and scheduling until activated.</p>';
+  const sug=(S.views.triage||[]);
+  if(sug.length){
+    h+='<h3>Suggestions ('+sug.length+')</h3><table><tr><th>Item</th>'+
+      '<th>Why</th><th></th></tr>'+sug.map(function(x){
+        const id=(x.action==='promote'?'task:':'project:')+x.ref_id;
+        let action='';
+        if(x.action==='promote')action='<button class="small primary" '+
+          'onclick="promoteTask(\''+x.ref_id+'\')">Promote</button>';
+        else if(x.action==='demote')action='<button class="small" '+
+          'onclick="demoteProject(\''+x.ref_id+'\')">Demote…</button>';
+        else action='<button class="small" onclick="parkProject(\''+
+          x.ref_id+'\',\'IDEA\')">Idea</button> '+
+          '<button class="small" onclick="parkProject(\''+x.ref_id+
+          '\',\'SOMEDAY\')">Someday</button>';
+        return '<tr><td><a onclick="selectObject(\''+id+'\')">'+
+          esc(x.title)+'</a></td><td>'+esc(x.reason)+'</td><td>'+action+
+          '</td></tr>';}).join('')+'</table>';}
   if(!parked.length){h+='<p class="muted">Inbox is empty.</p>';}
   else{h+='<table><tr><th>Title</th><th>Status</th><th>Objective</th>'+
     '<th></th></tr>'+parked.map(function(o){return '<tr><td><a onclick="'+
