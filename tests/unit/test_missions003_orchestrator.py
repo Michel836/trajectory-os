@@ -67,8 +67,10 @@ def repo(tmp_path: Path) -> tuple[str, str]:
     d = tmp_path / "source"
     d.mkdir()
     env = {**subprocess.os.environ,
-           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z",
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+           "GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z",
            "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@example.com",
            "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z"}
 
     def git(*args: str) -> None:

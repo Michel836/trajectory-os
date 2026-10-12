@@ -1893,6 +1893,8 @@ function renderInspector(){
     o.ref_id+'\')">Record outcome…</button>'+
     '<button class="small" onclick="promoteTask(\''+o.ref_id+
     '\')">Promote</button>'+
+    '<button class="small" onclick="calibrateTask(\''+o.ref_id+
+    '\')">Calibrate…</button>'+
     '<button class="small" onclick="recordOutcome(\''+o.ref_id+
     '\',\'BLOCKED\')">Block</button>'+
     '<button class="small" onclick="recordOutcome(\''+o.ref_id+
@@ -2173,6 +2175,11 @@ async function demoteProject(id){
   try{await api('/api/projects/'+encodeURIComponent(id)+'/demote','POST',
     {target_project_id:target,confirm_discard:true});await refresh();}
   catch(err){notice(err.message);}}
+async function calibrateTask(id){try{
+  const res=await api('/api/tasks/'+encodeURIComponent(id)+'/calibrate','POST',{});
+  notice('Calibrated '+res.previous_minutes+'m -> '+res.estimated_minutes+
+    'm (x'+res.factor+', '+res.samples+' samples)');
+  await refresh();}catch(err){notice(err.message);}}
 async function completeOutcome(id){const o=obj('task:'+id);
   const hint=(o&&o.estimated_minutes)?' (estimated '+o.estimated_minutes+' min)':'';
   const raw=prompt('Actual minutes'+hint+' - leave empty to skip:','');

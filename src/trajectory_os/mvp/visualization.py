@@ -30,9 +30,7 @@ from typing import Any
 
 from trajectory_os.intelligence import model as intel_model
 from trajectory_os.mvp import (
-    graph as graph_module,
-)
-from trajectory_os.mvp import (
+    calibration,
     model,
     planning,
     scheduler,
@@ -40,6 +38,9 @@ from trajectory_os.mvp import (
     store,
     triage,
     uistate,
+)
+from trajectory_os.mvp import (
+    graph as graph_module,
 )
 from trajectory_os.mvp import (
     outcomes as outcomes_module,
@@ -203,6 +204,7 @@ def build_views(root: str | Path, *, today: date | None = None,
         "routines": [routine.to_dict() for routine in portfolio.routines],
         "decisions": [decision.to_dict()
                       for decision in portfolio.decisions],
+        "calibration": calibration.summary(portfolio, records),
         "ready_workflow": _ready_workflow(portfolio, readiness_map),
         "planning": planning_state.to_dict(),
         "tomorrow_view": planning.build_tomorrow_view(

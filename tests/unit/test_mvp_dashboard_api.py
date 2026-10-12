@@ -492,6 +492,20 @@ def test_api_event_create_then_delete(tmp_path: object) -> None:
     assert portfolio.calendar == ()
 
 
+def test_api_calibrate_task(tmp_path: object) -> None:
+    root = str(tmp_path)
+    _seed(root)
+    for index in range(5):
+        store.append_outcome(root, model.OutcomeRecord(
+            task_id="a", outcome=model.O_COMPLETED,
+            recorded_at=f"2026-01-0{index + 1}T10:00:00Z",
+            actual_minutes=45))
+    with _server(root) as port:
+        status, result = _request(port, "POST", "/api/tasks/a/calibrate", {})
+        assert status == 200
+        assert result["estimated_minutes"] == 45
+
+
 def test_api_create_and_decide_decision(tmp_path: object) -> None:
     root = str(tmp_path)
     _seed(root)
