@@ -43,24 +43,43 @@ header button.primary{background:#0e6fd8;border-color:#0e6fd8}
 #viewbar{display:flex;flex-wrap:wrap;gap:.3rem;padding:.5rem 1rem;
 background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;
 z-index:20}
-#controls{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;
-padding:.5rem 1rem;background:#eef2f7;border-bottom:1px solid var(--line);
+#controls{display:flex;flex-wrap:wrap;gap:.3rem .7rem;align-items:center;
+padding:.35rem 1rem;background:#eef2f7;border-bottom:1px solid var(--line);
 position:sticky;top:41px;z-index:19;font-size:.85rem}
+#controls .ctl{display:flex;flex-wrap:nowrap;align-items:center;
+gap:.3rem;min-width:0;flex:0 1 auto}
 #controls label{color:var(--muted);font-size:.75rem;text-transform:uppercase;
-letter-spacing:.4px;margin-right:.15rem}
+letter-spacing:.4px;margin:0;white-space:nowrap;display:inline-block}
 #controls select{padding:.25rem .4rem;border:1px solid var(--line);
-border-radius:6px;background:#fff}
+border-radius:6px;background:#fff;width:auto;max-width:16rem}
+#controls .chips{flex-wrap:wrap}
+#f-search{flex:0 1 220px;width:auto}
+#f-saved{max-width:14rem}
 .chips{display:flex;flex-wrap:wrap;gap:.2rem}
 .chip-toggle{border:1px solid var(--line);border-radius:999px;padding:.12rem
 .5rem;font-size:.75rem;background:#fff;cursor:pointer}
 .chip-toggle.on{background:#0b5cad;color:#fff;border-color:#0b5cad}
-#layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:0;
-height:calc(100vh - 132px)}
-#view-root{overflow:auto;padding:1rem}
-#inspector{overflow:auto;background:#fff;border-left:1px solid var(--line);
-padding:1rem}
-@media(max-width:900px){#layout{grid-template-columns:1fr;height:auto}
-#inspector{border-left:none;border-top:1px solid var(--line)}}
+#layout{display:flex;align-items:stretch;gap:0;
+height:calc(100vh - 132px);--inspector-width:420px}
+#view-root{flex:1 1 auto;min-width:0;overflow:auto;padding:1rem}
+#inspector{flex:0 0 auto;width:var(--inspector-width);min-width:0;
+background:#fff;border-left:1px solid var(--line);display:flex;
+flex-direction:column;overflow:hidden}
+.inspector-head{display:flex;align-items:center;gap:.4rem;
+padding:.5rem .7rem;border-bottom:1px solid var(--line);background:#f7f9fc}
+.inspector-head h2{margin:0;border:none;padding:0;flex:1 1 auto}
+.inspector-body{flex:1 1 auto;min-height:0;overflow:auto;padding:.75rem}
+#inspector-splitter{flex:0 0 6px;align-self:stretch;cursor:col-resize;
+background:linear-gradient(to right,transparent 40%,var(--line) 40%,
+var(--line) 60%,transparent 60%);touch-action:none}
+#inspector-splitter:hover,#inspector-splitter.dragging{background:#0b5cad}
+body.inspector-resizing{cursor:col-resize;user-select:none}
+#layout.inspector-collapsed #inspector,
+#layout.inspector-collapsed #inspector-splitter{display:none}
+@media(max-width:900px){#layout{flex-direction:column;height:auto}
+#view-root{overflow:visible}
+#inspector{width:auto;border-left:none;border-top:1px solid var(--line)}
+#inspector-splitter{display:none}}
 h2{margin:.2rem 0 .6rem;font-size:1rem;border-bottom:1px solid var(--line);
 padding-bottom:.3rem}
 h3{margin:.2rem 0 .5rem}
@@ -182,8 +201,33 @@ z-index:50}
 .modal{background:#fff;border-radius:12px;max-width:780px;width:100%;
 padding:1.1rem;box-shadow:0 12px 40px rgba(0,0,0,.25)}
 .modal h3{margin:0 0 .6rem}
+.open-modal{max-width:960px}
+.detail-head{display:flex;align-items:center;gap:.5rem;
+margin-bottom:.5rem;flex-wrap:wrap}
+.detail-grid{display:grid;
+grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+gap:.35rem .9rem;margin:.4rem 0 .2rem}
+.detail-grid dt{color:var(--muted);font-size:.72rem;text-transform:uppercase;
+letter-spacing:.4px;margin:0}
+.detail-grid dd{margin:0;word-break:break-word}
+.detail-block{margin:.7rem 0}
+.detail-block h4{margin:0 0 .25rem;font-size:.85rem}
+.detail-block .body{white-space:pre-wrap;word-break:break-word}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:.5rem}
 @media(max-width:640px){.form-row{grid-template-columns:1fr}}
+.inspector-form{display:flex;flex-direction:column;gap:.7rem}
+.form-section{border:1px solid var(--line);border-radius:8px;
+padding:.55rem .6rem;background:#fbfcfe}
+.form-section h4{margin:0 0 .4rem;font-size:.7rem;text-transform:uppercase;
+letter-spacing:.5px;color:var(--muted)}
+.form-grid{display:grid;
+grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:.45rem .6rem}
+.form-grid .span-2{grid-column:1 / -1}
+.form-grid label{margin-top:0}
+.form-meta{font-size:.82rem;color:var(--muted);word-break:break-word}
+.inspector-form .actions{position:sticky;bottom:0;margin:0;padding:.55rem 0;
+background:#fff;border-top:1px solid var(--line)}
+.grid-table tbody tr{user-select:none}
 label{display:block;font-size:.78rem;color:var(--muted);margin:.45rem 0 .1rem}
 input,select,textarea{font:inherit;padding:.35rem .45rem;border:1px solid
 var(--line);border-radius:6px;width:100%;background:#fff}
@@ -399,18 +443,68 @@ function normaliseTables(value){
         if(raw==null||raw==='')return;
         out[k].filters[key]=String(raw);});}});
   return out;}
-// Presentation-only global search: pure, case-insensitive token matching
-// over the fields a human would search. Combined with (never replacing) the
-// global scope/level/status/evidence filters. No business rule here.
-function searchTermsOf(value){return String(value==null?'':value).toLowerCase()
+// Presentation-only global search: pure, deterministic token matching over
+// the fields a human would search, plus the server-derived import vocabulary
+// (`o.search_text`, from persisted import artifacts). Case- and accent-
+// insensitive. Combined with (never replacing) the global
+// scope/level/status/evidence filters. No business rule here.
+//
+// LIMITATION (V1, deliberate): search only sees the objects that already pass
+// the active filters, so it answers "is it in the current view?" rather than
+// the eventual "does Trajectory know this?" question used for search-before-
+// capture. Widening this to a filter-independent lookup is a next step, not a
+// silent change here.
+function searchFold(value){return String(value==null?'':value)
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();}
+function searchTermsOf(value){return searchFold(value)
   .split(/\s+/).filter(Boolean);}
 function searchMatches(o,terms){
   if(!terms||!terms.length)return true;
   if(!o)return false;
-  var hay=[o.title,o.project,o.domain,o.workstream,o.deliverable,
-    o.description,o.objective,o.next_action,o.status,o.evidence,o.ref_id]
-    .map(function(v){return v==null?'':String(v).toLowerCase();}).join(' ');
+  var hay=searchFold([o.title,o.project,o.domain,o.workstream,o.deliverable,
+    o.description,o.objective,o.next_action,o.status,o.evidence,o.ref_id,
+    o.search_text]
+    .map(function(v){return v==null?'':String(v);}).join(' '));
   return terms.every(function(t){return hay.indexOf(t)>=0;});}
+// --- inspector workspace helpers (pure; no DOM) ------------------------------
+//
+// The right-hand Inspector is a resizable, collapsible workspace pane. The
+// width maths and the selection reconciliation are kept pure so the
+// deterministic contract can be unit-tested in Node exactly like the table
+// helpers. Defaults are adapted to the real layout: a comfortable default, a
+// minimum that keeps a long fiche readable and a maximum that never makes the
+// left workspace unusable (70% of the available width).
+var INSPECTOR_MIN_WIDTH = 320;
+var INSPECTOR_DEFAULT_WIDTH = 420;
+var INSPECTOR_MAX_RATIO = 0.7;
+function inspectorBounds(total){
+  var min = INSPECTOR_MIN_WIDTH;
+  var max = Math.max(min, Math.round(Number(total || 0) * INSPECTOR_MAX_RATIO));
+  return {min: min, max: max};}
+function inspectorClampWidth(px, total){
+  var bounds = inspectorBounds(total);
+  var value = Number(px);
+  if (!isFinite(value)) value = INSPECTOR_DEFAULT_WIDTH;
+  return Math.max(bounds.min, Math.min(bounds.max, Math.round(value)));}
+// Deterministic selection reconciliation: a selection that is no longer in
+// the currently visible set is dropped. This is the single documented rule
+// used when search or a filter hides the inspected object, so the Inspector
+// can never keep showing an object that is visually absent from the list.
+function reconcileSelectionId(selection, visibleIds){
+  if (selection == null || selection === '') return null;
+  var ids = visibleIds || [];
+  for (var i = 0; i < ids.length; i++) {
+    if (ids[i] === selection) return selection;}
+  return null;}
+// Double-click detection for the OPEN surface. ``selectObject`` rebuilds
+// #view-root after the first click, so a native ``dblclick`` is unreliable;
+// this pure predicate is evaluated from the central click listener instead.
+// Two clicks on the same object id inside ``windowMs`` are an OPEN gesture.
+function isRepeatClick(prevId, prevTime, id, now, windowMs){
+  if (id == null || id === '') return false;
+  if (prevId !== id) return false;
+  var delta = Number(now) - Number(prevTime);
+  return delta >= 0 && delta <= Number(windowMs);}
 """
 
 
@@ -443,7 +537,10 @@ const S = {
   todaySort:'recommended', readySort:'recommended',
   tomorrowSort:'planned', weekSort:'manual',
   tomorrowDraft:{main:[],optional:[]}, reviewDraft:{main:[],optional:[]},
-  weekDraft:null, review:null
+  weekDraft:null, review:null,
+  inspectorEdit:null, inspectorWidth:INSPECTOR_DEFAULT_WIDTH,
+  inspectorCollapsed:false, inspectorInit:false,
+  openObject:null, objectOpenInit:false, duplicatePending:null
 };
 const $ = id => document.getElementById(id);
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;')
@@ -508,6 +605,7 @@ async function refresh(){
     const res=await api('/api/views');
     S.views=res;
     applyPrefs(res.preferences);
+    reconcileSelection();
     initPlanningDrafts();
     renderAll();notice('');
   }catch(err){notice(err.message);}
@@ -529,6 +627,115 @@ function initPlanningDrafts(){
       progress_signal:o.progress_signal,progress_ratio:o.progress_ratio,
       urgency:o.urgency};});
 }
+// --- inspector workspace (resize / collapse / edit) --------------------------
+// The Inspector is a first-class workspace pane. Its width and collapsed state
+// are purely presentational and persisted in localStorage (the browser owns
+// window geometry; the portfolio and ui_state.json are untouched).
+const INSPECTOR_LS_KEY='trajectory.inspector.v1';
+function loadInspectorPrefs(){
+  try{const raw=window.localStorage.getItem(INSPECTOR_LS_KEY);
+    if(!raw)return;const p=JSON.parse(raw);
+    if(typeof p.width==='number')S.inspectorWidth=p.width;
+    if(typeof p.collapsed==='boolean')S.inspectorCollapsed=p.collapsed;
+  }catch(e){/* fail-soft: defaults keep the cockpit usable */}}
+function saveInspectorPrefs(){
+  try{window.localStorage.setItem(INSPECTOR_LS_KEY,JSON.stringify(
+    {width:S.inspectorWidth,collapsed:S.inspectorCollapsed}));
+  }catch(e){/* private mode / quota: never break the cockpit */}}
+function inspectorTotalWidth(){
+  const layout=$('layout');return layout?layout.clientWidth:0;}
+function applyInspectorLayout(){
+  const layout=$('layout');if(!layout)return;
+  if(S.inspectorCollapsed){layout.classList.add('inspector-collapsed');}
+  else{layout.classList.remove('inspector-collapsed');
+    S.inspectorWidth=inspectorClampWidth(S.inspectorWidth,
+      inspectorTotalWidth());
+    layout.style.setProperty('--inspector-width',S.inspectorWidth+'px');}
+  const btn=$('inspector-collapse-btn');
+  if(btn)btn.textContent=S.inspectorCollapsed?'Show':'Hide';
+  const toggle=$('inspector-toggle');
+  if(toggle)toggle.classList.toggle('active',!S.inspectorCollapsed);}
+function setInspectorWidth(px,persist){
+  S.inspectorWidth=inspectorClampWidth(px,inspectorTotalWidth());
+  applyInspectorLayout();
+  if(persist)saveInspectorPrefs();}
+function toggleInspectorCollapsed(force){
+  S.inspectorCollapsed=(typeof force==='boolean')?force:
+    !S.inspectorCollapsed;
+  saveInspectorPrefs();applyInspectorLayout();}
+function ensureInspectorOpen(){
+  if(S.inspectorCollapsed)toggleInspectorCollapsed(false);}
+function initInspectorSplitter(){
+  const splitter=$('inspector-splitter');if(!splitter)return;
+  let dragging=false;
+  function move(e){
+    if(!dragging)return;
+    const layout=$('layout');if(!layout)return;
+    const rect=layout.getBoundingClientRect();
+    setInspectorWidth(rect.right-e.clientX,false);
+    if(e.preventDefault)e.preventDefault();}
+  function stop(){
+    if(!dragging)return;dragging=false;
+    splitter.classList.remove('dragging');
+    document.body.classList.remove('inspector-resizing');
+    saveInspectorPrefs();}
+  splitter.addEventListener('pointerdown',function(e){
+    dragging=true;splitter.classList.add('dragging');
+    document.body.classList.add('inspector-resizing');
+    if(splitter.setPointerCapture&&e.pointerId!=null){
+      try{splitter.setPointerCapture(e.pointerId);}catch(err){/* ignore */}}
+    e.preventDefault();});
+  window.addEventListener('pointermove',move);
+  window.addEventListener('pointerup',stop);
+  window.addEventListener('pointercancel',stop);
+  splitter.addEventListener('dblclick',function(){
+    setInspectorWidth(INSPECTOR_DEFAULT_WIDTH,true);});
+  splitter.addEventListener('keydown',function(e){
+    if(e.key==='ArrowLeft'){setInspectorWidth(S.inspectorWidth+16,true);}
+    else if(e.key==='ArrowRight'){
+      setInspectorWidth(S.inspectorWidth-16,true);}
+    else if(e.key==='Home'){
+      setInspectorWidth(inspectorBounds(inspectorTotalWidth()).max,true);}
+    else if(e.key==='End'){
+      setInspectorWidth(inspectorBounds(inspectorTotalWidth()).min,true);}
+    else{return;}
+    e.preventDefault();});
+  window.addEventListener('resize',function(){
+    if(!S.inspectorCollapsed)applyInspectorLayout();});}
+function initInspectorWorkspace(){
+  if(S.inspectorInit)return;S.inspectorInit=true;
+  loadInspectorPrefs();initInspectorSplitter();
+  document.addEventListener('keydown',function(e){
+    if(e.key!=='Escape')return;
+    const duplicateOverlay=$('duplicate-overlay');
+    if(duplicateOverlay&&duplicateOverlay.classList.contains('open')){
+      e.preventDefault();cancelDuplicate();return;}
+    const openOverlay=$('open-overlay');
+    if(openOverlay&&openOverlay.classList.contains('open')){
+      e.preventDefault();closeObjectDetail();return;}
+    if(S.inspectorEdit&&!document.querySelector('.overlay.open')){
+      e.preventDefault();cancelInspectorEdit();}});}
+// When search or a global filter hides the inspected object the selection is
+// dropped (the simplest, unambiguous rule). The Inspector therefore never
+// keeps showing an object that is visually absent from the current view.
+function reconcileSelection(){
+  const visible=filtered();
+  const ids=visible.map(function(o){return o.id;});
+  const kept=reconcileSelectionId(S.selection,ids);
+  if(kept===S.selection)return false;
+  S.selection=kept;S.inspectorEdit=null;return true;}
+// Same documented rule for the List-table column filters: if the selected
+// row is hidden by the local filter of its own table, the selection is dropped
+// instead of leaving a stale object in the Inspector.
+function reconcileTableSelection(kind){
+  if(!S.selection)return false;
+  const o=obj(S.selection);if(!o)return false;
+  const isProject=o.kind==='project';
+  if((kind==='projects')!==isProject)return false;
+  const visible=tableRows(kind);
+  for(let i=0;i<visible.length;i++){
+    if(visible[i].id===S.selection)return false;}
+  S.selection=null;S.inspectorEdit=null;renderInspector();return true;}
 function setView(v){S.view=v;persistPrefs({view:v});renderAll();}
 // Presentation-only ordering controls (Kanban / Today / Ready). The chosen
 // key is persisted in ui_state.json and never reorders portfolio data.
@@ -557,6 +764,8 @@ function tomorrowSortChange(v){S.tomorrowSort=v;
 function weekSortChange(v){S.weekSort=v;
   persistPrefs({week_sort:v});renderAll();}
 function selectObject(id){S.selection=id;
+  if(S.inspectorEdit&&(S.inspectorEdit.kind+':'+S.inspectorEdit.id)!==id){
+    S.inspectorEdit=null;}
   if(id&&obj(id)&&obj(id).kind==='project'){S.treemapFocus='project:'+
     obj(id).project_id;}
   persistPrefs({selected:id});renderAll();}
@@ -568,7 +777,7 @@ function renderViewBar(){$('viewbar').innerHTML=VIEWS.map(function(v){
 function chipToggle(group,value){
   const arr=S.filters[group].slice();const i=arr.indexOf(value);
   if(i<0)arr.push(value);else arr.splice(i,1);S.filters[group]=arr;
-  persistPrefs({filters:S.filters});renderAll();}
+  persistPrefs({filters:S.filters});reconcileSelection();renderAll();}
 function renderControls(){
   const domains=[].concat.apply([],objects().map(function(o){
     return o.kind==='project'?[o.domain]:[];})).filter(function(v,i,a){
@@ -590,34 +799,44 @@ function renderControls(){
     function(c){return '<option'+(S.prefs.color_by===c?' selected':'')+'>'+
     c+'</option>';}).join('');
   $('controls').innerHTML=
-    '<label>Scope</label><select id="f-scope" onchange="scopeChange()">'+
-    '<option value="">All</option>'+scopeOpts+'</select>'+
-    '<label>Level</label><select id="f-level" onchange="levelChange()">'+
+    '<span class="ctl"><label>Scope</label>'+
+    '<select id="f-scope" onchange="scopeChange()">'+
+    '<option value="">All</option>'+scopeOpts+'</select></span>'+
+    '<span class="ctl"><label>Level</label>'+
+    '<select id="f-level" onchange="levelChange()">'+
     ['all','projects','tasks'].map(function(l){return '<option value="'+l+'"'+
       (S.filters.level===l?' selected':'')+'>'+l+'</option>';}).join('')+
-    '</select>'+
-    '<label>Status</label><div class="chips">'+statusList.map(function(s){
+    '</select></span>'+
+    '<span class="ctl"><label>Colour by</label>'+
+    '<select id="f-colour" onchange="colourChange()">'+colourOpts+
+    '</select></span>'+
+    '<span class="ctl"><label>Density</label>'+
+    '<select id="f-density" onchange="densityChange()">'+densityOpts+
+    '</select></span>'+
+    '<span class="ctl"><label>Status</label><div class="chips">'+
+    statusList.map(function(s){
       return '<span class="chip-toggle'+(S.filters.status.indexOf(s)>=0?
         ' on':'')+'" onclick="chipToggle(\'status\',\''+s+'\')">'+s+
-        '</span>';}).join('')+'</div>'+
-    '<label>Evidence</label><div class="chips">'+evList.map(function(e){
+        '</span>';}).join('')+'</div></span>'+
+    '<span class="ctl"><label>Evidence</label><div class="chips">'+
+    evList.map(function(e){
       return '<span class="chip-toggle'+(S.filters.evidence.indexOf(e)>=0?
         ' on':'')+'" onclick="chipToggle(\'evidence\',\''+e+'\')">'+e+
-        '</span>';}).join('')+'</div>'+
-    '<label>Colour by</label><select id="f-colour" onchange="colourChange()">'+
-    colourOpts+'</select>'+
-    '<label>Density</label><select id="f-density" onchange="densityChange()">'+
-    densityOpts+'</select>'+
-    '<label>Search</label><input id="f-search" class="inline" type="search" '+
+        '</span>';}).join('')+'</div></span>'+
+    '<span class="ctl"><label>Search</label>'+
+    '<input id="f-search" class="inline" type="search" '+
     'placeholder="projects &amp; tasks…" value="'+esc(S.search)+'" '+
-    'style="min-width:170px" oninput="searchInput(this.value)">'+
-    '<label>Saved view</label><select id="f-saved" onchange="savedViewChange()">'+
+    'style="min-width:170px" oninput="searchInput(this.value)"></span>'+
+    '<span class="ctl"><label>Saved view</label>'+
+    '<select id="f-saved" onchange="savedViewChange()">'+
     savedViewOptions()+'</select>'+
     '<button class="small" onclick="saveCurrentView()">Save</button>'+
     '<button class="small" onclick="renameCurrentView()">Rename</button>'+
-    '<button class="small" onclick="deleteCurrentView()">Delete</button>';
+    '<button class="small" onclick="deleteCurrentView()">Delete</button>'+
+    '</span>';
 }
-function searchInput(v){S.search=v||'';renderView();}
+function searchInput(v){S.search=v||'';reconcileSelection();renderView();
+  renderInspector();}
 function savedViewOptions(){
   const views=(S.prefs&&S.prefs.saved_views)||{};
   return '<option value="">—</option>'+Object.keys(views).sort().map(
@@ -628,7 +847,8 @@ async function savedViewChange(){
   if(!name){S.activeSavedView='';return;}
   S.activeSavedView=name;
   try{const res=await api('/api/saved-views/load','POST',{name:name});
-    applyPrefs(res.preferences);renderAll();notice('Loaded view: '+name);}
+    applyPrefs(res.preferences);reconcileSelection();renderAll();
+    notice('Loaded view: '+name);}
   catch(err){notice(err.message);}}
 async function saveCurrentView(){
   const name=window.prompt('Save current view as:','');
@@ -657,9 +877,9 @@ function scopeChange(){const v=$('f-scope').value;
   else if(v.indexOf('d:')===0){S.filters.scope='domain';
     S.filters.scope_id=v.slice(2);}
   else{S.filters.scope='project';S.filters.scope_id=v.slice(2);}
-  persistPrefs({filters:S.filters});renderAll();}
+  persistPrefs({filters:S.filters});reconcileSelection();renderAll();}
 function levelChange(){S.filters.level=$('f-level').value;
-  persistPrefs({filters:S.filters});renderAll();}
+  persistPrefs({filters:S.filters});reconcileSelection();renderAll();}
 function colourChange(){S.prefs.color_by=$('f-colour').value;
   persistPrefs({color_by:S.prefs.color_by});renderAll();}
 function densityChange(){S.prefs.density=$('f-density').value;
@@ -700,7 +920,8 @@ function card(o,extra){
   const cls='card objcard '+highlightClass(o)+
     (S.selection===o.id?' selected':'');
   return '<div class="'+cls+'" style="border-left:4px solid '+colourOf(o)+
-    '" onclick="selectObject(\''+o.id+'\')">'+(extra||cardBody(o))+'</div>';}
+    '" data-object-id="'+o.id+'" onclick="selectObject(\''+o.id+'\')">'+
+    (extra||cardBody(o))+'</div>';}
 function cardBody(o,deep){
   const badge=pill(o.kind==='project'?'project':'task','badge-'+
     (o.kind==='project'?o.status:o.status));
@@ -883,8 +1104,15 @@ function tableCell(kind,column,o){
     case 'priority':return o.priority_rank?'#'+o.priority_rank:'—';
     case 'deadline':return esc(o.deadline||'—');
     default:return '';}}
+function tableRowKey(ev,id){
+  if(!ev||ev.key!=='Enter')return;
+  const tag=(ev.target&&ev.target.tagName)||'';
+  if(tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA')return;
+  ev.preventDefault();selectObject(id);}
 function tableRowHtml(kind,cols,o){
   return '<tr class="'+(S.selection===o.id?'selected':'')+'" '+
+    'tabindex="0" data-object-id="'+o.id+'" '+
+    'onkeydown="tableRowKey(event,\''+o.id+'\')" '+
     'onclick="selectObject(\''+o.id+'\')">'+
     cols.map(function(c){
       return '<td class="'+c.cls+'" title="'+
@@ -954,14 +1182,17 @@ function tableHeaderClick(kind,column,ev){
 function tableTextFilter(kind,key,value){
   tableState(kind).filters[key]=value||'';
   persistTablesSoon();
-  renderTableBody(kind);}
+  renderTableBody(kind);
+  reconcileTableSelection(kind);}
 function tableRangeFilter(kind,key,value){
   tableState(kind).filters[key]=(value==null?'':String(value));
   persistTablesSoon();
-  renderTableBody(kind);}
+  renderTableBody(kind);
+  reconcileTableSelection(kind);}
 function tableSelectFilter(kind,key,value){
   tableState(kind).filters[key]=value||'';
   persistTables();
+  reconcileTableSelection(kind);
   withViewScroll(renderAll);}
 function tableClearFilters(kind){
   tableState(kind).filters={};
@@ -1007,6 +1238,7 @@ function renderKanban(){
       (S.selection===o.id?' selected':'')+'" draggable="true" '+
       'ondragstart="dragStart(event,\''+o.id+'\')" '+
       'style="border-left:4px solid '+colourOf(o)+'" '+
+      'data-object-id="'+o.id+'" '+
       'onclick="selectObject(\''+o.id+'\')">'+cardBody(o)+'</div>';}).join('');
     h+='</div>';});
   h+='</div>';$('view-root').innerHTML=h;}
@@ -1048,14 +1280,16 @@ function wbsNode(node,depth){
     ('project:'+node.ref_id):null);
   const collapsed=S.collapsed[node.id];
   const kids=node.children||[];
-  const tw=kids.length?'<span class="tw" onclick="event.stopPropagation();'+
+  const tw=kids.length?'<span class="tw" data-no-open="true" '+
+    'onclick="event.stopPropagation();'+
     'toggleWbs(\''+node.id+'\')">'+(collapsed?'▸':'▾')+'</span>':'<span class="tw"></span>';
   const sel=S.selection===objectId?' selected':'';
   const colour=isTask&&objectId&&obj(objectId)?colourOf(obj(objectId)):
     (node.kind==='PROJECT'&&obj('project:'+node.ref_id)?
       colourOf(obj('project:'+node.ref_id)):'#9aa4b2');
   let h='<div class="wbsrow'+sel+'" style="margin-left:'+pad+'px" '+
-    (objectId?'onclick="selectObject(\''+objectId+'\')"':'')+'>'+tw+
+    (objectId?'data-object-id="'+objectId+'" '+
+      'onclick="selectObject(\''+objectId+'\')"':'')+'>'+tw+
     '<span class="swatch" style="background:'+colour+'"></span>'+
     pill(node.kind,'badge-ACTIVE')+'<strong>'+esc(node.label)+'</strong>';
   if(node.status)h+=' '+pill(node.status,'badge-'+node.status);
@@ -1133,7 +1367,8 @@ function renderGraph(){
   nodes.forEach(function(n){const p=pos[n.id];const o=obj('task:'+n.id);
     const c=o?colourOf(o):'#9aa4b2';const dim=allowed&&!allowed[n.id];
     const r=10+Math.min(10,(n.unlocks_count||0)*3);
-    h+='<g class="tmnode" opacity="'+(dim?0.18:1)+'" onclick="selectObject(\''+
+    h+='<g class="tmnode" opacity="'+(dim?0.18:1)+'" data-object-id="'+
+      'task:'+esc(n.id)+'" onclick="selectObject(\''+
       'task:'+esc(n.id)+'\')"><circle cx="'+p.x+'" cy="'+p.y+'" r="'+r+
       '" fill="'+c+'" stroke="'+(S.selection==='task:'+n.id?'#0b2a4a':'#fff')+
       '" stroke-width="2"/><text x="'+(p.x+r+4)+'" y="'+(p.y+4)+
@@ -1194,7 +1429,8 @@ function renderGantt(){
     lane[1].forEach(function(t){const o=obj('task:'+t.id);
       const colour=o?colourOf(o):'#0b5cad';
       h+='<tr class="'+(S.selection==='task:'+t.id?'selected':'')+
-        '" onclick="selectObject(\'task:'+esc(t.id)+'\')"><td><span class="swatch" '+
+        '" data-object-id="task:'+esc(t.id)+'" '+
+        'onclick="selectObject(\'task:'+esc(t.id)+'\')"><td><span class="swatch" '+
         'style="background:'+colour+'"></span> '+esc(t.title)+
         ' <span class="muted">'+fmtMin(t.estimated_minutes)+'</span></td>';
       allDays.forEach(function(d){
@@ -1244,7 +1480,8 @@ function renderEisenhower(){
       return '<div class="kcard '+highlightClass(o)+
       (S.selection===id?' selected':'')+'" draggable="true" '+
       'ondragstart="dragStart(event,\''+id+'\')" style="border-left:4px solid '+
-      colourOf(o)+'" onclick="selectObject(\''+id+'\')">'+cardBody(o,true)+
+      colourOf(o)+'" data-object-id="'+id+'" '+
+      'onclick="selectObject(\''+id+'\')">'+cardBody(o,true)+
       '</div>';}).join('')+'</div>';});
   h+='</div>';$('view-root').innerHTML=h;}
 async function dropEisenhower(e,qd){
@@ -1317,7 +1554,8 @@ function renderPortfolioMap(){
   rows.forEach(function(o){const x=pad+(axisValue(o,xa)/xmax)*(W-pad-30);
     const y=(H-pad)-(axisValue(o,ya)/ymax)*(H-pad-40);
     const size=6+Math.min(24,Math.sqrt(o.task_count||1)*4);
-    h+='<g onclick="selectObject(\''+o.id+'\')" style="cursor:pointer">'+
+    h+='<g data-object-id="'+o.id+'" onclick="selectObject(\''+o.id+
+      '\')" style="cursor:pointer">'+
       '<circle cx="'+x+'" cy="'+y+'" r="'+size+'" fill="'+colourOf(o)+
       '" opacity="0.85" stroke="'+(S.selection===o.id?'#0b2a4a':'#fff')+
       '" stroke-width="2"/><text x="'+(x+size+3)+'" y="'+(y+3)+
@@ -1393,7 +1631,8 @@ function renderProgress(){
     '<th>Done</th><th>Estimated</th><th>Actual</th></tr>'+
     p.projects.map(function(pr){return '<tr class="'+
       (S.selection==='project:'+pr.project_id?'selected':'')+
-      '" onclick="selectObject(\'project:'+esc(pr.project_id)+'\')"><td>'+
+      '" data-object-id="project:'+esc(pr.project_id)+'" '+
+      'onclick="selectObject(\'project:'+esc(pr.project_id)+'\')"><td>'+
       esc(pr.title)+'</td><td>'+(pr.progress==null?'—':
       Math.round(pr.progress*100)+'%')+'</td><td>'+pr.completed+'/'+pr.tasks+
       '</td><td>'+fmtMin(pr.estimated_minutes)+'</td><td>'+
@@ -1450,7 +1689,8 @@ function renderGoalFlow(){
         (n.kind==='PROJECT'?obj('project:'+n.id.slice(8)):null);
       return '<div class="kcard '+highlightClass(o)+
       (o&&S.selection===o.id?' selected':'')+'" '+
-      (o?'onclick="selectObject(\''+o.id+'\')"':'')+' style="border-left:4px '+
+      (o?'data-object-id="'+o.id+'" '+
+        'onclick="selectObject(\''+o.id+'\')"':'')+' style="border-left:4px '+
       'solid '+(o?colourOf(o):'#9aa4b2')+'"><div style="font-size:.8rem">'+
       esc(n.label)+'</div>'+(n.status?'<span class="muted" '+
       'style="font-size:.7rem">'+esc(n.status)+'</span>':'')+'</div>';
@@ -1475,7 +1715,8 @@ function renderFocus(){
     if(!levels||!levels.length)return '<span class="muted">none</span>';
     return levels.slice(0,maxLevels).map(function(lvl,i){return '<div style="margin-left:'+
       (i*12)+'px">'+lvl.map(function(id){const t=obj('task:'+id);return t?
-      '<a onclick="selectObject(\'task:'+esc(id)+'\')">'+esc(t.title)+'</a>':
+      '<a data-object-id="task:'+esc(id)+'" '+
+      'onclick="selectObject(\'task:'+esc(id)+'\')">'+esc(t.title)+'</a>':
       esc(id);}).join(' · ')+'</div>';}).join('');}
   h+='<div class="grid2">';
   h+='<div class="quad"><h4>Upstream — what comes before</h4>'+
@@ -1509,10 +1750,11 @@ function renderFocus(){
 
 // --- Inspector ---------------------------------------------------------------
 function renderInspector(){
-  const el=$('inspector');
+  const el=$('inspector-body');
   if(!el)return;
+  if(S.inspectorEdit){renderInspectorEdit(el);return;}
   const o=S.selection?obj(S.selection):null;
-  if(!o){el.innerHTML='<h2>Inspector</h2><p class="muted">Select an object. '+
+  if(!o){el.innerHTML='<p class="muted">Select a project or task. '+
     'Attributes, colour identity and validated actions appear here.</p>';return;}
   const density=S.prefs.density;
   const catalog=S.views.attribute_catalog;
@@ -1522,7 +1764,7 @@ function renderInspector(){
       a.density==='detailed';}).length)return '';
     if(value==null||value===''||(Array.isArray(value)&&!value.length))return '';
     return '<dt>'+esc(label)+'</dt><dd>'+value+'</dd>';}
-  let h='<h2>Inspector</h2>';
+  let h='';
   h+='<div class="card" style="border-left:5px solid '+colourOf(o)+'">'+
     '<strong>'+esc(o.title)+'</strong><div class="muted">'+
     pill(o.kind,'badge-ACTIVE')+pill(o.evidence,'badge-'+o.evidence)+
@@ -1580,6 +1822,7 @@ function renderInspector(){
     '\',\'DEFERRED\')">Defer</button>'+
     '<button class="small" onclick="mutateTask(\''+o.ref_id+
     '\',{status:\'TODO\'})">Reactivate</button>'+
+    '<button class="small" onclick="openObject(\''+o.id+'\')">Open</button>'+
     '<button class="small" onclick="openTask(\''+o.ref_id+'\')">Edit</button>';}
   else{h+='<button class="small primary" onclick="mutateProject(\''+
     o.project_id+'\',{status:\'COMPLETED\'})">Complete</button>'+
@@ -1587,6 +1830,7 @@ function renderInspector(){
     '\',{status:\'DEFERRED\'})">Defer</button>'+
     '<button class="small" onclick="mutateProject(\''+o.project_id+
     '\',{status:\'ACTIVE\'})">Reactivate</button>'+
+    '<button class="small" onclick="openObject(\''+o.id+'\')">Open</button>'+
     '<button class="small" onclick="openProjectForm(\''+o.project_id+
     '\')">Edit</button>'+
     '<button class="small" onclick="openTaskForm(\''+o.project_id+
@@ -1618,6 +1862,204 @@ function renderInspector(){
     '<button class="small" onclick="setIdentityColour()">Apply</button></div>';
   el.innerHTML=h;
   if(!isTask(o)){loadEnrichment(o.project_id,false);}}
+// --- inspector edit mode (full-width working surface) ------------------------
+// Edit reuses the Inspector instead of a cramped fixed modal: the same pane can
+// be widened with the splitter. Field ids are unchanged so the existing
+// /api/projects and /api/tasks endpoints (the only business write paths) are
+// reused verbatim; business rules stay in Python.
+function editSection(title,inner){
+  return '<section class="form-section"><h4>'+esc(title)+'</h4>'+
+    '<div class="form-grid">'+inner+'</div></section>';}
+function editField(label,control,full){
+  return '<div'+(full?' class="span-2"':'')+'><label>'+esc(label)+
+    '</label>'+control+'</div>';}
+function editMeta(label,value){
+  return '<div><label>'+esc(label)+'</label><div class="form-meta">'+
+    esc(value==null||value===''?'—':value)+'</div></div>';}
+function editSelect(id,list,cur){
+  return '<select id="'+id+'">'+list.map(function(v){
+    return '<option'+(v===cur?' selected':'')+'>'+esc(v)+
+      '</option>';}).join('')+'</select>';}
+function editActions(kind){
+  const save=kind==='project'?'saveProject()':'saveTask()';
+  return '<div class="actions"><button onclick="cancelInspectorEdit()">'+
+    'Cancel</button><button class="primary" onclick="'+save+'">'+
+    'Save changes</button></div>';}
+function projectEditHtml(id){
+  const p=obj('project:'+id);if(!p)return '';
+  const statuses=['ACTIVE','WAITING','BLOCKED','DEFERRED','COMPLETED'];
+  const urgs=['CRITICAL','HIGH','MEDIUM','LOW'];
+  const imps=['HIGH','MEDIUM','LOW'];
+  let h='<div class="inspector-form">';
+  h+=editSection('Identity',
+    '<input type="hidden" id="pf-id" value="'+esc(p.ref_id)+'">'+
+    editField('Name','<input id="pf-name" value="'+esc(p.title||'')+'">',
+      true)+
+    editField('Objective','<textarea id="pf-objective" rows="2">'+
+      esc(p.objective||'')+'</textarea>',true));
+  h+=editSection('Structure',
+    editField('Domain','<input id="pf-domain" value="'+
+      esc(p.domain||'')+'">')+
+    editField('Status',editSelect('pf-status',statuses,p.status)));
+  h+=editSection('Execution',
+    editField('Urgency',editSelect('pf-urgency',urgs,p.urgency))+
+    editField('Impact',editSelect('pf-impact',imps,p.impact))+
+    editField('Deadline','<input type="date" id="pf-deadline" value="'+
+      esc(p.deadline||'')+'">'));
+  h+=editSection('Context',
+    editField('Description','<textarea id="pf-description" rows="3">'+
+      esc(p.description||'')+'</textarea>',true));
+  h+=editSection('Provenance',
+    editMeta('Project id',p.ref_id)+
+    editMeta('Provenance',p.provenance)+
+    editMeta('Confidence',p.confidence));
+  return h+editActions('project')+'</div>';}
+function taskEditHtml(id){
+  const t=obj('task:'+id);if(!t)return '';
+  const statuses=['TODO','IN_PROGRESS','BLOCKED','WAITING','COMPLETED',
+    'DEFERRED','ABANDONED'];
+  const urgs=['CRITICAL','HIGH','MEDIUM','LOW'];
+  const imps=['HIGH','MEDIUM','LOW'];
+  let h='<div class="inspector-form">';
+  h+=editSection('Identity',
+    editField('Title','<input id="tk-title" value="'+esc(t.title||'')+'">',
+      true)+
+    editMeta('Project',t.project)+
+    editField('Status',editSelect('tk-status',statuses,t.status)));
+  h+=editSection('Execution',
+    editField('Estimated minutes','<input id="tk-est" type="number" '+
+      'min="1" value="'+(t.estimated_minutes==null?'':t.estimated_minutes)+
+      '">')+
+    editField('Actual minutes','<input id="tk-actual" type="number" '+
+      'min="0" value="'+(t.actual_minutes==null?'':t.actual_minutes)+'">')+
+    editField('Urgency',editSelect('tk-urgency',urgs,t.urgency))+
+    editField('Impact',editSelect('tk-impact',imps,t.impact))+
+    editField('Deadline','<input id="tk-deadline" type="date" value="'+
+      esc(t.deadline||'')+'">')+
+    editMeta('Readiness',t.readiness)+
+    editMeta('Priority',t.priority_rank?'#'+t.priority_rank:'—'));
+  h+=editSection('Structure',
+    editField('Workstream','<input id="tk-workstream" value="'+
+      esc(t.workstream||'')+'">')+
+    editField('Deliverable','<input id="tk-deliverable" value="'+
+      esc(t.deliverable||'')+'">'));
+  h+=editSection('Action / context',
+    editField('Next action','<input id="tk-next" value="'+
+      esc(t.next_action||'')+'">',true)+
+    editField('Description','<textarea id="tk-desc" rows="3">'+
+      esc(t.description||'')+'</textarea>',true));
+  h+=editSection('Relations',
+    editField('Waiting for (comma)','<input id="tk-waiting" value="'+
+      esc(t.waiting_for.join(', '))+'">')+
+    editField('Blocked by (comma task ids)','<input id="tk-blocked" value="'+
+      esc(t.blocked_by.join(', '))+'">')+
+    '<div class="span-2" id="tk-deps"></div>');
+  h+=editSection('Provenance',
+    editMeta('Task id',t.ref_id)+
+    editMeta('Provenance',t.provenance)+
+    editMeta('Confidence',t.confidence));
+  return h+editActions('task')+'</div>';}
+function renderInspectorEdit(el){
+  if(S.inspectorEdit.kind==='project'){
+    el.innerHTML=projectEditHtml(S.inspectorEdit.id);return;}
+  const id=S.inspectorEdit.id;
+  el.innerHTML=taskEditHtml(id);
+  const t=obj('task:'+id);if(t)renderDepsEditor(id,t);}
+function cancelInspectorEdit(){
+  S.inspectorEdit=null;renderInspector();}
+function startProjectEdit(pid){
+  const p=obj('project:'+pid);if(!p)return;
+  ensureInspectorOpen();
+  S.inspectorEdit={kind:'project',id:pid};
+  selectObject('project:'+pid);}
+// --- OPEN (read-only detail surface) -----------------------------------------
+// OPEN is a distinct state from EDIT. It reuses the existing .overlay/.modal
+// component (variant .open-modal) and only reads the object already available
+// in S.views; it never writes anything.
+function detailRow(label,value){
+  if(value==null||value==='')return '';
+  return '<dt>'+esc(label)+'</dt><dd>'+esc(value)+'</dd>';}
+function detailList(items){
+  return (items||[]).map(function(value){return esc(value);}).join('<br>');}
+function detailBlock(title,html){
+  if(!html)return '';
+  return '<section class="detail-block"><h4>'+esc(title)+'</h4>'+
+    '<div class="body">'+html+'</div></section>';}
+function openObjectHtml(o){
+  if(!o)return '';
+  let short='';
+  short+=detailRow('Type',o.kind);
+  short+=detailRow('Status',o.status);
+  short+=detailRow('Project',o.project);
+  short+=detailRow('Area / domain',o.domain);
+  short+=detailRow('Workstream',o.workstream);
+  short+=detailRow('Work package',o.work_package);
+  short+=detailRow('Readiness',o.readiness);
+  short+=detailRow('Urgency',o.urgency);
+  short+=detailRow('Impact',o.impact);
+  short+=detailRow('Priority',o.priority_rank?('#'+o.priority_rank+
+    ' (score '+o.priority_score+')'):'');
+  short+=detailRow('Estimated',fmtMin(o.estimated_minutes));
+  short+=detailRow('Actual',fmtMin(o.actual_minutes));
+  short+=detailRow('Deadline',o.deadline);
+  short+=detailRow('Evidence',o.evidence);
+  short+=detailRow('Confidence',o.confidence);
+  short+=detailRow('Provenance',o.provenance);
+  let long='';
+  long+=detailBlock('Why selected',o.priority_reasons.map(function(r){
+    return esc(r);}).join('<br>'));
+  long+=detailBlock('Next action',o.next_action?esc(o.next_action):'');
+  long+=detailBlock('Prerequisites',detailList(o.dependency_titles));
+  long+=detailBlock('Blockers',detailList(o.blocked_by_titles));
+  long+=detailBlock('Waiting for',detailList(o.waiting_for));
+  long+=detailBlock('Downstream',o.downstream.map(function(id){const t=
+    obj('task:'+id);return esc(t?t.title:id);}).join('<br>'));
+  long+=detailBlock('Deliverables',o.deliverable?esc(o.deliverable):'');
+  long+=detailBlock('Notes / description',o.notes?esc(o.notes):'');
+  long+=detailBlock('Outcomes',o.outcomes.map(function(r){
+    return esc(r.outcome+' @ '+String(r.recorded_at).slice(0,10));}).
+    join('<br>'));
+  return '<div class="detail-head"><strong>'+esc(o.title)+'</strong>'+
+    pill(o.kind,'badge-ACTIVE')+
+    (o.highlight?'<span class="pill">highlight: '+esc(o.highlight)+
+      '</span>':'')+'</div><dl class="detail-grid">'+short+'</dl>'+long;}
+function openObject(id){
+  const o=obj(id);if(!o)return;
+  S.openObject=id;
+  const body=$('open-body');if(body)body.innerHTML=openObjectHtml(o);
+  const overlay=$('open-overlay');if(overlay)overlay.classList.add('open');}
+function closeObjectDetail(){
+  S.openObject=null;
+  const overlay=$('open-overlay');if(overlay)overlay.classList.remove('open');}
+function openEditFromDetail(){
+  const id=S.openObject;if(!id)return;
+  closeObjectDetail();
+  if(id.indexOf('project:')===0)startProjectEdit(id.slice(8));
+  else openTask(id.slice(5));}
+// Central OPEN gesture: one capture listener on the persistent #view-root.
+// The first click keeps the existing selectObject/Inspector behaviour; a
+// second click on the same data-object-id within the window opens the detail.
+// It survives the DOM replacement caused by selectObject re-rendering.
+function objectIdFromEvent(ev){
+  if(!ev||!ev.target||!ev.target.closest)return null;
+  if(ev.target.closest('input,select,textarea,button,[data-no-open]'))
+    return null;
+  const el=ev.target.closest('[data-object-id]');
+  return el?el.getAttribute('data-object-id'):null;}
+function initObjectOpen(){
+  if(S.objectOpenInit)return;S.objectOpenInit=true;
+  const root=$('view-root');if(!root)return;
+  let lastId=null;let lastTime=0;
+  root.addEventListener('click',function(ev){
+    if(ev.button!=null&&ev.button!==0)return;
+    const id=objectIdFromEvent(ev);
+    if(!id){lastId=null;lastTime=0;return;}
+    const now=Date.now();
+    if(isRepeatClick(lastId,lastTime,id,now,400)){
+      lastId=null;lastTime=0;
+      openObject(id);return;}
+    lastId=id;lastTime=now;
+  },true);}
 async function setHighlight(id,colour){
   try{await api('/api/highlight','POST',{object_id:id,colour:colour});
     await refresh();}catch(err){notice(err.message);}}
@@ -1639,20 +2081,29 @@ async function recordOutcome(id,outcome){const o=obj('task:'+id);
   if(!confirm('Record '+outcome+' for "'+(o?o.title:id)+'"?'))return;
   try{await api('/api/tasks/'+encodeURIComponent(id)+'/outcome','POST',
     {outcome:outcome});await refresh();}catch(err){notice(err.message);}}
+async function reloadViewsData(){
+  try{const res=await api('/api/views');S.views=res;}
+  catch(err){notice(err.message);}}
+async function refreshDepsEditor(taskId){
+  await reloadViewsData();
+  const t=obj('task:'+taskId);
+  if(t&&S.inspectorEdit)renderDepsEditor(taskId,t);}
 async function addDependency(taskId){const dep=$('dep-add').value;
   try{await api('/api/tasks/'+encodeURIComponent(taskId)+'/dependency','POST',
-    {dependency:dep});await refresh();}catch(err){notice(err.message);}}
+    {dependency:dep});await refreshDepsEditor(taskId);}
+  catch(err){notice(err.message);}}
 async function removeDependency(taskId,dep){try{
   await api('/api/tasks/'+encodeURIComponent(taskId)+'/dependency/'+
-    encodeURIComponent(dep),'DELETE');await refresh();}catch(err){
-  notice(err.message);}}
+    encodeURIComponent(dep),'DELETE');await refreshDepsEditor(taskId);}
+  catch(err){notice(err.message);}}
 
 // --- forms (create / edit) ---------------------------------------------------
 function openProject(pid){selectObject('project:'+pid);return;
   // retained for compatibility with older call sites
 }
-function openProjectForm(pid){const p=pid&&obj('project:'+pid)?
-  obj('project:'+pid):{};const s=p;
+function openProjectForm(pid){
+  if(pid){startProjectEdit(pid);return;}
+  const s={};
   const opts=['ACTIVE','WAITING','BLOCKED','DEFERRED','COMPLETED'];
   const urg=['CRITICAL','HIGH','MEDIUM','LOW'];const imp=['HIGH','MEDIUM','LOW'];
   const sel=function(list,cur){return list.map(function(v){
@@ -1677,14 +2128,19 @@ function openProjectForm(pid){const p=pid&&obj('project:'+pid)?
   $('project-form-title').textContent=pid?'Edit project':'New project';
   $('project-form-overlay').classList.add('open');}
 function closeProjectForm(){$('project-form-overlay').classList.remove('open');}
-async function saveProject(){const id=$('pf-id').value;const body={
+function buildProjectBody(){return {
     name:$('pf-name').value,objective:$('pf-objective').value,
     status:$('pf-status').value,domain:$('pf-domain').value,
     urgency:$('pf-urgency').value,impact:$('pf-impact').value,
-    deadline:$('pf-deadline').value,description:$('pf-description').value};
+    deadline:$('pf-deadline').value,description:$('pf-description').value};}
+async function saveProject(){const id=$('pf-id').value;
+  const body=buildProjectBody();
   try{if(id){await api('/api/projects/'+encodeURIComponent(id),'POST',body);}
     else{await api('/api/projects','POST',body);}
-    closeProjectForm();await refresh();}catch(err){notice(err.message);}}
+    S.inspectorEdit=null;closeProjectForm();await refresh();}
+  catch(err){
+    if(!id&&handleDuplicate(err,'project',body))return;
+    notice(err.message);}}
 function openTaskForm(pid){document.getElementById('task-form-body').innerHTML=
     '<h3 style="margin:0">New task</h3>'+
     '<label>Title</label><input id="nt-title">'+
@@ -1708,49 +2164,84 @@ function openTaskForm(pid){document.getElementById('task-form-body').innerHTML=
     '</div><label>Next action</label><input id="nt-next">';
   $('task-form-overlay').classList.add('open');}
 function closeTaskForm(){$('task-form-overlay').classList.remove('open');}
-async function saveNewTask(){const estRaw=$('nt-est').value.trim();const body={
+function buildNewTaskBody(){const estRaw=$('nt-est').value.trim();const body={
     title:$('nt-title').value,project_id:$('nt-project').value,
     description:$('nt-desc').value,workstream:$('nt-workstream').value,
     deliverable:$('nt-deliverable').value,deadline:$('nt-deadline').value,
     urgency:$('nt-urgency').value,impact:$('nt-impact').value,
     next_action:$('nt-next').value};
   if(estRaw!==''){const n=Number(estRaw);if(!Number.isFinite(n)||n<1){
-    notice('estimated minutes must be a positive number');return;}
+    notice('estimated minutes must be a positive number');return null;}
     body.estimated_minutes=Math.round(n);}
+  return body;}
+async function saveNewTask(){const body=buildNewTaskBody();if(!body)return;
+  await submitNewTask(body);}
+async function submitNewTask(body){
   try{await api('/api/tasks','POST',body);closeTaskForm();await refresh();}
-  catch(err){notice(err.message);}}
+  catch(err){if(handleDuplicate(err,'task',body))return;notice(err.message);}}
+// --- duplicate decision (manual creation) ------------------------------------
+// The backend is authoritative: it returns a structured 409 when a create
+// matches an existing object. The UI never silently retries; it asks the
+// human to Open existing, Create anyway, or Cancel. "Create anyway" is the
+// only path that retries with an explicit allow_duplicate flag.
+const DUPLICATE_ERROR='DUPLICATE_MVP_OBJECT';
+function handleDuplicate(err,kind,body){
+  const data=err&&err.data;
+  if(!data||data.error!==DUPLICATE_ERROR||!data.duplicate)return false;
+  S.duplicatePending={kind:kind,body:body,existing:data.duplicate,busy:false,
+    endpoint:kind==='project'?'/api/projects':'/api/tasks'};
+  const el=$('duplicate-body');
+  if(el)el.innerHTML=duplicateHtml(kind,data.duplicate);
+  const overlay=$('duplicate-overlay');
+  if(overlay)overlay.classList.add('open');
+  return true;}
+function duplicateHtml(kind,existing){
+  const label=kind==='project'?'project':'task';
+  const project=existing.project?
+    '<dt>Project</dt><dd>'+esc(existing.project)+'</dd>':'';
+  return '<p>An existing '+label+' already has the same '+
+    (kind==='project'?'name':'title')+'.</p>'+
+    '<div class="card" style="border-left:4px solid #0b5cad">'+
+    '<strong>'+esc(existing.title||'')+'</strong><dl class="attr">'+
+    '<dt>Type</dt><dd>'+esc(existing.type||label)+'</dd>'+
+    '<dt>Status</dt><dd>'+esc(existing.status||'')+'</dd>'+project+
+    '</dl></div>'+
+    '<p class="muted">Open the existing object, create anyway, or cancel. '+
+    'Nothing is created until you decide.</p>';}
+function cancelDuplicate(){
+  S.duplicatePending=null;
+  const overlay=$('duplicate-overlay');
+  if(overlay)overlay.classList.remove('open');}
+function openExistingDuplicate(){
+  const pending=S.duplicatePending;
+  const id=pending&&pending.existing&&pending.existing.id;
+  if(!id)return;
+  S.duplicatePending=null;
+  const overlay=$('duplicate-overlay');
+  if(overlay)overlay.classList.remove('open');
+  closeTaskForm();closeProjectForm();
+  selectObject(id);openObject(id);}
+async function createDuplicateAnyway(){
+  const pending=S.duplicatePending;
+  if(!pending||pending.busy)return;
+  pending.busy=true;
+  const button=$('duplicate-create-btn');
+  if(button)button.disabled=true;
+  const body=Object.assign({},pending.body,{allow_duplicate:true});
+  try{
+    await api(pending.endpoint,'POST',body);
+    S.duplicatePending=null;
+    const overlay=$('duplicate-overlay');
+    if(overlay)overlay.classList.remove('open');
+    closeTaskForm();closeProjectForm();
+    await refresh();
+  }catch(err){notice(err.message);pending.busy=false;
+    if(button)button.disabled=false;}}
 function openTask(id){const t=obj('task:'+id);if(!t)return;
-  selectObject('task:'+id);
-  $('task-body').innerHTML='<h3 style="margin:0">'+esc(t.title)+'</h3>'+
-    '<div class="muted" style="margin:.3rem 0">'+pill(uiStatus(t),
-    'badge-'+uiStatus(t))+esc(t.project)+'</div>'+
-    '<div class="form-row"><div><label>Title</label><input id="tk-title" value="'+
-    esc(t.title)+'"></div><div><label>Status</label><select id="tk-status">'+
-    ['TODO','IN_PROGRESS','BLOCKED','WAITING','COMPLETED','DEFERRED','ABANDONED'].
-    map(function(v){return '<option'+(v===t.status?' selected':'')+'>'+v+
-    '</option>';}).join('')+'</select></div></div>'+
-    '<div class="form-row"><div><label>Workstream</label><input id="tk-workstream" '+
-    'value="'+esc(t.workstream||'')+'"></div><div><label>Deliverable</label>'+
-    '<input id="tk-deliverable" value="'+esc(t.deliverable||'')+'"></div></div>'+
-    '<div class="form-row"><div><label>Estimated minutes</label>'+
-    '<input id="tk-est" type="number" min="1" value="'+
-    (t.estimated_minutes==null?'':t.estimated_minutes)+'"></div>'+
-    '<div><label>Actual minutes</label><input id="tk-actual" type="number" '+
-    'min="0" value="'+(t.actual_minutes==null?'':t.actual_minutes)+'"></div></div>'+
-    '<div class="form-row"><div><label>Deadline</label><input id="tk-deadline" '+
-    'type="date" value="'+esc(t.deadline||'')+'"></div>'+
-    '<div><label>Waiting for (comma)</label><input id="tk-waiting" value="'+
-    esc(t.waiting_for.join(', '))+'"></div></div>'+
-    '<label>Blocked by (comma task ids)</label><input id="tk-blocked" value="'+
-    esc(t.blocked_by.join(', '))+'">'+
-    '<label>Next action</label><input id="tk-next" value="'+
-    esc(t.next_action||'')+'">'+
-    '<label>Description</label><textarea id="tk-desc" rows="2">'+
-    esc(t.description||'')+'</textarea>'+
-    '<h4>Dependencies</h4><div id="tk-deps"></div>';
-  renderDepsEditor(id,t);
-  $('task-overlay').classList.add('open');}
-function closeTask(){$('task-overlay').classList.remove('open');}
+  ensureInspectorOpen();
+  S.inspectorEdit={kind:'task',id:id};
+  selectObject('task:'+id);}
+function closeTask(){S.inspectorEdit=null;renderInspector();}
 function renderDepsEditor(taskId,t){const others=objects().filter(function(o){
     return o.kind==='task'&&o.ref_id!==taskId;}).sort(function(a,b){
     return a.title.localeCompare(b.title);});
@@ -1773,12 +2264,15 @@ async function saveTask(){const id=S.selection&&S.selection.indexOf('task:')===0
     deadline:$('tk-deadline').value,next_action:$('tk-next').value,
     description:$('tk-desc').value,waiting_for:csv($('tk-waiting').value),
     blocked_by:csv($('tk-blocked').value)};
+  const uEl=$('tk-urgency');if(uEl)body.urgency=uEl.value;
+  const iEl=$('tk-impact');if(iEl)body.impact=iEl.value;
   if(estRaw!=='')body.estimated_minutes=Math.round(Number(estRaw));
   else body.estimated_minutes=null;
   const actRaw=$('tk-actual').value.trim();
   if(actRaw!=='')body.actual_minutes=Math.round(Number(actRaw));
   try{await api('/api/tasks/'+encodeURIComponent(id),'POST',body);
-    closeTask();await refresh();}catch(err){notice(err.message);}}
+    S.inspectorEdit=null;closeTask();await refresh();}
+  catch(err){notice(err.message);}}
 
 // --- document import (factual first, explicit engine) ------------------------
 let importState={draft_id:null,analysis:null,validation:null,validated:false,
@@ -2271,7 +2765,7 @@ function decisionRow(o,rank,reasons){
   const why=(reasons&&reasons.length?reasons:(o.priority_reasons||[]))
     .map(function(r){return esc(r);}).join('<br>');
   return '<tr class="'+(S.selection===o.id?'selected':'')+'" '+
-    'onclick="selectObject(\''+o.id+'\')">'+
+    'data-object-id="'+o.id+'" onclick="selectObject(\''+o.id+'\')">'+
     '<td onclick="event.stopPropagation()"><input type="checkbox" '+
     'value="'+esc(o.ref_id)+'"'+(S.exportSelection[o.ref_id]?' checked':'')+
     ' onchange="exportPick(\''+o.ref_id+'\',this.checked)"></td>'+
@@ -2308,7 +2802,8 @@ function handoffRow(item,index){
   const blocked=item.blocked;
   const readiness=item.readiness||item.status;
   return '<tr class="'+(o&&S.selection===o.id?'selected':'')+'"'+
-    (o?' onclick="selectObject(\'task:'+esc(item.task_id)+'\')"':'')+'>'+
+    (o?' data-object-id="task:'+esc(item.task_id)+'" '+
+      'onclick="selectObject(\'task:'+esc(item.task_id)+'\')"':'')+'>'+
     '<td>'+pill(item.role,'')+'</td><td>'+index+'</td>'+
     '<td>'+esc(item.title)+'</td><td>'+esc(item.project)+'</td>'+
     '<td>'+pill(blocked?'BLOCKED':readiness,'badge-'+
@@ -2407,7 +2902,8 @@ function renderReady(){
         (((o&&o.priority_reasons)||[]).join('; ')||'ready') :
         (item.blocking_reason||(item.reasons||[]).join('; '));
       h+='<tr class="'+(o&&S.selection===o.id?'selected':'')+'"'+
-        (o?' onclick="selectObject(\''+o.id+'\')"':'')+'>'+
+        (o?' data-object-id="'+o.id+'" '+
+          'onclick="selectObject(\''+o.id+'\')"':'')+'>'+
         '<td>'+esc(item.title)+'</td><td>'+esc(item.project)+'</td>'+
         '<td>'+esc(item.urgency)+'</td><td>'+esc(item.impact)+'</td>'+
         '<td>'+fmtMin(item.effort_minutes)+'</td>'+
@@ -2457,7 +2953,8 @@ function candidateRow(c){
     '</td><td><input type="checkbox" '+(isOpt?'checked':'')+
     ' onchange="tomorrowPick(\''+esc(c.task_id)+'\',\'optional\',this.checked)">'+
     '</td><td>'+(c.priority_rank||'')+'</td>'+
-    '<td><a onclick="selectObject(\'task:'+esc(c.task_id)+'\')">'+
+    '<td><a data-object-id="task:'+esc(c.task_id)+'" '+
+    'onclick="selectObject(\'task:'+esc(c.task_id)+'\')">'+
     esc(c.title)+'</a></td>'+
     '<td>'+esc(c.project)+'</td>'+
     '<td>'+pill(c.blocked?'BLOCKED':c.readiness,'badge-'+
@@ -2590,20 +3087,23 @@ function renderWeek(){
     '</div>';
   h+='<h3>Deadlines this week</h3>';
   h+=wv.deadlines.length?'<ul>'+wv.deadlines.map(function(d){
-    return '<li><a onclick="selectObject(\'task:'+esc(d.task_id)+'\')">'+
+    return '<li><a data-object-id="task:'+esc(d.task_id)+'" '+
+      'onclick="selectObject(\'task:'+esc(d.task_id)+'\')">'+
       esc(d.title)+'</a> <span class="muted">'+esc(d.project)+' · due '+
       esc(d.deadline)+'</span></li>';}).join('')+'</ul>':
     '<p class="muted">none</p>';
   h+='<h3>Threats — blocked / waiting</h3>';
   h+=wv.threats.length?'<ul>'+wv.threats.map(function(t){
-    return '<li><a onclick="selectObject(\'task:'+esc(t.task_id)+'\')">'+
+    return '<li><a data-object-id="task:'+esc(t.task_id)+'" '+
+      'onclick="selectObject(\'task:'+esc(t.task_id)+'\')">'+
       esc(t.title)+'</a> '+pill(t.readiness,'badge-'+t.readiness)+
       ' <span class="muted">'+esc(t.reason)+'</span></li>';}).join('')+'</ul>':
     '<p class="muted">none threatening this week</p>';
   h+='<h3>Projects with no meaningful next action</h3>';
   h+=wv.projects_without_next_action.length?'<ul>'+
     wv.projects_without_next_action.map(function(p){
-      return '<li><a onclick="selectObject(\'project:'+esc(p.project_id)+
+      return '<li><a data-object-id="project:'+esc(p.project_id)+'" '+
+        'onclick="selectObject(\'project:'+esc(p.project_id)+
         '\')">'+esc(p.name)+'</a> <span class="muted">'+esc(p.reason)+
         '</span></li>';}).join('')+'</ul>':'<p class="muted">none</p>';
   h+='<h3>Tomorrow plan</h3>';
@@ -2876,6 +3376,9 @@ async function saveOutcomeForm(){
 // --- boot --------------------------------------------------------------------
 async function boot(){
   try{const c=await api('/api/cockpit');S.cockpit=c;}catch(e){/* ignore */}
+  initInspectorWorkspace();
+  initObjectOpen();
+  applyInspectorLayout();
   loadEngineCatalog();
   await refresh();}
 window.addEventListener('DOMContentLoaded',boot);
@@ -2901,6 +3404,8 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "<button class='small' onclick='openImport()'>Import document</button>",
         "<button class='small' onclick='openCapture()'>Quick Capture</button>",
         "<button class='small' onclick='openTomorrow()'>Plan tomorrow</button>",
+        "<button class='small' id='inspector-toggle' "
+        "onclick='toggleInspectorCollapsed()'>Inspector</button>",
         "<button class='small primary' onclick='boot()'>Refresh</button>",
         "</div></header>",
         "<nav id='viewbar'></nav>",
@@ -2916,8 +3421,17 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "</div></section>",
         "<div id='layout'>",
         "<main id='view-root'><p class='muted'>loading…</p></main>",
-        "<aside id='inspector'><h2>Inspector</h2>"
-        "<p class='muted'>Select an object.</p></aside>",
+        "<div id='inspector-splitter' role='separator' aria-orientation="
+        "'vertical' aria-label='Resize inspector' tabindex='0' "
+        "title='Drag to resize · double-click to reset'></div>",
+        "<aside id='inspector' aria-label='Inspector'>",
+        "<div class='inspector-head'><h2>Inspector</h2>"
+        "<button class='small' id='inspector-collapse-btn' "
+        "onclick='toggleInspectorCollapsed()' title='Collapse the inspector'>"
+        "Hide</button></div>",
+        "<div id='inspector-body' class='inspector-body'>"
+        "<p class='muted'>Select an object.</p></div>",
+        "</aside>",
         "</div>",
         # Project create/edit form
         "<div class='overlay' id='project-form-overlay'><div class='modal'>",
@@ -2927,14 +3441,7 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "<button onclick='closeProjectForm()'>Cancel</button>",
         "<button class='primary' onclick='saveProject()'>Save</button></div>",
         "</div></div>",
-        # Task edit form
-        "<div class='overlay' id='task-overlay'><div class='modal'>",
-        "<div id='task-body'></div>",
-        "<div class='bar' style='justify-content:flex-end'>",
-        "<button onclick='closeTask()'>Cancel</button>",
-        "<button class='primary' onclick='saveTask()'>Save</button></div>",
-        "</div></div>",
-        # New task form
+        # Task creation form (edit now happens in the Inspector)
         "<div class='overlay' id='task-form-overlay'><div class='modal'>",
         "<div id='task-form-body'></div>",
         "<div class='bar' style='justify-content:flex-end'>",
@@ -2998,6 +3505,24 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "<button onclick='closeReview()'>Cancel</button>",
         "<button class='primary' onclick='confirmReviewCarry()'>"
         "Carry selected into tomorrow</button>",
+        "</div></div></div>",
+        # Read-only OPEN detail surface (distinct from Edit)
+        "<div class='overlay' id='open-overlay'><div class='modal open-modal'>",
+        "<div id='open-body'></div>",
+        "<div class='bar' style='justify-content:flex-end'>",
+        "<button onclick='openEditFromDetail()'>Edit</button>",
+        "<button class='primary' onclick='closeObjectDetail()'>Close</button>",
+        "</div></div></div>",
+        # Manual-creation duplicate decision (DETECT -> INFORM -> DECIDE)
+        "<div class='overlay' id='duplicate-overlay'><div class='modal' "
+        "style='max-width:640px'><h3>Possible duplicate</h3>",
+        "<div id='duplicate-body'></div>",
+        "<div class='bar' style='justify-content:flex-end'>",
+        "<button class='small' onclick='openExistingDuplicate()'>"
+        "Open existing</button>",
+        "<button class='primary' id='duplicate-create-btn' "
+        "onclick='createDuplicateAnyway()'>Create anyway</button>",
+        "<button class='small' onclick='cancelDuplicate()'>Cancel</button>",
         "</div></div></div>",
         "<script>", PAGE_JS, "</script>",
         "</body></html>",
