@@ -125,6 +125,12 @@ whole-day number: at 15:00 the cockpit shows `remaining 1h24` and the planner
 only packs what still fits, spilling the rest into the following days. Future
 days keep the full daily budget. See ADR-032.
 
+The week is also realistic: `Capacity.working_days` (Monday–Friday by
+default), an explicit `days_off` list, and calendar events with an optional
+**weekly** repeat. Non-working days have zero capacity and the plan spills
+into the next working day. The cockpit's **Today** view has an **Agenda**
+block to add, repeat or delete events and to toggle a day off. See ADR-034.
+
 ### Quick Capture (daily input)
 
 ```bash

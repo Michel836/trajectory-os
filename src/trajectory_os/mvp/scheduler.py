@@ -64,6 +64,7 @@ class DayBudget:
 
     day: str
     is_today: bool
+    is_working_day: bool
     total_capacity: int
     window_minutes: int
     elapsed_minutes: int
@@ -79,6 +80,7 @@ class DayBudget:
         return {
             "day": self.day,
             "is_today": self.is_today,
+            "is_working_day": self.is_working_day,
             "total_capacity": self.total_capacity,
             "window_minutes": self.window_minutes,
             "elapsed_minutes": self.elapsed_minutes,
@@ -107,6 +109,7 @@ class DayPlan:
     unknown_effort: tuple[priority.PrioritizedTask, ...]
     calendar: tuple[model.CalendarEvent, ...]
     is_today: bool
+    is_working_day: bool
     window_minutes: int
     elapsed_minutes: int
     remaining_window_minutes: int
@@ -135,6 +138,7 @@ class DayPlan:
                                for item in self.unknown_effort],
             "calendar": [event.to_dict() for event in self.calendar],
             "is_today": self.is_today,
+            "is_working_day": self.is_working_day,
             "window_minutes": self.window_minutes,
             "elapsed_minutes": self.elapsed_minutes,
             "remaining_window_minutes": self.remaining_window_minutes,
@@ -160,10 +164,27 @@ class WeekPlan:
         }
 
 
-def _events_on(portfolio: model.Portfolio, day: str) -> tuple[model.CalendarEvent, ...]:
-    return tuple(sorted(
-        (event for event in portfolio.calendar if event.day == day),
-        key=lambda event: (event.start_minutes, event.event_id)))
+def _events_on(portfolio: model.Portfolio,
+               day: date) -> tuple[model.CalendarEvent, ...]:
+    """One-off events on ``day`` plus weekly recurrences landing on it."""
+    events: list[model.CalendarEvent] = []
+    for event in portfolio.calendar:
+        if event.day == day.isoformat():
+            events.append(event)
+            continue
+        if event.recurrence and event.day <= day.isoformat():
+            start = date.fromisoformat(event.day)
+            if start.weekday() == day.weekday():
+                events.append(event)
+    return tuple(sorted(events,
+                        key=lambda event: (event.start_minutes,
+                                           event.event_id)))
+
+
+def _is_working_day(portfolio: model.Portfolio, day: date) -> bool:
+    if day.isoformat() in portfolio.days_off:
+        return False
+    return portfolio.capacity.is_working_day(day.weekday())
 
 
 def _event_minutes(events: tuple[model.CalendarEvent, ...]) -> int:
@@ -200,15 +221,35 @@ def day_budget(portfolio: model.Portfolio, day: date, *,
     capacity = portfolio.capacity
     day_str = day.isoformat()
     window = capacity.window_minutes
-    events = _events_on(portfolio, day_str)
+    events = _events_on(portfolio, day)
     calendar_minutes = _event_minutes(events)
+
+    now = now or datetime.now()
+    is_today = now.date() == day
+    is_working = _is_working_day(portfolio, day)
+
+    # A non-working day (weekend, explicit day off) has no plan capacity, but
+    # its events are still reported so the agenda stays truthful.
+    if not is_working:
+        return DayBudget(
+            day=day_str,
+            is_today=is_today,
+            is_working_day=False,
+            total_capacity=capacity.minutes_per_day,
+            window_minutes=window,
+            elapsed_minutes=0,
+            remaining_window_minutes=0,
+            calendar_minutes=calendar_minutes,
+            remaining_calendar_minutes=0,
+            buffer_minutes=0,
+            plan_capacity=0,
+            remaining_buffer_minutes=0,
+            remaining_plan_capacity=0,
+        )
 
     available = max(0, capacity.minutes_per_day - calendar_minutes)
     buffer_minutes = int(round(available * float(capacity.buffer_ratio)))
     plan_capacity = max(0, available - buffer_minutes)
-
-    now = now or datetime.now()
-    is_today = now.date() == day
 
     # Any day that is not today keeps the whole window: its remaining budget
     # is exactly its nominal budget. This keeps future-day planning unchanged.
@@ -216,6 +257,7 @@ def day_budget(portfolio: model.Portfolio, day: date, *,
         return DayBudget(
             day=day_str,
             is_today=False,
+            is_working_day=True,
             total_capacity=capacity.minutes_per_day,
             window_minutes=window,
             elapsed_minutes=0,
@@ -255,6 +297,7 @@ def day_budget(portfolio: model.Portfolio, day: date, *,
     return DayBudget(
         day=day_str,
         is_today=is_today,
+        is_working_day=True,
         total_capacity=capacity.minutes_per_day,
         window_minutes=window,
         elapsed_minutes=elapsed,
@@ -303,6 +346,7 @@ def _day_plan(budget: DayBudget,
         unknown_effort=tuple(unknown_effort),
         calendar=calendar,
         is_today=budget.is_today,
+        is_working_day=budget.is_working_day,
         window_minutes=budget.window_minutes,
         elapsed_minutes=budget.elapsed_minutes,
         remaining_window_minutes=budget.remaining_window_minutes,
@@ -345,7 +389,7 @@ def plan_day(portfolio: model.Portfolio,
         planned.append(_item_for(item.task_id, ranked_map, tasks, projects))
         used += task.effort_minutes
 
-    return _day_plan(budget, _events_on(portfolio, budget.day), planned,
+    return _day_plan(budget, _events_on(portfolio, day), planned,
                      deferred, unknown_effort, used)
 
 
@@ -397,7 +441,7 @@ def plan_week(portfolio: model.Portfolio,
             scheduled.add(item.task_id)
             used += task.effort_minutes
 
-        day_plans.append(_day_plan(budget, _events_on(portfolio, budget.day),
+        day_plans.append(_day_plan(budget, _events_on(portfolio, day),
                                    planned, deferred, unknown_effort, used))
 
     # Tasks that never fit before a deadline inside the plan window are at

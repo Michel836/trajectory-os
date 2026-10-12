@@ -18,7 +18,7 @@ def _portfolio(tasks: tuple[model.Task, ...],
         tasks=tasks, calendar=calendar)
 
 
-TODAY = date(2026, 9, 20)
+TODAY = date(2026, 9, 21)  # a Monday (working day)
 
 
 def test_ranking_orders_by_urgency_and_deadline() -> None:
@@ -115,7 +115,7 @@ def test_week_plan_respects_deadline_and_flags_risk() -> None:
 
 # --- time-of-day aware capacity ------------------------------------------------
 
-AFTERNOON = datetime(2026, 9, 20, 15, 0)
+AFTERNOON = datetime(2026, 9, 21, 15, 0)
 
 
 def test_day_budget_future_day_is_nominal() -> None:
@@ -140,14 +140,14 @@ def test_day_budget_prorates_remaining_capacity_today() -> None:
 
 def test_day_budget_at_window_start_is_fully_available() -> None:
     budget = scheduler.day_budget(_portfolio(tasks=()), TODAY,
-                                  now=datetime(2026, 9, 20, 9, 0))
+                                  now=datetime(2026, 9, 21, 9, 0))
     assert budget.elapsed_minutes == 0
     assert budget.remaining_plan_capacity == budget.plan_capacity == 252
 
 
 def test_day_budget_after_window_end_is_zero() -> None:
     budget = scheduler.day_budget(_portfolio(tasks=()), TODAY,
-                                  now=datetime(2026, 9, 20, 19, 0))
+                                  now=datetime(2026, 9, 21, 19, 0))
     assert budget.remaining_window_minutes == 0
     assert budget.remaining_plan_capacity == 0
 
