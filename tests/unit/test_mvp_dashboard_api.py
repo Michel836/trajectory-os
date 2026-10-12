@@ -492,6 +492,27 @@ def test_api_event_create_then_delete(tmp_path: object) -> None:
     assert portfolio.calendar == ()
 
 
+def test_api_create_and_materialize_routine(tmp_path: object) -> None:
+    from datetime import date
+
+    root = str(tmp_path)
+    _seed(root)
+    today = date.today()
+    with _server(root) as port:
+        status, _ = _request(port, "POST", "/api/routines", {
+            "title": "Standup", "project_id": "p1",
+            "weekdays": [today.weekday()]})
+        assert status == 200
+        status, views = _request(port, "GET", "/api/views")
+        assert status == 200
+        assert any(r["title"] == "Standup"
+                   for r in views["routines"])  # type: ignore[index]
+        status, result = _request(port, "POST", "/api/routines/materialize",
+                                  {"day": today.isoformat()})
+        assert status == 200
+        assert result["created_tasks"] == 1
+
+
 def test_api_day_off_toggle(tmp_path: object) -> None:
     from datetime import date
 

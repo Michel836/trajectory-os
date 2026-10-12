@@ -544,6 +544,21 @@ class Dashboard:
     def set_day_off(self, day: str, off: bool) -> dict[str, Any]:
         return mutations.set_day_off(self.root, day, off=off)
 
+    # --- routines ------------------------------------------------------------
+
+    def create_routine(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return mutations.create_routine(self.root, payload)
+
+    def update_routine(self, routine_id: str,
+                       payload: Mapping[str, Any]) -> dict[str, Any]:
+        return mutations.update_routine(self.root, routine_id, payload)
+
+    def delete_routine(self, routine_id: str) -> dict[str, Any]:
+        return mutations.delete_routine(self.root, routine_id)
+
+    def materialize_routines(self, day: str) -> dict[str, Any]:
+        return mutations.materialize_routines(self.root, day)
+
 
 def _record_outcome(root: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     task_id = payload.get("task_id")
@@ -825,6 +840,18 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 if not isinstance(day, str) or not day:
                     raise model.MvpError(model.E_MALFORMED, "day required")
                 return app.set_day_off(day, bool(payload.get("off", True)))
+            if parts == ["api", "routines"]:
+                return app.create_routine(payload)
+            if parts == ["api", "routines", "materialize"]:
+                day = payload.get("day")
+                if not isinstance(day, str) or not day:
+                    raise model.MvpError(model.E_MALFORMED, "day required")
+                return app.materialize_routines(day)
+            if len(parts) == 4 and parts[:2] == ["api", "routines"] \
+                    and parts[3] == "delete":
+                return app.delete_routine(parts[2])
+            if len(parts) == 3 and parts[:2] == ["api", "routines"]:
+                return app.update_routine(parts[2], payload)
             if parts == ["api", "projects"]:
                 return app.create_project(payload)
             if len(parts) == 4 and parts[:2] == ["api", "projects"] \
