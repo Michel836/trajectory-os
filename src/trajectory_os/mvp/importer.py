@@ -26,7 +26,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import unicodedata
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -36,37 +35,34 @@ from urllib import error, request
 
 from trajectory_os.intelligence import model as intel_model
 from trajectory_os.mvp import document, import_engine, model, store
+from trajectory_os.mvp.classification import (
+    AREA,
+    BLOCKER,
+    DELIVERABLE,
+    IDEA,
+    KINDS,
+    NOTE_LIKE,
+    PROJECT,
+    PROJECT_LIKE,
+    QUESTION,
+    REFERENCE,
+    RESOURCE,
+    SOMEDAY,
+    SUBTASK,
+    TASK,
+    TASK_LIKE,
+    WAITING,
+    WORK_PACKAGE,
+    WORKSTREAM,
+    normalize_text,
+)
 
 # --- semantic taxonomy --------------------------------------------------------
-
-AREA = "AREA"
-PROJECT = "PROJECT"
-WORKSTREAM = "WORKSTREAM"
-WORK_PACKAGE = "WORK_PACKAGE"
-TASK = "TASK"
-SUBTASK = "SUBTASK"
-DELIVERABLE = "DELIVERABLE"
-IDEA = "IDEA"
-SOMEDAY = "SOMEDAY"
-WAITING = "WAITING"
-BLOCKER = "BLOCKER"
-QUESTION = "QUESTION"
-RESOURCE = "RESOURCE"
-REFERENCE = "REFERENCE"
-
-KINDS = frozenset({
-    AREA, PROJECT, WORKSTREAM, WORK_PACKAGE, TASK, SUBTASK, DELIVERABLE,
-    IDEA, SOMEDAY, WAITING, BLOCKER, QUESTION, RESOURCE, REFERENCE,
-})
-
-#: Kinds that become durable Project entities.
-PROJECT_LIKE = frozenset({AREA, PROJECT, IDEA, SOMEDAY})
-#: Kinds that become durable Task entities.
-TASK_LIKE = frozenset({TASK, SUBTASK, WAITING, BLOCKER})
-#: Kinds that are grouping labels (become workstream/deliverable fields).
-GROUPING = frozenset({WORKSTREAM, WORK_PACKAGE, DELIVERABLE})
-#: Kinds preserved as notes/references only.
-NOTE_LIKE = frozenset({QUESTION, RESOURCE, REFERENCE})
+#
+# The taxonomy and its durable-entity mapping are defined once in
+# ``trajectory_os.mvp.classification`` (ADR-033) and imported above; the names
+# remain bound at module level so existing ``importer.<NAME>`` references keep
+# working.
 
 # --- evidence -----------------------------------------------------------------
 
@@ -537,10 +533,8 @@ def _unique_id(existing: set[str], base: str) -> str:
     return candidate
 
 
-def _normalize(value: str) -> str:
-    text = unicodedata.normalize("NFKD", value.lower())
-    text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    return re.sub(r"[^a-z0-9]+", " ", text).strip()
+#: Backwards-compatible alias: normalization lives in ``classification``.
+_normalize = normalize_text
 
 
 def _significant_tokens(value: str) -> set[str]:
@@ -1820,11 +1814,6 @@ def _similarity(a: str, b: str) -> float:
 # Quick Capture (``trajectory_os.mvp.capture``) needs exactly the same
 # deterministic matching semantics as the document importer. These thin
 # wrappers keep one source of truth instead of duplicating the algorithm.
-
-
-def normalize_text(value: str) -> str:
-    """Return the accent/punctuation-insensitive matching form of ``value``."""
-    return _normalize(value)
 
 
 def text_similarity(a: str, b: str) -> float:
