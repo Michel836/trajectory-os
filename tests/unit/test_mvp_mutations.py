@@ -280,3 +280,115 @@ def test_task_status_mutation_recomputes_downstream_readiness(
     assert portfolio is not None
     after = readiness.evaluate(portfolio)
     assert next(i for i in after if i.task_id == "b").ready is True
+
+
+# --- duplicate protection on manual creation ----------------------------------
+
+
+def _seed_french(tmp_path: object) -> None:
+    store.save_portfolio(_root(tmp_path), model.Portfolio(
+        schema_version=model.SCHEMA_VERSION, name="t",
+        projects=(
+            model.Project(project_id="p1", name="Recherche emploi",
+                          objective="trouver un poste"),
+            model.Project(project_id="p2", name="Autre projet",
+                          objective="autre"),
+        ),
+        tasks=(),
+    ))
+
+
+def test_create_task_unique_then_duplicate_conflicts(tmp_path: object) -> None:
+    _seed_french(tmp_path)
+    title = "Fixer 3 à 5 types de postes cibles"
+    first = mutations.create_task(_root(tmp_path),
+                                  {"project_id": "p1", "title": title})
+    assert first["task_id"]
+    with pytest.raises(model.MvpError) as exc:
+        mutations.create_task(_root(tmp_path),
+                              {"project_id": "p1", "title": title})
+    assert exc.value.code == model.E_DUPLICATE_OBJECT
+    duplicate = exc.value.metadata["duplicate"]
+    assert duplicate["id"] == "task:" + first["task_id"]
+    assert duplicate["type"] == "task"
+    assert duplicate["title"] == title
+    assert duplicate["project_id"] == "p1"
+    # nothing was created by the rejected attempt
+    portfolio = store.load_portfolio(_root(tmp_path))
+    assert portfolio is not None
+    assert sum(1 for t in portfolio.tasks if t.project_id == "p1") == 1
+
+
+def test_create_task_same_normalized_title_conflicts(tmp_path: object) -> None:
+    _seed_french(tmp_path)
+    mutations.create_task(_root(tmp_path),
+                          {"project_id": "p1",
+                           "title": "Préparer Portfolio APEC"})
+    with pytest.raises(model.MvpError) as exc:
+        mutations.create_task(_root(tmp_path),
+                              {"project_id": "p1",
+                               "title": "  preparer   portfolio apec "})
+    assert exc.value.code == model.E_DUPLICATE_OBJECT
+
+
+def test_create_task_same_title_other_project_allowed(tmp_path: object) -> None:
+    _seed_french(tmp_path)
+    title = "Fixer 3 à 5 types de postes cibles"
+    mutations.create_task(_root(tmp_path),
+                          {"project_id": "p1", "title": title})
+    second = mutations.create_task(_root(tmp_path),
+                                   {"project_id": "p2", "title": title})
+    assert second["project_id"] == "p2"
+
+
+def test_create_task_allow_duplicate_bypasses_and_keeps_id_unique(
+        tmp_path: object) -> None:
+    _seed_french(tmp_path)
+    title = "Fixer 3 à 5 types de postes cibles"
+    first = mutations.create_task(_root(tmp_path),
+                                  {"project_id": "p1", "title": title})
+    second = mutations.create_task(_root(tmp_path),
+                                   {"project_id": "p1", "title": title,
+                                    "allow_duplicate": True})
+    assert second["task_id"] != first["task_id"]
+    portfolio = store.load_portfolio(_root(tmp_path))
+    assert portfolio is not None
+    assert sum(1 for t in portfolio.tasks if t.project_id == "p1") == 2
+
+
+def test_create_project_same_normalized_name_conflicts(tmp_path: object) -> None:
+    _seed_french(tmp_path)
+    with pytest.raises(model.MvpError) as exc:
+        mutations.create_project(_root(tmp_path), {
+            "name": "  recherche   EMPLOI ", "objective": "o"})
+    assert exc.value.code == model.E_DUPLICATE_OBJECT
+    duplicate = exc.value.metadata["duplicate"]
+    assert duplicate["id"] == "project:p1"
+    assert duplicate["type"] == "project"
+
+
+def test_create_project_allow_duplicate_bypasses(tmp_path: object) -> None:
+    _seed_french(tmp_path)
+    result = mutations.create_project(_root(tmp_path), {
+        "name": "Recherche emploi", "objective": "o",
+        "allow_duplicate": True})
+    assert result["project_id"] != "p1"
+
+
+def test_historical_duplicates_remain_loadable(tmp_path: object) -> None:
+    # A portfolio created before this protection may already contain duplicates.
+    store.save_portfolio(_root(tmp_path), model.Portfolio(
+        schema_version=model.SCHEMA_VERSION, name="t",
+        projects=(
+            model.Project(project_id="p1", name="Same", objective="o"),
+            model.Project(project_id="p2", name="Same", objective="o"),
+        ),
+        tasks=(
+            model.Task(task_id="a", project_id="p1", title="Dup"),
+            model.Task(task_id="b", project_id="p1", title="Dup"),
+        ),
+    ))
+    loaded = store.load_portfolio(_root(tmp_path))
+    assert loaded is not None
+    assert len(loaded.projects) == 2
+    assert len(loaded.tasks) == 2

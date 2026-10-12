@@ -581,9 +581,10 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
             self._send(status, body, "application/json; charset=utf-8")
 
         def _send_error(self, exc: model.MvpError) -> None:
-            self._send_json(HTTPStatus.CONFLICT,
-                            {"status": "ERROR", "error": exc.code,
-                             "detail": exc.detail})
+            payload: dict[str, Any] = {"status": "ERROR", "error": exc.code,
+                                      "detail": exc.detail}
+            payload.update(exc.metadata)
+            self._send_json(HTTPStatus.CONFLICT, payload)
 
         def _guard(self) -> bool:
             if not _host_is_loopback(self.headers.get("Host")):

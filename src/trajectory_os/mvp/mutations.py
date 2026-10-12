@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from trajectory_os.intelligence import model as intel_model
-from trajectory_os.mvp import model, outcomes, store
+from trajectory_os.mvp import importer, model, outcomes, store
 
 #: Fields the dashboard may edit on a project (fail closed on anything else).
 PROJECT_EDITABLE = frozenset({
@@ -111,6 +111,47 @@ def _unique_id(existing: set[str], base: str) -> str:
     return candidate
 
 
+# --- duplicate protection (manual creation) -----------------------------------
+#
+# Manual creation must not silently create an object that already exists. The
+# comparison is the exact normalized form produced by the importer (the single
+# source of truth shared with Capture), so casing, accents and punctuation are
+# neutralised. Fuzzy similarity is deliberately NOT used here: only an exact
+# normalized title (same project for tasks) is a strong duplicate. The caller
+# can still create an intentional duplicate with ``allow_duplicate=True``.
+
+
+def _normalized(value: str) -> str:
+    return importer.normalize_text(value)
+
+
+def _duplicate_task(portfolio: model.Portfolio, title: str,
+                    project_id: str) -> model.Task | None:
+    needle = _normalized(title)
+    for task in portfolio.tasks:
+        if task.project_id == project_id \
+                and _normalized(task.title) == needle:
+            return task
+    return None
+
+
+def _duplicate_project(portfolio: model.Portfolio,
+                       name: str) -> model.Project | None:
+    needle = _normalized(name)
+    for project in portfolio.projects:
+        if _normalized(project.name) == needle:
+            return project
+    return None
+
+
+def _duplicate_metadata(*, obj_id: str, kind: str, ref_id: str,
+                        title: str, status: str, project_id: str,
+                        project: str) -> dict[str, Any]:
+    return {"duplicate": {
+        "id": obj_id, "type": kind, "ref_id": ref_id, "title": title,
+        "status": status, "project_id": project_id, "project": project}}
+
+
 def _reject_unknown(payload: Mapping[str, Any], allowed: frozenset[str],
                     context: str) -> None:
     for key in payload:
@@ -130,9 +171,22 @@ def create_project(root: str | Path,
                    payload: Mapping[str, Any]) -> dict[str, Any]:
     """Create one project; ``project_id`` is optional (slug generated)."""
     portfolio = _load(root)
-    _reject_unknown(payload, PROJECT_EDITABLE | {"project_id"}, "project")
+    _reject_unknown(payload,
+                    PROJECT_EDITABLE | {"project_id", "allow_duplicate"},
+                    "project")
     name = _required_str(payload, "name")
     objective = _required_str(payload, "objective")
+    if payload.get("allow_duplicate") is not True:
+        duplicate = _duplicate_project(portfolio, name)
+        if duplicate is not None:
+            raise model.MvpError(
+                model.E_DUPLICATE_OBJECT,
+                "A project with the same normalized name already exists.",
+                metadata=_duplicate_metadata(
+                    obj_id="project:" + duplicate.project_id, kind="project",
+                    ref_id=duplicate.project_id, title=duplicate.name,
+                    status=duplicate.status,
+                    project_id=duplicate.project_id, project=duplicate.name))
     existing = {p.project_id for p in portfolio.projects}
     project_id = payload.get("project_id")
     if not isinstance(project_id, str) or not project_id.strip():
@@ -192,9 +246,24 @@ def create_task(root: str | Path,
                 payload: Mapping[str, Any]) -> dict[str, Any]:
     """Create one task; ``task_id`` is optional (slug generated)."""
     portfolio = _load(root)
-    _reject_unknown(payload, TASK_EDITABLE | {"task_id"}, "task")
+    _reject_unknown(payload,
+                    TASK_EDITABLE | {"task_id", "allow_duplicate"}, "task")
     title = _required_str(payload, "title")
     project_id = _required_str(payload, "project_id")
+    if payload.get("allow_duplicate") is not True:
+        duplicate = _duplicate_task(portfolio, title, project_id)
+        if duplicate is not None:
+            project = portfolio.project_map().get(project_id)
+            raise model.MvpError(
+                model.E_DUPLICATE_OBJECT,
+                "A task with the same normalized title already exists in "
+                "this project.",
+                metadata=_duplicate_metadata(
+                    obj_id="task:" + duplicate.task_id, kind="task",
+                    ref_id=duplicate.task_id, title=duplicate.title,
+                    status=duplicate.status,
+                    project_id=duplicate.project_id,
+                    project=project.name if project is not None else ""))
     existing = {t.task_id for t in portfolio.tasks}
     task_id = payload.get("task_id")
     if not isinstance(task_id, str) or not task_id.strip():

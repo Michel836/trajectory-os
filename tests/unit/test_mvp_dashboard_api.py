@@ -341,3 +341,71 @@ def test_visual_endpoints_do_not_mutate_portfolio(tmp_path: object) -> None:
         _request(port, "POST", "/api/highlight",
                  {"object_id": "task:a", "colour": "blue"})
     assert path.read_bytes() == before
+
+
+# --- duplicate protection over the API ---------------------------------------
+
+
+def test_create_task_unique_then_409_then_bypass(tmp_path: object) -> None:
+    root = str(tmp_path)
+    _seed(root)
+    title = "Fixer 3 à 5 types de postes cibles"
+    with _server(root) as port:
+        status, created = _request(port, "POST", "/api/tasks",
+                                   {"project_id": "p1", "title": title})
+        assert status == 200
+        assert created["task_id"]
+        status, conflict = _request(port, "POST", "/api/tasks",
+                                    {"project_id": "p1", "title": title})
+        assert status == 409
+        assert conflict["error"] == model.E_DUPLICATE_OBJECT
+        duplicate = conflict["duplicate"]
+        assert duplicate["id"] == "task:" + str(created["task_id"])
+        assert duplicate["type"] == "task"
+        assert duplicate["title"] == title
+        assert duplicate["project_id"] == "p1"
+        # a plain retry without the explicit flag still conflicts
+        status, _ = _request(port, "POST", "/api/tasks",
+                             {"project_id": "p1", "title": title})
+        assert status == 409
+        # only an explicit allow_duplicate creates
+        status, again = _request(port, "POST", "/api/tasks",
+                                 {"project_id": "p1", "title": title,
+                                  "allow_duplicate": True})
+        assert status == 200
+        assert again["task_id"] != created["task_id"]
+    portfolio = store.load_portfolio(root)
+    assert portfolio is not None
+    assert sum(1 for t in portfolio.tasks if t.title == title) == 2
+
+
+def test_create_project_409_and_bypass(tmp_path: object) -> None:
+    root = str(tmp_path)
+    _seed(root)
+    with _server(root) as port:
+        status, conflict = _request(port, "POST", "/api/projects",
+                                    {"name": "P1", "objective": "o"})
+        assert status == 409
+        assert conflict["error"] == model.E_DUPLICATE_OBJECT
+        assert conflict["duplicate"]["id"] == "project:p1"
+        status, created = _request(port, "POST", "/api/projects",
+                                   {"name": "P1", "objective": "o",
+                                    "allow_duplicate": True})
+        assert status == 200
+        assert created["project_id"] != "p1"
+
+
+def test_duplicate_conflict_does_not_mutate_the_portfolio(
+        tmp_path: object) -> None:
+    root = str(tmp_path)
+    _seed(root)
+    path = store.default_portfolio_path(root)
+    before = path.read_bytes()
+    with _server(root) as port:
+        status, _ = _request(port, "POST", "/api/tasks",
+                             {"project_id": "p1", "title": "A"})
+        assert status == 409
+        status, _ = _request(port, "POST", "/api/projects",
+                             {"name": "P1", "objective": "o"})
+        assert status == 409
+    assert path.read_bytes() == before

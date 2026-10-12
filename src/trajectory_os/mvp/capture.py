@@ -54,6 +54,13 @@ CATEGORIES = frozenset({
     CAT_EXISTING_TASK, CAT_DUPLICATE,
 })
 
+#: Categories where the human explicitly confirmed a matched/duplicate item.
+#: Accepting such an item is an intentional decision, so Capture must be able
+#: to bypass the manual-create duplicate guard explicitly (never blanketly).
+_EXPLICIT_DUPLICATE_CATEGORIES = frozenset({
+    CAT_DUPLICATE, CAT_EXISTING_TASK, CAT_EXISTING_PROJECT,
+})
+
 # --- review actions (also used by the confirm endpoint) -----------------------
 
 ACT_ACCEPT = "accept"
@@ -480,6 +487,8 @@ def _create_task(root: str | Path, item: CaptureItem,
         "title": decision.title or item.title,
         "description": decision.description or "",
     }
+    if item.category in _EXPLICIT_DUPLICATE_CATEGORIES:
+        payload["allow_duplicate"] = True
     if decision.workstream:
         payload["workstream"] = decision.workstream
     if decision.deliverable:
@@ -491,10 +500,12 @@ def _create_task(root: str | Path, item: CaptureItem,
 def _create_project(root: str | Path, item: CaptureItem,
                     decision: CaptureDecision) -> str:
     title = decision.title or item.title
-    payload = {
+    payload: dict[str, Any] = {
         "name": title,
         "objective": decision.description or item.text or title,
     }
+    if item.category in _EXPLICIT_DUPLICATE_CATEGORIES:
+        payload["allow_duplicate"] = True
     result = mutations.create_project(root, payload)
     return str(result["project_id"])
 

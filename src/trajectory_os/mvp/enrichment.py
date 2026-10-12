@@ -472,6 +472,7 @@ def _apply(
             "title": title,
             "next_action": title,
             "description": suggestion.detail,
+            "allow_duplicate": True,
         })
         return {"task_id": result["task_id"], "applied_as": NEXT_ACTION}
     payload: dict[str, Any] = {"project_id": project_id, "title": title,
@@ -480,6 +481,8 @@ def _apply(
         payload["workstream"] = title
     elif suggestion.kind in (WORK_PACKAGE, DELIVERABLE):
         payload["deliverable"] = title
+    # Accepting a generated suggestion is an explicit human decision.
+    payload["allow_duplicate"] = True
     result = mutations.create_task(root, payload)
     return {"task_id": result["task_id"], "applied_as": suggestion.kind}
 

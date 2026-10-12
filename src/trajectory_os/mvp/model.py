@@ -138,6 +138,9 @@ E_MALFORMED = "MALFORMED_MVP"
 E_UNSUPPORTED_VERSION = "UNSUPPORTED_MVP_SCHEMA"
 E_UNKNOWN_ID = "UNKNOWN_MVP_ID"
 E_DUPLICATE_ID = "DUPLICATE_MVP_ID"
+#: A manual create matches an existing object's normalized title/name (the
+#: caller may still create it explicitly with ``allow_duplicate``).
+E_DUPLICATE_OBJECT = "DUPLICATE_MVP_OBJECT"
 E_UNKNOWN_PROJECT = "UNKNOWN_MVP_PROJECT"
 E_UNKNOWN_RESOURCE = "UNKNOWN_MVP_RESOURCE"
 E_SELF_REFERENCE = "MVP_SELF_REFERENCE"
@@ -149,10 +152,13 @@ E_OVERFLOW = "MVP_OVERFLOW"
 class MvpError(Exception):
     """An MVP contract violation (fail closed)."""
 
-    def __init__(self, code: str, detail: str = "") -> None:
+    def __init__(self, code: str, detail: str = "", *,
+                 metadata: Mapping[str, Any] | None = None) -> None:
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
         self.detail = detail
+        #: Optional structured payload surfaced verbatim by the API.
+        self.metadata: dict[str, Any] = dict(metadata or {})
 
 
 def _fail(code: str, detail: str = "") -> NoReturn:
