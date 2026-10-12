@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from trajectory_os.mvp import model, priority, scheduler
 
@@ -111,3 +111,105 @@ def test_week_plan_respects_deadline_and_flags_risk() -> None:
     # 300m does not fit any day (max 252 plan capacity) before the deadline.
     assert len(week.at_risk) == 1
     assert week.at_risk[0].task_id == "big"
+
+
+# --- time-of-day aware capacity ------------------------------------------------
+
+AFTERNOON = datetime(2026, 9, 20, 15, 0)
+
+
+def test_day_budget_future_day_is_nominal() -> None:
+    budget = scheduler.day_budget(_portfolio(tasks=()), TODAY + timedelta(days=1),
+                                  now=AFTERNOON)
+    assert budget.is_today is False
+    assert budget.plan_capacity == 252
+    assert budget.remaining_plan_capacity == 252
+    assert budget.remaining_buffer_minutes == 108
+
+
+def test_day_budget_prorates_remaining_capacity_today() -> None:
+    # 09:00-18:00 window, 360m capacity, at 15:00 -> 180m left of 540m.
+    budget = scheduler.day_budget(_portfolio(tasks=()), TODAY, now=AFTERNOON)
+    assert budget.is_today is True
+    assert budget.elapsed_minutes == 360
+    assert budget.remaining_window_minutes == 180
+    assert budget.plan_capacity == 252  # nominal, unchanged
+    assert budget.remaining_plan_capacity == 84
+    assert budget.remaining_buffer_minutes == 36
+
+
+def test_day_budget_at_window_start_is_fully_available() -> None:
+    budget = scheduler.day_budget(_portfolio(tasks=()), TODAY,
+                                  now=datetime(2026, 9, 20, 9, 0))
+    assert budget.elapsed_minutes == 0
+    assert budget.remaining_plan_capacity == budget.plan_capacity == 252
+
+
+def test_day_budget_after_window_end_is_zero() -> None:
+    budget = scheduler.day_budget(_portfolio(tasks=()), TODAY,
+                                  now=datetime(2026, 9, 20, 19, 0))
+    assert budget.remaining_window_minutes == 0
+    assert budget.remaining_plan_capacity == 0
+
+
+def test_day_budget_counts_only_remaining_calendar_today() -> None:
+    past = model.CalendarEvent(event_id="past", title="past",
+                               day=TODAY.isoformat(),
+                               start_minutes=540, end_minutes=600)
+    ahead = model.CalendarEvent(event_id="ahead", title="ahead",
+                                day=TODAY.isoformat(),
+                                start_minutes=960, end_minutes=1020)
+    # A morning meeting no longer reduces the afternoon budget.
+    past_budget = scheduler.day_budget(_portfolio(tasks=(), calendar=(past,)), TODAY,
+                                       now=AFTERNOON)
+    assert past_budget.remaining_calendar_minutes == 0
+    assert past_budget.remaining_plan_capacity == 84
+    # A later meeting still does (60m inside the remaining 120m focus).
+    ahead_budget = scheduler.day_budget(_portfolio(tasks=(), calendar=(ahead,)), TODAY,
+                                        now=AFTERNOON)
+    assert ahead_budget.remaining_calendar_minutes == 60
+    assert ahead_budget.remaining_plan_capacity == 42
+
+
+def test_plan_day_uses_remaining_capacity_for_today() -> None:
+    tasks = tuple(
+        model.Task(task_id=f"t{i}", project_id="p1", title=f"t{i}",
+                   estimated_minutes=60) for i in range(10))
+    portfolio = _portfolio(tasks=tasks)
+    day = scheduler.plan_day(portfolio,
+                             priority.rank_ready_tasks(portfolio, today=TODAY),
+                             TODAY, now=AFTERNOON)
+    assert day.is_today is True
+    assert day.plan_capacity == 252  # nominal, never silently rewritten
+    assert day.remaining_plan_capacity == 84
+    assert day.planned_minutes == 60
+    assert len(day.deferred) == 9
+
+
+def test_plan_day_future_day_uses_full_capacity() -> None:
+    tasks = tuple(
+        model.Task(task_id=f"t{i}", project_id="p1", title=f"t{i}",
+                   estimated_minutes=60) for i in range(10))
+    portfolio = _portfolio(tasks=tasks)
+    day = scheduler.plan_day(portfolio,
+                             priority.rank_ready_tasks(portfolio, today=TODAY),
+                             TODAY + timedelta(days=1), now=AFTERNOON)
+    assert day.is_today is False
+    assert day.remaining_plan_capacity == day.plan_capacity == 252
+    assert day.planned_minutes == 240
+
+
+def test_plan_week_spills_today_overflow_to_next_days() -> None:
+    tasks = tuple(
+        model.Task(task_id=f"t{i}", project_id="p1", title=f"t{i}",
+                   estimated_minutes=60) for i in range(10))
+    portfolio = _portfolio(tasks=tasks)
+    week = scheduler.plan_week(portfolio,
+                               priority.rank_ready_tasks(portfolio,
+                                                         today=TODAY),
+                               TODAY, now=AFTERNOON)
+    assert week.days[0].remaining_plan_capacity == 84
+    assert week.days[0].planned_minutes == 60
+    assert week.days[1].remaining_plan_capacity == 252
+    assert sum(d.planned_minutes for d in week.days) == 600
+    assert week.at_risk == ()

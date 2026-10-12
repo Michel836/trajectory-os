@@ -548,6 +548,18 @@ function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;')
 function fmtMin(m){if(m==null||m==='')return '—';m=Number(m);if(!m)return '0m';
   const h=Math.floor(m/60),r=m%60;return h&&r?h+'h'+(r<10?'0':'')+r+'m':
   (h?h+'h':r+'m');}
+function capacityLabel(plan){
+  // Single canonical capacity line. For today the buffer and the ceiling are
+  // the *remaining* ones, so a plan rebuilt at 15:00 never claims the whole
+  // day is still available.
+  const isToday=!!plan.is_today;
+  const buf=isToday?plan.remaining_buffer_minutes:plan.buffer_minutes;
+  const remaining=plan.remaining_plan_capacity;
+  const calendar=isToday?plan.remaining_calendar_minutes:plan.calendar_minutes;
+  return 'capacity '+fmtMin(plan.total_capacity)+' · calendar '+
+    fmtMin(calendar)+' · buffer '+fmtMin(buf)+' · remaining '+
+    fmtMin(remaining)+' · planned '+fmtMin(plan.planned_minutes)+' / '+
+    fmtMin(remaining);}
 function pill(text,cls){return '<span class="pill '+(cls||'')+'">'+
   esc(text)+'</span>';}
 function notice(msg){const el=$('notice');el.textContent=msg||'';
@@ -890,8 +902,7 @@ function renderSummary(){
   const t=$('today-summary');
   if(!S.cockpit){t.innerHTML='<span class="muted">loading…</span>';return;}
   const d=S.cockpit.today_plan;
-  t.innerHTML='<span class="muted">capacity '+fmtMin(d.total_capacity)+
-    ' · planned '+fmtMin(d.planned_minutes)+' · '+
+  t.innerHTML='<span class="muted">'+capacityLabel(d)+' · '+
     (d.planned.length)+' item(s)</span>';
   const b=$('blocked-summary');
   const rows=(S.cockpit.blocked||[]).concat(S.cockpit.waiting||[]);
@@ -2834,10 +2845,7 @@ function renderToday(){
   if(!plan){$('view-root').innerHTML='<p class="muted">no plan</p>';return;}
   const planned=sortViewItems(plan.planned,S.todaySort);
   let h='<h2>Today — what to do now, and why</h2>'+
-    '<p class="muted">capacity '+fmtMin(plan.total_capacity)+' · calendar '+
-    fmtMin(plan.calendar_minutes)+' · buffer '+fmtMin(plan.buffer_minutes)+
-    ' · planned '+fmtMin(plan.planned_minutes)+' / '+
-    fmtMin(plan.plan_capacity)+'</p>'+
+    '<p class="muted">'+capacityLabel(plan)+'</p>'+
     '<div class="bar"><button class="small primary" '+
     'onclick="openExportPreview()">Preview Super Productivity export</button>'+
     '<button class="small" onclick="setView(\'tomorrow\')">Plan tomorrow'+

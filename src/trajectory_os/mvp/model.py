@@ -538,10 +538,21 @@ class Task:
 
 @dataclass(frozen=True)
 class Capacity:
-    """Explicit daily capacity and buffer policy (never inferred)."""
+    """Explicit daily capacity, working window and buffer policy.
+
+    ``minutes_per_day`` is the focal capacity the human allocates to planned
+    work. ``day_start_minutes`` and ``day_end_minutes`` bound the working
+    window, expressed in minutes since local midnight. The window is what
+    makes capacity *time-of-day aware*: as the window elapses, the remaining
+    capacity shrinks (see :func:`trajectory_os.mvp.scheduler.day_budget`).
+
+    All three are explicit and never inferred from observed behaviour.
+    """
 
     minutes_per_day: int = 360
     buffer_ratio: float = 0.30
+    day_start_minutes: int = 540  # 09:00 local
+    day_end_minutes: int = 1080  # 18:00 local
 
     def validate(self) -> Capacity:
         _require_int(self.minutes_per_day, "minutes_per_day", minimum=60,
@@ -551,7 +562,19 @@ class Capacity:
             _fail(E_MALFORMED, "buffer_ratio must be a number")
         if not 0.0 <= float(self.buffer_ratio) < 1.0:
             _fail(E_MALFORMED, "buffer_ratio must be in [0.0, 1.0)")
+        _require_int(self.day_start_minutes, "day_start_minutes", minimum=0,
+                     maximum=1439)
+        _require_int(self.day_end_minutes, "day_end_minutes", minimum=1,
+                     maximum=1440)
+        if self.day_end_minutes <= self.day_start_minutes:
+            _fail(E_MALFORMED,
+                  "day_end_minutes must be after day_start_minutes")
         return self
+
+    @property
+    def window_minutes(self) -> int:
+        """Length of the working window (never inferred from capacity)."""
+        return self.day_end_minutes - self.day_start_minutes
 
     @property
     def usable_minutes(self) -> int:
@@ -565,6 +588,8 @@ class Capacity:
         return {
             "minutes_per_day": self.minutes_per_day,
             "buffer_ratio": self.buffer_ratio,
+            "day_start_minutes": self.day_start_minutes,
+            "day_end_minutes": self.day_end_minutes,
         }
 
     @staticmethod
@@ -574,6 +599,12 @@ class Capacity:
                                          "minutes_per_day", minimum=60,
                                          maximum=960),
             buffer_ratio=float(data.get("buffer_ratio", 0.30)),
+            day_start_minutes=_require_int(
+                data.get("day_start_minutes", 540),
+                "day_start_minutes", minimum=0, maximum=1439),
+            day_end_minutes=_require_int(
+                data.get("day_end_minutes", 1080),
+                "day_end_minutes", minimum=1, maximum=1440),
         ).validate()
 
 

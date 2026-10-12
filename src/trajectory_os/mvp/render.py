@@ -44,12 +44,18 @@ def render_text(cockpit: engine.Cockpit) -> str:
         lines.append("  nothing ready")
     lines += ["", "TODAY"]
     day = cockpit.today_plan
+    # For today, show the *remaining* buffer and ceiling so a plan rebuilt in
+    # the afternoon never claims the whole day is still available.
+    buffer_shown = (day["remaining_buffer_minutes"] if day.get("is_today")
+                    else day["buffer_minutes"])
+    ceiling = day["remaining_plan_capacity"]
     lines.append(
         f"  capacity {_fmt_minutes(day['total_capacity'])} | "
-        f"calendar {_fmt_minutes(day['calendar_minutes'])} | "
-        f"buffer {_fmt_minutes(day['buffer_minutes'])} | "
+        f"calendar {_fmt_minutes(day['display_calendar_minutes'])} | "
+        f"buffer {_fmt_minutes(buffer_shown)} | "
+        f"remaining {_fmt_minutes(ceiling)} | "
         f"planned {_fmt_minutes(day['planned_minutes'])} / "
-        f"{_fmt_minutes(day['plan_capacity'])}")
+        f"{_fmt_minutes(ceiling)}")
     for item in day["planned"]:
         lines.append(
             f"  - {item['title']} ({_fmt_minutes(item['estimated_minutes'])})")
