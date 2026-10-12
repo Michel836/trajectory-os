@@ -3290,7 +3290,8 @@ async function analyzeCapture(){
   try{const res=await api('/api/capture','POST',{text:text});S.capture=res;
     renderCapturePreview(res);}catch(err){notice(err.message);}}
 function capBadge(cat){const cls={new_task:'READY',possible_project:'IN_PROGRESS',
-  existing_project:'ACTIVE',existing_task:'WAITING',duplicate:'DEFERRED'}[cat]||'TODO';
+  possible_idea:'IN_PROGRESS',existing_project:'ACTIVE',existing_task:'WAITING',
+  duplicate:'DEFERRED'}[cat]||'TODO';
   return pill(cat,'badge-'+cls);}
 function capActionOptions(item){
   let actions=['accept','skip'];
@@ -3316,7 +3317,7 @@ function capItemRow(item){
     '<div class="bar"><select id="cap-action-'+esc(item.capture_id)+'">'+
     capActionOptions(item)+'</select>'+
     '<select id="cap-kind-'+esc(item.capture_id)+'">'+
-    ['task','project'].map(function(k){return '<option value="'+k+'"'+
+    ['task','project','idea','someday'].map(function(k){return '<option value="'+k+'"'+
       (item.kind===k?' selected':'')+'>'+k+'</option>';}).join('')+'</select>'+
     '<select id="cap-project-'+esc(item.capture_id)+'">'+
     '<option value="">(choose project)</option>'+projectOpts+'</select>'+
@@ -3326,7 +3327,8 @@ function renderCapturePreview(res){
   let h='<div class="card" style="background:#f8fafc"><strong>'+c.items+
     '</strong> item(s) · '+c.matched_existing+' matched existing · '+
     c.duplicates+' duplicate(s) · '+c.new_tasks+' new task(s) · '+
-    c.possible_projects+' possible project(s)<div class="muted">'+
+    c.possible_projects+' possible project(s) · '+c.possible_ideas+
+    ' possible idea(s)<div class="muted">'+
     'engine '+esc(inst.engine||'')+' · model '+esc(inst.model||'')+' · '+
     (inst.elapsed_ms||0)+'ms · cost $'+(inst.cost_usd||0)+
     ' · preview only, nothing written</div></div>';
