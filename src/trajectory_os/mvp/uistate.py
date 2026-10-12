@@ -44,7 +44,7 @@ DENSITIES = ("compact", "normal", "detailed")
 
 #: The visual view identifiers rendered by the cockpit.
 VIEWS = (
-    "today", "ready", "tomorrow", "week",
+    "today", "inbox", "ready", "tomorrow", "week",
     "list", "kanban", "wbs", "graph", "gantt", "eisenhower",
     "impact_effort", "portfolio_map", "treemap", "progress", "heatmap",
     "goal_flow",

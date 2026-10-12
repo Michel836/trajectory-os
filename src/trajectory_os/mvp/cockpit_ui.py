@@ -510,7 +510,8 @@ function isRepeatClick(prevId, prevTime, id, now, windowMs){
 
 PAGE_JS = TABLE_JS_HELPERS + r"""
 const VIEWS = [
-  ['today','Today'],['ready','Ready'],['tomorrow','Tomorrow'],['week','Week'],
+  ['today','Today'],['inbox','Inbox'],['ready','Ready'],['tomorrow','Tomorrow'],
+  ['week','Week'],
   ['list','List'],['kanban','Kanban'],['wbs','WBS'],['graph','Dependency Graph'],
   ['gantt','Gantt'],['eisenhower','Eisenhower'],['impact_effort','Impact / Effort'],
   ['portfolio_map','Portfolio Map'],['treemap','Treemap'],['progress','Progress'],
@@ -968,7 +969,8 @@ function renderView(){
     kanban:renderKanban,wbs:renderWbs,graph:renderGraph,
     gantt:renderGantt,eisenhower:renderEisenhower,impact_effort:renderImpactEffort,
     portfolio_map:renderPortfolioMap,treemap:renderTreemap,progress:renderProgress,
-    heatmap:renderHeatmap,goal_flow:renderGoalFlow,focus:renderFocus}[S.view]
+    heatmap:renderHeatmap,goal_flow:renderGoalFlow,focus:renderFocus,
+    inbox:renderInbox}[S.view]
     ||renderList;
   fn();
 }
@@ -1870,8 +1872,12 @@ function renderInspector(){
   h+=attr('confidence','Confidence',esc(o.confidence));
   h+='</dl>';
   h+='<div class="actions">';
-  if(isTask(o)){h+='<button class="small primary" onclick="openOutcomeForm(\''+
+  if(isTask(o)){h+='<button class="small primary" onclick="completeOutcome(\''+
+    o.ref_id+'\')">Done…</button>'+
+    '<button class="small" onclick="openOutcomeForm(\''+
     o.ref_id+'\')">Record outcome…</button>'+
+    '<button class="small" onclick="promoteTask(\''+o.ref_id+
+    '\')">Promote</button>'+
     '<button class="small" onclick="recordOutcome(\''+o.ref_id+
     '\',\'BLOCKED\')">Block</button>'+
     '<button class="small" onclick="recordOutcome(\''+o.ref_id+
@@ -1882,6 +1888,12 @@ function renderInspector(){
     '<button class="small" onclick="openTask(\''+o.ref_id+'\')">Edit</button>';}
   else{h+='<button class="small primary" onclick="mutateProject(\''+
     o.project_id+'\',{status:\'COMPLETED\'})">Complete</button>'+
+    '<button class="small" onclick="parkProject(\''+o.project_id+
+    '\',\'IDEA\')">Idea</button>'+
+    '<button class="small" onclick="parkProject(\''+o.project_id+
+    '\',\'SOMEDAY\')">Someday</button>'+
+    '<button class="small" onclick="demoteProject(\''+o.project_id+
+    '\')">Demote…</button>'+
     '<button class="small" onclick="mutateProject(\''+o.project_id+
     '\',{status:\'DEFERRED\'})">Defer</button>'+
     '<button class="small" onclick="mutateProject(\''+o.project_id+
@@ -2133,6 +2145,25 @@ async function mutateTask(id,patch){try{
 async function mutateProject(id,patch){try{
   await api('/api/projects/'+encodeURIComponent(id),'POST',patch);
   await refresh();}catch(err){notice(err.message);}}
+async function parkProject(id,kind){try{
+  await api('/api/projects/'+encodeURIComponent(id)+'/park','POST',{kind:kind});
+  await refresh();}catch(err){notice(err.message);}}
+async function promoteTask(id){try{
+  const res=await api('/api/tasks/'+encodeURIComponent(id)+'/promote','POST',{});
+  notice('Promoted to project '+res.project_id);await refresh();}
+  catch(err){notice(err.message);}}
+async function demoteProject(id){
+  const target=prompt('Target project id to receive the tasks:');
+  if(!target)return;
+  try{await api('/api/projects/'+encodeURIComponent(id)+'/demote','POST',
+    {target_project_id:target,confirm_discard:true});await refresh();}
+  catch(err){notice(err.message);}}
+async function completeOutcome(id){const o=obj('task:'+id);
+  const raw=prompt('Actual minutes (optional):',(o&&o.estimated_minutes)||'');
+  if(raw===null)return;const body={outcome:'COMPLETED'};
+  if(raw!==''){const n=parseInt(raw,10);if(!isNaN(n))body.actual_minutes=n;}
+  try{await api('/api/tasks/'+encodeURIComponent(id)+'/outcome','POST',body);
+    await refresh();}catch(err){notice(err.message);}}
 async function recordOutcome(id,outcome){const o=obj('task:'+id);
   if(!confirm('Record '+outcome+' for "'+(o?o.title:id)+'"?'))return;
   try{await api('/api/tasks/'+encodeURIComponent(id)+'/outcome','POST',
@@ -2925,6 +2956,25 @@ function renderToday(){
         '</a></li>';}).join('')+'</ul>';}
   h+='<p><button class="small" onclick="setView(\'ready\')">See the full '+
     'Ready / Blocked / Waiting breakdown →</button></p>';
+  $('view-root').innerHTML=h;}
+function renderInbox(){
+  const parked=objects().filter(function(o){return o.kind==='project'&&
+    (o.status==='IDEA'||o.status==='SOMEDAY');});
+  let h='<h2>Inbox — ideas and someday notions to triage</h2>'+
+    '<p class="muted">'+parked.length+' parked project(s); excluded from '+
+    'readiness, priority and scheduling until activated.</p>';
+  if(!parked.length){h+='<p class="muted">Inbox is empty.</p>';}
+  else{h+='<table><tr><th>Title</th><th>Status</th><th>Objective</th>'+
+    '<th></th></tr>'+parked.map(function(o){return '<tr><td><a onclick="'+
+    'selectObject(\''+o.id+'\')">'+esc(o.title)+'</a></td><td>'+
+    pill(o.status,'badge-'+(o.status==='IDEA'?'IN_PROGRESS':'DEFERRED'))+
+    '</td><td>'+esc(o.objective||'')+'</td><td>'+
+    '<button class="small primary" onclick="mutateProject(\''+o.project_id+
+    '\',{status:\'ACTIVE\'})">Activate</button> '+
+    '<button class="small" onclick="parkProject(\''+o.project_id+
+    '\',\'SOMEDAY\')">Someday</button> '+
+    '<button class="small" onclick="demoteProject(\''+o.project_id+
+    '\')">Demote…</button></td></tr>';}).join('')+'</table>';}
   $('view-root').innerHTML=h;}
 function renderReady(){
   const wf=S.views.ready_workflow;

@@ -344,6 +344,17 @@ def test_view_bar_lists_all_views() -> None:
         assert "'" + view + "'" in cockpit_ui.PAGE_JS
 
 
+def test_inbox_and_conversion_controls_are_wired() -> None:
+    from trajectory_os.mvp import uistate
+
+    js = cockpit_ui.PAGE_JS
+    assert "inbox" in uistate.VIEWS
+    assert "['inbox','Inbox']" in js
+    for fn in ("renderInbox", "parkProject", "promoteTask", "demoteProject",
+               "completeOutcome"):
+        assert "function " + fn + "(" in js, fn
+
+
 def test_suggested_visual_distinction_present() -> None:
     # SUGGESTED content must be visually distinguished everywhere it appears.
     assert "badge-SUGGESTED" in cockpit_ui.PAGE_CSS
