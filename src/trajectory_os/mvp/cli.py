@@ -9,6 +9,9 @@ chosen export path):
     mvp plan [--root DIR] [--today DATE]     full daily cockpit (text)
     mvp today | week | ready | blocked | projects | wbs
     mvp record --task ID --outcome O [--minutes N] [--note TEXT]
+    mvp promote --task ID [--name NAME]      task -> its own project
+    mvp demote --project ID --target ID      project -> tasks of another
+    mvp park --project ID [--kind IDEA|SOMEDAY]  park in / leave the Inbox
     mvp export-sp [--out FILE] [--limit N]
     mvp dashboard [--port N]                 serve the local cockpit
     mvp demo [--root DIR]                    seed + plan + HTML + demo
@@ -32,6 +35,7 @@ from trajectory_os.mvp import (
     dataset,
     engine,
     model,
+    mutations,
     outcomes,
     priority,
     readiness,
@@ -225,6 +229,47 @@ def _cmd_record(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_promote(args: argparse.Namespace) -> int:
+    _load_or_fail(args.root)
+    payload = {"name": args.name} if args.name else {}
+    result = mutations.promote_task(args.root, args.task, payload)
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"promoted {result['task_id']} -> project "
+              f"{result['project_id']} ({result['name']})")
+    return EXIT_OK
+
+
+def _cmd_demote(args: argparse.Namespace) -> int:
+    _load_or_fail(args.root)
+    result = mutations.demote_project(
+        args.root, args.project, {"target_project_id": args.target})
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"demoted {result['project_id']}: moved "
+              f"{result['moved_tasks']} task(s) to "
+              f"{result['target_project_id']}")
+    return EXIT_OK
+
+
+def _cmd_park(args: argparse.Namespace) -> int:
+    _load_or_fail(args.root)
+    payload: dict[str, object] = {}
+    if args.kind:
+        payload["kind"] = args.kind
+    if args.status:
+        payload["status"] = args.status
+    result = mutations.park_project(args.root, args.project, payload)
+    if args.json:
+        _print_json(result)
+    else:
+        state = "parked in the Inbox" if result["parked"] else "active"
+        print(f"{result['project_id']} -> {result['status']} ({state})")
+    return EXIT_OK
+
+
 def _cmd_export_sp(args: argparse.Namespace) -> int:
     _load_or_fail(args.root)
     result = superproductivity.export_ready(
@@ -383,6 +428,35 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note", default="")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_record)
+
+    p = sub.add_parser("promote", help="promote a task into its own project")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("--task", required=True)
+    p.add_argument("--name", default=None,
+                   help="project name (default: the task title)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_promote)
+
+    p = sub.add_parser("demote", help="fold a project's tasks into another "
+                                        "project and remove it")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("--project", required=True)
+    p.add_argument("--target", required=True,
+                   help="existing project that receives the tasks")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_demote)
+
+    p = sub.add_parser("park", help="park a project in the Inbox "
+                                      "(IDEA/SOMEDAY) or bring it back")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("--project", required=True)
+    p.add_argument("--kind", default=None,
+                   choices=[model.PS_IDEA, model.PS_SOMEDAY])
+    p.add_argument("--status", default=None,
+                   choices=sorted(model.PROJECT_STATUSES),
+                   help="explicit status (e.g. ACTIVE) to leave the Inbox")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_park)
 
     p = sub.add_parser("export-sp", help="export ready tasks to Super "
                                           "Productivity import JSON")

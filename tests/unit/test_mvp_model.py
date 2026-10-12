@@ -124,6 +124,18 @@ def test_capacity_from_legacy_dict_uses_window_defaults() -> None:
     assert capacity.day_end_minutes == 1080
 
 
+def test_project_inbox_statuses_are_not_open() -> None:
+    for status in (model.PS_IDEA, model.PS_SOMEDAY):
+        project = model.Project(project_id="p", name="n", objective="o",
+                                status=status).validate()
+        assert project.parked is True
+        assert project.open is False
+    active = model.Project(project_id="p", name="n", objective="o",
+                           status=model.PS_ACTIVE).validate()
+    assert active.parked is False
+    assert active.open is True
+
+
 def test_waiting_for_accepts_free_text() -> None:
     task = model.Task(task_id="t1", project_id="p1", title="a",
                       waiting_for=("a third party reply",))

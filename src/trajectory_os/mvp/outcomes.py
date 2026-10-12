@@ -66,6 +66,10 @@ def derive_project_status(
     """Derive one project's status from its tasks' readiness (never
     silently rewrites unrelated projects)."""
     project = portfolio.project_map()[project_id]
+    if project.status in model.PROJECT_INBOX_STATUSES:
+        # A parked (Inbox) project is an explicit human decision: editing one
+        # of its tasks must not silently "activate" it.
+        return project
     states = readiness.evaluate(replace(portfolio, tasks=tasks))
     project_states = [item for item in states
                       if item.project_id == project_id]

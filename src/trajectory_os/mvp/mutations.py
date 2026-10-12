@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from trajectory_os.intelligence import model as intel_model
-from trajectory_os.mvp import importer, model, outcomes, store
+from trajectory_os.mvp import classification, importer, model, outcomes, store
 
 #: Fields the dashboard may edit on a project (fail closed on anything else).
 PROJECT_EDITABLE = frozenset({
@@ -237,6 +237,144 @@ def update_project(root: str | Path, project_id: str,
                             updated_at=_updated_at(portfolio)).validate()
     store.save_portfolio(root, new_portfolio)
     return {"project_id": project_id, "status": updated.status}
+
+
+# --- project / task conversion & parking --------------------------------------
+#
+# The taxonomy (``classification``) says when something *should* be a project
+# or a task; these operations let the human *apply* that decision without
+# losing data. Every operation is validated, atomic and reversible.
+
+
+def park_project(root: str | Path, project_id: str,
+                 payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Park a project in the Inbox, or bring it back out.
+
+    ``payload["kind"]`` selects the parked status (``IDEA`` by default, or
+    ``SOMEDAY``); an explicit ``status`` (any valid project status, e.g.
+    ``ACTIVE``) overrides it, which is how the project leaves the Inbox. A
+    parked project stays visible but is excluded from readiness, priority and
+    scheduling.
+    """
+    portfolio = _load(root)
+    _reject_unknown(payload, frozenset({"kind", "status"}), "park")
+    projects = portfolio.project_map()
+    if project_id not in projects:
+        raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+    kind = _value(payload, "kind", classification.IDEA)
+    parked_status = {
+        classification.IDEA: model.PS_IDEA,
+        classification.SOMEDAY: model.PS_SOMEDAY,
+    }
+    if kind not in parked_status:
+        raise model.MvpError(model.E_MALFORMED,
+                             "kind must be IDEA or SOMEDAY")
+    status = str(_value(payload, "status", parked_status[kind]))
+    updated = replace(projects[project_id], status=status)
+    new_projects = tuple(updated if p.project_id == project_id else p
+                         for p in portfolio.projects)
+    new_portfolio = replace(portfolio, projects=new_projects,
+                            updated_at=_updated_at(portfolio)).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"project_id": project_id, "status": updated.status,
+            "parked": updated.parked}
+
+
+def promote_task(root: str | Path, task_id: str,
+                 payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Promote a task into its own project and move the task into it.
+
+    Non-destructive and reversible: the task keeps every field and simply
+    gains a new ``project_id``; ``demote_project`` moves it back and removes
+    the wrapper project. Optional ``name`` / ``objective`` / ``domain``
+    override the values derived from the task.
+    """
+    portfolio = _load(root)
+    _reject_unknown(
+        payload,
+        frozenset({"name", "objective", "domain", "allow_duplicate"}),
+        "promote")
+    tasks = portfolio.task_map()
+    if task_id not in tasks:
+        raise model.MvpError(model.E_UNKNOWN_ID, task_id)
+    task = tasks[task_id]
+    name = _value(payload, "name", task.title)
+    if not isinstance(name, str) or not name.strip():
+        raise model.MvpError(model.E_MALFORMED, "name must be a string")
+    name = name.strip()
+    if payload.get("allow_duplicate") is not True:
+        duplicate = _duplicate_project(portfolio, name)
+        if duplicate is not None:
+            raise model.MvpError(
+                model.E_DUPLICATE_OBJECT,
+                "A project with the same normalized name already exists.",
+                metadata=_duplicate_metadata(
+                    obj_id="project:" + duplicate.project_id, kind="project",
+                    ref_id=duplicate.project_id, title=duplicate.name,
+                    status=duplicate.status,
+                    project_id=duplicate.project_id, project=duplicate.name))
+    parent = portfolio.project_map()[task.project_id]
+    objective = _value(payload, "objective", task.description or task.title)
+    if not isinstance(objective, str) or not objective.strip():
+        objective = task.title
+    domain = _value(payload, "domain", parent.domain)
+    existing = {p.project_id for p in portfolio.projects}
+    project_id = _unique_id(existing, _slug(name, "project"))
+    stamp = _updated_at(portfolio)
+    project = model.Project(
+        project_id=project_id, name=name, objective=objective.strip(),
+        status=model.PS_ACTIVE, domain=str(domain))
+    moved = replace(task, project_id=project_id, updated_at=stamp)
+    new_tasks = tuple(moved if t.task_id == task_id else t
+                      for t in portfolio.tasks)
+    new_portfolio = replace(
+        portfolio, projects=portfolio.projects + (project,), tasks=new_tasks,
+        updated_at=stamp).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"task_id": task_id, "project_id": project_id, "name": name,
+            "previous_project_id": task.project_id}
+
+
+def demote_project(root: str | Path, project_id: str,
+                   payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Move a project's tasks to another project and remove the empty one.
+
+    The reverse of :func:`promote_task`: a project that turned out to be a
+    single task (or a thin grouping) is folded back into an existing project.
+    Fails closed if the target is missing or is the project itself; the
+    project is only removed once none of its tasks reference it.
+    """
+    portfolio = _load(root)
+    _reject_unknown(payload, frozenset({"target_project_id"}),
+                    "demote")
+    projects = portfolio.project_map()
+    if project_id not in projects:
+        raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+    target = _required_str(payload, "target_project_id")
+    if target == project_id:
+        raise model.MvpError(
+            model.E_MALFORMED,
+            "target_project_id must differ from project_id")
+    if target not in projects:
+        raise model.MvpError(model.E_UNKNOWN_PROJECT, target)
+    stamp = _updated_at(portfolio)
+    moved = 0
+    new_tasks: list[model.Task] = []
+    for task in portfolio.tasks:
+        if task.project_id == project_id:
+            new_tasks.append(replace(task, project_id=target,
+                                     updated_at=stamp))
+            moved += 1
+        else:
+            new_tasks.append(task)
+    new_projects = tuple(p for p in portfolio.projects
+                         if p.project_id != project_id)
+    new_portfolio = replace(
+        portfolio, projects=new_projects, tasks=tuple(new_tasks),
+        updated_at=stamp).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"project_id": project_id, "target_project_id": target,
+            "moved_tasks": moved}
 
 
 # --- task mutations -----------------------------------------------------------

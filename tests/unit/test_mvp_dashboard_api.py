@@ -409,3 +409,48 @@ def test_duplicate_conflict_does_not_mutate_the_portfolio(
                              {"name": "P1", "objective": "o"})
         assert status == 409
     assert path.read_bytes() == before
+
+
+# --- conversion & parking over the API ----------------------------------------
+
+
+def test_api_promote_task_then_demote_project(tmp_path: object) -> None:
+    root = str(tmp_path)
+    _seed(root)
+    with _server(root) as port:
+        status, promoted = _request(port, "POST", "/api/tasks/a/promote",
+                                    {"name": "Alpha effort"})
+        assert status == 200
+        assert promoted["status"] == "OK"
+        new_id = str(promoted["project_id"])
+        assert new_id != "p1"
+        # A duplicate project name is refused, not silently merged.
+        status, conflict = _request(port, "POST", "/api/tasks/b/promote",
+                                    {"name": "Alpha effort"})
+        assert status == 409
+        assert conflict["error"] == model.E_DUPLICATE_OBJECT
+        status, demoted = _request(
+            port, "POST", f"/api/projects/{new_id}/demote",
+            {"target_project_id": "p1"})
+        assert status == 200
+        assert demoted["moved_tasks"] == 1
+    portfolio = store.load_portfolio(root)
+    assert portfolio is not None
+    assert [p.project_id for p in portfolio.projects] == ["p1"]
+    assert portfolio.task_map()["a"].project_id == "p1"
+
+
+def test_api_park_project_moves_it_to_the_inbox(tmp_path: object) -> None:
+    root = str(tmp_path)
+    _seed(root)
+    with _server(root) as port:
+        status, parked = _request(port, "POST", "/api/projects/p1/park",
+                                  {"kind": model.PS_IDEA})
+        assert status == 200
+        assert parked["parked"] is True
+        status, views = _request(port, "GET", "/api/views")
+        assert status == 200
+    portfolio = store.load_portfolio(root)
+    assert portfolio is not None
+    assert portfolio.project_map()["p1"].status == model.PS_IDEA
+    assert portfolio.project_map()["p1"].parked is True

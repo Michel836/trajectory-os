@@ -69,13 +69,23 @@ PS_WAITING = "WAITING"
 PS_BLOCKED = "BLOCKED"
 PS_DEFERRED = "DEFERRED"
 PS_COMPLETED = "COMPLETED"
+#: Parked (Inbox) statuses: durable projects the human has not committed to
+#: executing yet. They are deliberately excluded from
+#: :data:`PROJECT_OPEN_STATUSES`, so readiness, priority and scheduling treat
+#: their tasks as project-closed while the object stays visible and editable.
+PS_IDEA = "IDEA"
+PS_SOMEDAY = "SOMEDAY"
 
 PROJECT_STATUSES = frozenset({
     PS_ACTIVE, PS_WAITING, PS_BLOCKED, PS_DEFERRED, PS_COMPLETED,
+    PS_IDEA, PS_SOMEDAY,
 })
 
 #: Project statuses in which new work may still be started.
 PROJECT_OPEN_STATUSES = frozenset({PS_ACTIVE, PS_WAITING, PS_BLOCKED})
+
+#: Parked project statuses (the persisted Inbox / to-triage-later bucket).
+PROJECT_INBOX_STATUSES = frozenset({PS_IDEA, PS_SOMEDAY})
 
 # --- task statuses (closed set) -----------------------------------------------
 
@@ -389,6 +399,11 @@ class Project:
     @property
     def open(self) -> bool:
         return self.status in PROJECT_OPEN_STATUSES
+
+    @property
+    def parked(self) -> bool:
+        """Whether the project sits in the Inbox (not committed to yet)."""
+        return self.status in PROJECT_INBOX_STATUSES
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -807,7 +822,8 @@ def _validate_no_cycles(tasks: Sequence[Task]) -> None:
 __all__ = [
     "I_HIGH", "I_LOW", "I_MEDIUM", "IMPACTS", "IMPACT_RANK",
     "O_ABANDONED", "O_BLOCKED", "O_COMPLETED", "O_DEFERRED", "OUTCOMES",
-    "PS_ACTIVE", "PS_BLOCKED", "PS_COMPLETED", "PS_DEFERRED", "PS_WAITING",
+    "PS_ACTIVE", "PS_BLOCKED", "PS_COMPLETED", "PS_DEFERRED", "PS_IDEA",
+    "PS_SOMEDAY", "PS_WAITING", "PROJECT_INBOX_STATUSES",
     "PROJECT_OPEN_STATUSES", "PROJECT_STATUSES",
     "RK_BUDGET", "RK_LOCATION", "RK_OTHER", "RK_PERSON", "RK_TOOL",
     "RESOURCE_KINDS",
