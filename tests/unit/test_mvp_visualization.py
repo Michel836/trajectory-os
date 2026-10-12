@@ -422,6 +422,27 @@ def test_quick_capture_shortcut_is_wired(tmp_path: object) -> None:
         False, False, False, False, False, False, True]
 
 
+def test_search_before_capture_is_wired(tmp_path: object) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    js = cockpit_ui.PAGE_JS
+    for fn in ("normalizedTitle", "similarExistingTask",
+               "refreshDuplicateHint"):
+        assert "function " + fn + "(" in js, fn
+    function = _js_function(js, "normalizedTitle")
+    script = function + (
+        "\nconsole.log(JSON.stringify("
+        "normalizedTitle('Préparer  Portfolio APEC')));")
+    path = Path(str(tmp_path)) / "normalize.js"
+    path.write_text(script, encoding="utf-8")
+    result = subprocess.run([node, str(path)], capture_output=True, text=True,
+                            check=False)
+    assert result.returncode == 0, result.stderr
+    # Must match the server's importer.normalize_text.
+    assert json.loads(result.stdout) == "preparer portfolio apec"
+
+
 def test_suggested_visual_distinction_present() -> None:
     # SUGGESTED content must be visually distinguished everywhere it appears.
     assert "badge-SUGGESTED" in cockpit_ui.PAGE_CSS

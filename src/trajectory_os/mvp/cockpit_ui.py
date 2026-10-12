@@ -2244,10 +2244,28 @@ async function saveProject(){const id=$('pf-id').value;
   catch(err){
     if(!id&&handleDuplicate(err,'project',body))return;
     notice(err.message);}}
+function normalizedTitle(v){return String(v==null?'':v).toLowerCase()
+  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .replace(/[^a-z0-9]+/g,' ').trim();}
+function similarExistingTask(projectId,title){
+  const needle=normalizedTitle(title);if(!needle)return null;
+  const found=objects().filter(function(o){return o.kind==='task'&&
+    o.project_id===projectId;}).filter(function(o){
+      return normalizedTitle(o.title)===needle;});
+  return found.length?found[0]:null;}
+function refreshDuplicateHint(){
+  const el=$('nt-dupe');if(!el)return;
+  const project=($('nt-project')||{}).value||'';
+  const title=($('nt-title')||{}).value||'';
+  const match=similarExistingTask(project,title);
+  el.innerHTML=match?('Already exists: <a onclick="selectObject(\'task:'+
+    esc(match.ref_id)+'\')">'+esc(match.title)+'</a>'):'';}
 function openTaskForm(pid){document.getElementById('task-form-body').innerHTML=
     '<h3 style="margin:0">New task</h3>'+
-    '<label>Title</label><input id="nt-title">'+
-    '<label>Project</label><select id="nt-project">'+
+    '<label>Title</label><input id="nt-title" oninput="refreshDuplicateHint()">'+
+    '<div id="nt-dupe" class="muted"></div>'+
+    '<label>Project</label><select id="nt-project" '+
+    'oninput="refreshDuplicateHint()">'+
     objects().filter(function(o){return o.kind==='project';}).sort(function(a,b){
       return a.title.localeCompare(b.title);}).map(function(p){
       return '<option value="'+esc(p.project_id)+'"'+(p.project_id===pid?
