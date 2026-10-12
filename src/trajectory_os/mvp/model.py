@@ -48,6 +48,7 @@ MAX_PROJECTS = 256
 MAX_TASKS = 2048
 MAX_RESOURCES = 64
 MAX_EVENTS = 256
+MAX_DAYS_OFF = 366
 MAX_DEPENDENCIES_PER_TASK = 16
 MAX_BLOCKERS_PER_TASK = 16
 MAX_WAITING_PER_TASK = 8
@@ -75,6 +76,11 @@ PS_COMPLETED = "COMPLETED"
 #: their tasks as project-closed while the object stays visible and editable.
 PS_IDEA = "IDEA"
 PS_SOMEDAY = "SOMEDAY"
+
+#: Supported calendar-event recurrences (empty string = one-off).
+EVENT_RECURRENCES = frozenset({"WEEKLY"})
+#: Default working weekdays (0 = Monday .. 6 = Sunday).
+DEFAULT_WORKING_DAYS = (0, 1, 2, 3, 4)
 
 PROJECT_STATUSES = frozenset({
     PS_ACTIVE, PS_WAITING, PS_BLOCKED, PS_DEFERRED, PS_COMPLETED,
@@ -321,14 +327,19 @@ class Resource:
 
 @dataclass(frozen=True)
 class CalendarEvent:
-    """One hard calendar constraint (never invented by the scheduler)."""
+    """One hard calendar constraint (never invented by the scheduler).
+
+    ``recurrence`` is empty for a one-off event, or ``WEEKLY`` to repeat on
+    the same weekday as ``day`` (bounded, explicit, no RRULE engine).
+    """
 
     event_id: str
     title: str
-    day: str  # YYYY-MM-DD
+    day: str  # YYYY-MM-DD (first occurrence for a recurring event)
     start_minutes: int  # minutes since midnight
     end_minutes: int  # minutes since midnight, > start
     all_day: bool = False
+    recurrence: str = ""
 
     def validate(self) -> CalendarEvent:
         _require_id(self.event_id, "event_id")
@@ -342,6 +353,9 @@ class CalendarEvent:
             _fail(E_MALFORMED, "event must end after it starts")
         if not isinstance(self.all_day, bool):
             _fail(E_MALFORMED, "all_day must be a boolean")
+        if self.recurrence and self.recurrence not in EVENT_RECURRENCES:
+            _fail(E_MALFORMED,
+                  f"recurrence must be one of {sorted(EVENT_RECURRENCES)}")
         return self
 
     def to_dict(self) -> dict[str, Any]:
@@ -352,6 +366,7 @@ class CalendarEvent:
             "start_minutes": self.start_minutes,
             "end_minutes": self.end_minutes,
             "all_day": self.all_day,
+            "recurrence": self.recurrence,
         }
 
     @staticmethod
@@ -365,6 +380,7 @@ class CalendarEvent:
             end_minutes=_require_int(data.get("end_minutes"), "end",
                                      minimum=1, maximum=1440),
             all_day=bool(data.get("all_day", False)),
+            recurrence=str(data.get("recurrence", "")),
         ).validate()
 
 
@@ -568,6 +584,9 @@ class Capacity:
     buffer_ratio: float = 0.30
     day_start_minutes: int = 540  # 09:00 local
     day_end_minutes: int = 1080  # 18:00 local
+    #: Weekdays that are worked (0 = Monday .. 6 = Sunday). Non-working
+    #: weekdays have zero capacity, so the week is not a flat seven equal days.
+    working_days: tuple[int, ...] = DEFAULT_WORKING_DAYS
 
     def validate(self) -> Capacity:
         _require_int(self.minutes_per_day, "minutes_per_day", minimum=60,
@@ -584,7 +603,17 @@ class Capacity:
         if self.day_end_minutes <= self.day_start_minutes:
             _fail(E_MALFORMED,
                   "day_end_minutes must be after day_start_minutes")
+        if not self.working_days:
+            _fail(E_MALFORMED, "working_days must not be empty")
+        if len(set(self.working_days)) != len(self.working_days):
+            _fail(E_MALFORMED, "working_days must be unique")
+        for weekday in self.working_days:
+            _require_int(weekday, "working_days", minimum=0, maximum=6)
         return self
+
+    def is_working_day(self, weekday: int) -> bool:
+        """Whether the given weekday (0 = Monday) is a working day."""
+        return weekday in self.working_days
 
     @property
     def window_minutes(self) -> int:
@@ -605,10 +634,16 @@ class Capacity:
             "buffer_ratio": self.buffer_ratio,
             "day_start_minutes": self.day_start_minutes,
             "day_end_minutes": self.day_end_minutes,
+            "working_days": list(self.working_days),
         }
 
     @staticmethod
     def from_dict(data: Mapping[str, Any]) -> Capacity:
+        raw_working = data.get("working_days", list(DEFAULT_WORKING_DAYS))
+        if not isinstance(raw_working, (list, tuple)):
+            _fail(E_MALFORMED, "working_days must be a list")
+        working_days = tuple(_require_int(day, "working_days", minimum=0,
+                                          maximum=6) for day in raw_working)
         return Capacity(
             minutes_per_day=_require_int(data.get("minutes_per_day", 360),
                                          "minutes_per_day", minimum=60,
@@ -620,6 +655,7 @@ class Capacity:
             day_end_minutes=_require_int(
                 data.get("day_end_minutes", 1080),
                 "day_end_minutes", minimum=1, maximum=1440),
+            working_days=working_days,
         ).validate()
 
 
@@ -677,6 +713,7 @@ class Portfolio:
     tasks: tuple[Task, ...]
     resources: tuple[Resource, ...] = ()
     calendar: tuple[CalendarEvent, ...] = ()
+    days_off: tuple[str, ...] = ()
     capacity: Capacity = field(default_factory=Capacity)
     created_at: str = ""
     updated_at: str = ""
@@ -693,6 +730,10 @@ class Portfolio:
             _fail(E_OVERFLOW, "too many resources")
         if len(self.calendar) > MAX_EVENTS:
             _fail(E_OVERFLOW, "too many calendar events")
+        if len(self.days_off) > MAX_DAYS_OFF:
+            _fail(E_OVERFLOW, "too many days off")
+        for day in self.days_off:
+            _require_deadline(day, "days_off")
         self.capacity.validate()
 
         project_ids = _validate_unique_ids([p.project_id for p in self.projects],
@@ -744,6 +785,7 @@ class Portfolio:
             "tasks": [t.to_dict() for t in self.tasks],
             "resources": [r.to_dict() for r in self.resources],
             "calendar": [e.to_dict() for e in self.calendar],
+            "days_off": list(self.days_off),
             "capacity": self.capacity.to_dict(),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -759,6 +801,7 @@ class Portfolio:
         raw_tasks = data.get("tasks") or []
         raw_resources = data.get("resources") or []
         raw_calendar = data.get("calendar") or []
+        raw_days_off = data.get("days_off") or []
         if not isinstance(raw_projects, list) or not isinstance(raw_tasks, list):
             _fail(E_MALFORMED, "projects/tasks must be lists")
         raw_capacity = data.get("capacity")
@@ -778,6 +821,8 @@ class Portfolio:
             calendar=tuple(CalendarEvent.from_dict(item)
                            for item in raw_calendar
                            if isinstance(item, Mapping)),
+            days_off=tuple(str(day) for day in raw_days_off
+                           if isinstance(day, str)),
             capacity=Capacity.from_dict(capacity_data),
             created_at=str(data.get("created_at", "")),
             updated_at=str(data.get("updated_at", "")),
@@ -827,6 +872,7 @@ __all__ = [
     "PROJECT_OPEN_STATUSES", "PROJECT_STATUSES",
     "RK_BUDGET", "RK_LOCATION", "RK_OTHER", "RK_PERSON", "RK_TOOL",
     "RESOURCE_KINDS",
+    "DEFAULT_WORKING_DAYS", "EVENT_RECURRENCES",
     "SCHEMA_VERSION", "MVP_VERSION",
     "TS_ABANDONED", "TS_BLOCKED", "TS_COMPLETED", "TS_DEFERRED",
     "TS_IN_PROGRESS", "TS_TODO", "TS_WAITING",
