@@ -471,3 +471,22 @@ def test_planning_http_roundtrip(tmp_path: object) -> None:
         })
         assert status == 409
         assert result["error"] == model.E_MALFORMED
+
+
+def test_review_exposes_weekly_signals(tmp_path: object) -> None:
+    root = str(tmp_path)
+    store.save_portfolio(root, model.Portfolio(
+        schema_version=model.SCHEMA_VERSION, name="t",
+        projects=(
+            model.Project(project_id="p1", name="P1", objective="o"),
+            model.Project(project_id="p2", name="P2", objective="o"),
+        ),
+        tasks=(
+            model.Task(task_id="t1", project_id="p1", title="Due soon",
+                       deadline=(MONDAY + timedelta(days=1)).isoformat()),
+        ),
+    ))
+    review = planning.build_review(root, today=MONDAY)
+    assert any(item["task_id"] == "t1" for item in review["at_risk"])
+    assert any(p["project_id"] == "p2" for p in review["stale_projects"])
+    assert "mean_absolute_error_minutes" in review["estimation"]

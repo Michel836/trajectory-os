@@ -3353,6 +3353,22 @@ function renderReview(){
   const d=S.reviewDraft;
   let h='<p class="muted">Review today, then explicitly choose what carries '+
     'into tomorrow. Nothing rolls over automatically.</p>';
+  h+='<h4>At risk (deadline within 3 days)</h4>'+
+    ((rv.at_risk||[]).length?'<ul>'+(rv.at_risk||[]).map(function(c){
+      return '<li>'+esc(c.title)+' <span class="muted">'+esc(c.project)+
+        (c.deadline?' · due '+esc(c.deadline):'')+'</span></li>';}).join('')+
+      '</ul>':'<p class="muted">none</p>');
+  h+='<h4>Projects needing attention</h4>'+
+    ((rv.stale_projects||[]).length?'<ul>'+(rv.stale_projects||[]).map(
+      function(p){return '<li>'+esc(p.name)+' <span class="muted">'+
+        esc(p.reason)+'</span></li>';}).join('')+'</ul>':
+      '<p class="muted">none</p>');
+  const est=rv.estimation||{};
+  h+='<h4>Estimation accuracy</h4><p class="muted">'+
+    (est.completed_with_actual||0)+' completed with actual · '+
+    (est.mean_absolute_error_minutes!=null?('mean error '+
+      Math.round(est.mean_absolute_error_minutes)+' min'):'no data yet')+
+    '</p>';
   h+='<h4>Completed today</h4>'+
     ((rv.completed||[]).length?'<ul>'+(rv.completed||[]).map(function(c){
       return '<li>'+esc(c.title)+' <span class="muted">'+esc(c.project)+

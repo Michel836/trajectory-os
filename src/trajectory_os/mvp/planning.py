@@ -34,13 +34,25 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from trajectory_os.intelligence import model as intel_model
-from trajectory_os.mvp import model, priority, readiness, scheduler, store
+from trajectory_os.mvp import (
+    model,
+    priority,
+    readiness,
+    scheduler,
+    store,
+)
+from trajectory_os.mvp import (
+    outcomes as outcomes_module,
+)
 
 #: Durable planning sidecar filename (relative to a data root).
 PLANNING_NAME = "planning.json"
 
 #: Planning schema version (independent from the portfolio schema).
 PLANNING_SCHEMA_VERSION = 1
+
+#: Days ahead counted as "at risk" in the review (deadline within N days).
+AT_RISK_DAYS = 3
 
 #: Tomorrow plan bounds (deliberately small; do not silently schedule).
 MAX_MAIN_TASKS = 3
@@ -930,9 +942,43 @@ def build_review(root: str | Path, *, today: date | None = None,
                             if project_id in projects else ""),
             })
 
+    # Weekly signals (B3): deterministic, read-only attention lists.
+    near = (today + timedelta(days=AT_RISK_DAYS)).isoformat()
+    at_risk: list[dict[str, Any]] = []
+    for task in sorted(portfolio.tasks,
+                       key=lambda t: (t.deadline or "9999", t.task_id)):
+        if task.status in model.TASK_TERMINAL_STATUSES or not task.deadline:
+            continue
+        if task.deadline <= near:
+            at_risk.append(_review_item(task, projects, readiness_map))
+
+    open_by_project: dict[str, list[model.Task]] = {}
+    for task in portfolio.tasks:
+        if task.status not in model.TASK_TERMINAL_STATUSES:
+            open_by_project.setdefault(task.project_id, []).append(task)
+    stale_projects: list[dict[str, Any]] = []
+    for project in sorted(portfolio.projects, key=lambda p: p.project_id):
+        if not project.open:
+            continue
+        project_tasks = open_by_project.get(project.project_id, [])
+        if not project_tasks:
+            stale_projects.append({
+                "project_id": project.project_id, "name": project.name,
+                "reason": "no open task"})
+        elif not any(readiness_map[t.task_id].ready for t in project_tasks):
+            stale_projects.append({
+                "project_id": project.project_id, "name": project.name,
+                "reason": "no ready task (all blocked/waiting/deferred)"})
+
+    estimation = outcomes_module.planned_vs_actual(
+        portfolio, store.read_outcomes(root)).to_dict()
+
     return {
         "day": today_str,
         "plan_source": plan_source,
+        "at_risk": at_risk,
+        "stale_projects": stale_projects,
+        "estimation": estimation,
         "completed": completed,
         "unfinished_planned": unfinished,
         "blocked": blocked,
