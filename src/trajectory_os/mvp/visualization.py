@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -116,8 +116,13 @@ WBS_LEVELS = ("AREA", "PROJECT", "WORKSTREAM", "WORK_PACKAGE", "TASK",
 
 
 def build_views(root: str | Path, *, today: date | None = None,
+                now: datetime | None = None,
                 prefs: uistate.UIPreferences | None = None) -> dict[str, Any]:
-    """Build the complete, single-source view payload for the cockpit."""
+    """Build the complete, single-source view payload for the cockpit.
+
+    ``now`` is injected for deterministic tests; it drives the time-of-day
+    aware remaining capacity in the today plan.
+    """
     portfolio = store.load_portfolio(root)
     if portfolio is None:
         raise model.MvpError(model.E_MALFORMED, "no portfolio loaded")
@@ -161,8 +166,8 @@ def build_views(root: str | Path, *, today: date | None = None,
     ] + [task_objects[tid] for tid in sorted(task_objects)]
     _attach_import_search_memory(objects, root, portfolio)
 
-    week = scheduler.plan_week(portfolio, ranked, today)
-    day = scheduler.plan_day(portfolio, ranked, today)
+    week = scheduler.plan_week(portfolio, ranked, today, now=now)
+    day = scheduler.plan_day(portfolio, ranked, today, now=now)
 
     planning_state = planning.load_planning(root)
     today_handoff = planning.build_today_handoff(
@@ -195,7 +200,8 @@ def build_views(root: str | Path, *, today: date | None = None,
         "ready_workflow": _ready_workflow(portfolio, readiness_map),
         "planning": planning_state.to_dict(),
         "tomorrow_view": planning.build_tomorrow_view(
-            root, today=today, portfolio=portfolio, state=planning_state),
+            root, today=today, portfolio=portfolio, state=planning_state,
+            now=now),
         "week_view": planning.build_week_view(
             root, today=today, portfolio=portfolio, state=planning_state),
         "review": planning.build_review(
@@ -1044,6 +1050,8 @@ def _build_heatmap(
             "day": day_plan.day,
             "planned_minutes": day_plan.planned_minutes,
             "plan_capacity": day_plan.plan_capacity,
+            "remaining_plan_capacity": day_plan.remaining_plan_capacity,
+            "is_today": day_plan.is_today,
             "planned": len(day_plan.planned),
         })
     projects = portfolio.project_map()

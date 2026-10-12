@@ -102,6 +102,28 @@ def test_capacity_buffer_bounds() -> None:
         model.Capacity(minutes_per_day=360, buffer_ratio=1.0).validate()
 
 
+def test_capacity_defaults_to_a_working_window() -> None:
+    capacity = model.Capacity().validate()
+    assert capacity.day_start_minutes == 540  # 09:00
+    assert capacity.day_end_minutes == 1080  # 18:00
+    assert capacity.window_minutes == 540
+    assert capacity.to_dict()["day_start_minutes"] == 540
+
+
+def test_capacity_window_must_be_ordered() -> None:
+    with pytest.raises(model.MvpError) as exc:
+        model.Capacity(day_start_minutes=1080,
+                       day_end_minutes=540).validate()
+    assert exc.value.code == model.E_MALFORMED
+
+
+def test_capacity_from_legacy_dict_uses_window_defaults() -> None:
+    capacity = model.Capacity.from_dict({"minutes_per_day": 360,
+                                         "buffer_ratio": 0.3})
+    assert capacity.day_start_minutes == 540
+    assert capacity.day_end_minutes == 1080
+
+
 def test_waiting_for_accepts_free_text() -> None:
     task = model.Task(task_id="t1", project_id="p1", title="a",
                       waiting_for=("a third party reply",))

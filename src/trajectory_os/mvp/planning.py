@@ -29,7 +29,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -561,6 +561,7 @@ def build_tomorrow_view(root: str | Path, *, today: date | None = None,
                         target: date | None = None,
                         portfolio: model.Portfolio | None = None,
                         state: PlanningState | None = None,
+                        now: datetime | None = None,
                         ) -> dict[str, Any]:
     """Candidates for the next day plus the saved plan, if any."""
     portfolio = portfolio or store.load_portfolio(root)
@@ -577,7 +578,7 @@ def build_tomorrow_view(root: str | Path, *, today: date | None = None,
     readiness_map = {item.task_id: item
                      for item in readiness.evaluate(portfolio)}
     projects = portfolio.project_map()
-    day_plan = scheduler.plan_day(portfolio, ranked, today)
+    day_plan = scheduler.plan_day(portfolio, ranked, today, now=now)
     planned_today = {item.task_id for item in day_plan.planned}
     # a saved plan for *today* is itself part of "what was planned today".
     if state.tomorrow_plan is not None \
@@ -844,6 +845,7 @@ def _titles_for(portfolio: model.Portfolio,
 def build_review(root: str | Path, *, today: date | None = None,
                  portfolio: model.Portfolio | None = None,
                  state: PlanningState | None = None,
+                 now: datetime | None = None,
                  ) -> dict[str, Any]:
     """End-of-day review: completed, unfinished, blocked, carry candidates."""
     portfolio = portfolio or store.load_portfolio(root)
@@ -887,7 +889,7 @@ def build_review(root: str | Path, *, today: date | None = None,
         ranked = priority.rank_ready_tasks(portfolio, today=today)
         planned_ids = [item.task_id
                        for item in scheduler.plan_day(
-                           portfolio, ranked, today).planned]
+                           portfolio, ranked, today, now=now).planned]
         plan_source = "baseline"
 
     unfinished: list[dict[str, Any]] = []

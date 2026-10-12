@@ -102,7 +102,7 @@ dependencies, cycles, unknown projects/resources and invalid dates.
 ### Views
 
 ```bash
-scripts/mvp today        # today plan: capacity, calendar, buffer, planned
+scripts/mvp today        # today plan: capacity, calendar, buffer, remaining, planned
 scripts/mvp week         # 7-day plan, deadlines, at-risk tasks
 scripts/mvp projects     # project status, progress, next action
 scripts/mvp ready        # ranked ready tasks with reasons
@@ -117,6 +117,13 @@ why-selected and explicit blocking reasons), a **Ready** view that separates
 READY / IN PROGRESS / BLOCKED / WAITING / DEFERRED / closed-project work, a
 presentation-only **global search** and **saved views** (filter presets stored
 in `ui_state.json`, never in the portfolio).
+
+Capacity is **time-of-day aware**. `Capacity` carries an explicit working
+window (`day_start_minutes` / `day_end_minutes`, default 09:00–18:00) and the
+Today views report the capacity *remaining* inside that window, not a fixed
+whole-day number: at 15:00 the cockpit shows `remaining 1h24` and the planner
+only packs what still fits, spilling the rest into the following days. Future
+days keep the full daily budget. See ADR-032.
 
 ### Quick Capture (daily input)
 

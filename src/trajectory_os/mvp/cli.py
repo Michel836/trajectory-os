@@ -168,11 +168,14 @@ def scheduler_week(portfolio: model.Portfolio,
 
 
 def _render_day(day: Any) -> str:
+    buffer_shown = (day.remaining_buffer_minutes if day.is_today
+                    else day.buffer_minutes)
+    ceiling = day.remaining_plan_capacity
     lines = [
         f"Today {day.day}",
         f"capacity {day.total_capacity}m | calendar {day.calendar_minutes}m | "
-        f"buffer {day.buffer_minutes}m | planned {day.planned_minutes}m / "
-        f"{day.plan_capacity}m",
+        f"buffer {buffer_shown}m | remaining {ceiling}m | "
+        f"planned {day.planned_minutes}m / {ceiling}m",
     ]
     for item in day.planned:
         lines.append(f"- {item.title} ({item.estimated_minutes}m)")

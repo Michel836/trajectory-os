@@ -9,7 +9,7 @@ cockpit document under the data root.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -210,8 +210,13 @@ def _dependency_views(portfolio: model.Portfolio,
 
 
 def build_cockpit(root: str | Path, *, today: date | None = None,
+                  now: datetime | None = None,
                   persist: bool = True) -> Cockpit:
-    """Build the full cockpit projection (read-only over the portfolio)."""
+    """Build the full cockpit projection (read-only over the portfolio).
+
+    ``now`` is injected for deterministic tests; it makes the today plan
+    time-of-day aware (see :func:`trajectory_os.mvp.scheduler.day_budget`).
+    """
     portfolio = store.load_portfolio(root)
     if portfolio is None:
         raise model.MvpError(model.E_MALFORMED, "no portfolio loaded")
@@ -226,8 +231,8 @@ def build_cockpit(root: str | Path, *, today: date | None = None,
     pva = outcomes.planned_vs_actual(portfolio, outcomes_records)
     recent_outcomes = tuple(record.to_dict()
                             for record in reversed(outcomes_records[-10:]))
-    day = scheduler.plan_day(portfolio, ready_ranked, today)
-    week = scheduler.plan_week(portfolio, ready_ranked, today)
+    day = scheduler.plan_day(portfolio, ready_ranked, today, now=now)
+    week = scheduler.plan_week(portfolio, ready_ranked, today, now=now)
     deferrable = priority.deferrable_tasks(portfolio, today=today)
 
     cockpit = Cockpit(
