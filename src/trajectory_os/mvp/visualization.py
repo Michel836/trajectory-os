@@ -126,7 +126,8 @@ def build_views(root: str | Path, *, today: date | None = None,
     portfolio = store.load_portfolio(root)
     if portfolio is None:
         raise model.MvpError(model.E_MALFORMED, "no portfolio loaded")
-    today = today or date.today()
+    now = now or datetime.now()
+    today = today or now.date()
     prefs = prefs or uistate.load_preferences(root)
     stamp = intel_model.utc_now()
 
@@ -205,7 +206,8 @@ def build_views(root: str | Path, *, today: date | None = None,
         "week_view": planning.build_week_view(
             root, today=today, portfolio=portfolio, state=planning_state),
         "review": planning.build_review(
-            root, today=today, portfolio=portfolio, state=planning_state),
+            root, today=today, portfolio=portfolio, state=planning_state,
+            now=now),
         "attribute_catalog": list(ATTRIBUTE_CATALOG),
         "colour_modes": list(uistate.COLOR_MODES),
         "densities": list(uistate.DENSITIES),

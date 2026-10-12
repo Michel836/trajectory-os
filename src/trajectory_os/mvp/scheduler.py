@@ -114,11 +114,18 @@ class DayPlan:
     remaining_buffer_minutes: int
     remaining_plan_capacity: int
 
+    @property
+    def display_calendar_minutes(self) -> int:
+        """Calendar time relevant to the capacity line for this day."""
+        return (self.remaining_calendar_minutes if self.is_today
+                else self.calendar_minutes)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "day": self.day,
             "total_capacity": self.total_capacity,
             "calendar_minutes": self.calendar_minutes,
+            "display_calendar_minutes": self.display_calendar_minutes,
             "buffer_minutes": self.buffer_minutes,
             "plan_capacity": self.plan_capacity,
             "planned_minutes": self.planned_minutes,
@@ -307,17 +314,21 @@ def _day_plan(budget: DayBudget,
 
 def plan_day(portfolio: model.Portfolio,
              ranked: tuple[priority.PrioritizedTask, ...],
-             day: date, *, now: datetime | None = None) -> DayPlan:
+             day: date, *, now: datetime | None = None,
+             nominal: bool = False) -> DayPlan:
     """Build one day's plan from ranked ready tasks.
 
     For today, only the *remaining* capacity is packed, so a plan rebuilt at
-    15:00 never pretends the whole morning is still available.
+    15:00 never pretends the whole morning is still available. ``nominal`` is
+    reserved for historical Review baselines: it reconstructs the day's full
+    task set without advertising that capacity as still available now.
     """
     projects = portfolio.project_map()
     tasks = portfolio.task_map()
     ranked_map = {item.task_id: item for item in ranked}
     budget = day_budget(portfolio, day, now=now)
-    max_minutes = budget.remaining_plan_capacity
+    max_minutes = (budget.plan_capacity if nominal
+                   else budget.remaining_plan_capacity)
 
     planned: list[PlanItem] = []
     deferred: list[priority.PrioritizedTask] = []

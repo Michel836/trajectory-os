@@ -51,7 +51,7 @@ def render_text(cockpit: engine.Cockpit) -> str:
     ceiling = day["remaining_plan_capacity"]
     lines.append(
         f"  capacity {_fmt_minutes(day['total_capacity'])} | "
-        f"calendar {_fmt_minutes(day['calendar_minutes'])} | "
+        f"calendar {_fmt_minutes(day['display_calendar_minutes'])} | "
         f"buffer {_fmt_minutes(buffer_shown)} | "
         f"remaining {_fmt_minutes(ceiling)} | "
         f"planned {_fmt_minutes(day['planned_minutes'])} / "

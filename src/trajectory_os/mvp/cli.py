@@ -173,7 +173,8 @@ def _render_day(day: Any) -> str:
     ceiling = day.remaining_plan_capacity
     lines = [
         f"Today {day.day}",
-        f"capacity {day.total_capacity}m | calendar {day.calendar_minutes}m | "
+        f"capacity {day.total_capacity}m | "
+        f"calendar {day.display_calendar_minutes}m | "
         f"buffer {buffer_shown}m | remaining {ceiling}m | "
         f"planned {day.planned_minutes}m / {ceiling}m",
     ]

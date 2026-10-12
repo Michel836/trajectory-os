@@ -555,8 +555,9 @@ function capacityLabel(plan){
   const isToday=!!plan.is_today;
   const buf=isToday?plan.remaining_buffer_minutes:plan.buffer_minutes;
   const remaining=plan.remaining_plan_capacity;
+  const calendar=isToday?plan.remaining_calendar_minutes:plan.calendar_minutes;
   return 'capacity '+fmtMin(plan.total_capacity)+' · calendar '+
-    fmtMin(plan.calendar_minutes)+' · buffer '+fmtMin(buf)+' · remaining '+
+    fmtMin(calendar)+' · buffer '+fmtMin(buf)+' · remaining '+
     fmtMin(remaining)+' · planned '+fmtMin(plan.planned_minutes)+' / '+
     fmtMin(remaining);}
 function pill(text,cls){return '<span class="pill '+(cls||'')+'">'+

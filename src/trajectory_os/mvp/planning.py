@@ -889,7 +889,8 @@ def build_review(root: str | Path, *, today: date | None = None,
         ranked = priority.rank_ready_tasks(portfolio, today=today)
         planned_ids = [item.task_id
                        for item in scheduler.plan_day(
-                           portfolio, ranked, today, now=now).planned]
+                           portfolio, ranked, today, now=now,
+                           nominal=True).planned]
         plan_source = "baseline"
 
     unfinished: list[dict[str, Any]] = []
