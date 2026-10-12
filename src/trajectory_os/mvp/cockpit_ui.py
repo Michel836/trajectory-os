@@ -768,12 +768,17 @@ function initInspectorSplitter(){
 function initInspectorWorkspace(){
   if(S.inspectorInit)return;S.inspectorInit=true;
   loadInspectorPrefs();initInspectorSplitter();
+function captureShortcutAllowed(tag,contentEditable,ctrl,meta,key,overlayOpen){
+  if(overlayOpen)return false;
+  if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||contentEditable)
+    return false;
+  if(!(ctrl||meta))return false;
+  return String(key||'').toLowerCase()==='k';}
   document.addEventListener('keydown',function(e){
-    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){
-      if(!document.querySelector('.overlay.open')&&
-         typeof openCapture==='function'){
-        e.preventDefault();openCapture();}
-      return;}
+    const t=e.target||{};
+    if(captureShortcutAllowed(t.tagName,t.isContentEditable,e.ctrlKey,
+        e.metaKey,e.key,!!document.querySelector('.overlay.open'))){
+      e.preventDefault();openCapture();return;}
     if(e.key!=='Escape')return;
     const duplicateOverlay=$('duplicate-overlay');
     if(duplicateOverlay&&duplicateOverlay.classList.contains('open')){

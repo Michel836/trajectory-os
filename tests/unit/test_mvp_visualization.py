@@ -383,10 +383,43 @@ def test_task_objects_expose_dates(tmp_path: object) -> None:
     assert task["updated_at"] == "2026-02-02T00:00:00Z"
 
 
-def test_quick_capture_shortcut_is_wired() -> None:
-    js = cockpit_ui.PAGE_JS
-    assert "e.key.toLowerCase()==='k'" in js
-    assert "openCapture()" in js
+def _js_function(source: str, name: str) -> str:
+    start = source.index("function " + name + "(")
+    brace = source.index("{", start)
+    depth = 0
+    for index in range(brace, len(source)):
+        char = source[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise AssertionError("unbalanced " + name)
+
+
+def test_quick_capture_shortcut_is_wired(tmp_path: object) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    function = _js_function(cockpit_ui.PAGE_JS, "captureShortcutAllowed")
+    script = function + (
+        "\nconst cases=["
+        "captureShortcutAllowed('INPUT','',true,false,'k',false),"
+        "captureShortcutAllowed('TEXTAREA','',true,false,'k',false),"
+        "captureShortcutAllowed('DIV',true,true,false,'k',false),"
+        "captureShortcutAllowed('BODY','',true,false,'k',true),"
+        "captureShortcutAllowed('BODY','',false,false,'k',false),"
+        "captureShortcutAllowed('BODY','',true,false,'j',false),"
+        "captureShortcutAllowed('BODY','',true,false,'k',false)];"
+        "console.log(JSON.stringify(cases));")
+    path = Path(str(tmp_path)) / "shortcut.js"
+    path.write_text(script, encoding="utf-8")
+    result = subprocess.run([node, str(path)], capture_output=True, text=True,
+                            check=False)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [
+        False, False, False, False, False, False, True]
 
 
 def test_suggested_visual_distinction_present() -> None:

@@ -362,8 +362,14 @@ def _cmd_dashboard(args: argparse.Namespace) -> int:
     print(f"cockpit: http://127.0.0.1:{port}/  (Ctrl-C to stop)")
 
     def on_ready(server: Any) -> None:
+        from urllib.parse import quote
+
         host, bound_port = server.server_address[:2]
         url = f"http://{host}:{bound_port}/"
+        if token:
+            # The browser cannot send an Authorization header on a plain
+            # navigation, so the token must travel in the query string.
+            url = f"{url}?token={quote(token, safe='')}"
         print(f"listening on {url}")
         if not getattr(args, "no_open", False):
             try:
