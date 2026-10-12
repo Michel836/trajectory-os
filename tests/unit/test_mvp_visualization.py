@@ -422,6 +422,15 @@ def test_quick_capture_shortcut_is_wired(tmp_path: object) -> None:
         False, False, False, False, False, False, True]
 
 
+def test_decisions_view_is_wired() -> None:
+    js = cockpit_ui.PAGE_JS
+    assert "decisions" in uistate.VIEWS
+    assert "['decisions','Decisions']" in js
+    assert "decisions:renderDecisions" in js
+    for fn in ("renderDecisions", "decideDecision"):
+        assert "function " + fn + "(" in js, fn
+
+
 def test_search_before_capture_is_wired(tmp_path: object) -> None:
     node = shutil.which("node")
     if node is None:

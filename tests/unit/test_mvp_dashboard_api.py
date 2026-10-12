@@ -492,6 +492,24 @@ def test_api_event_create_then_delete(tmp_path: object) -> None:
     assert portfolio.calendar == ()
 
 
+def test_api_create_and_decide_decision(tmp_path: object) -> None:
+    root = str(tmp_path)
+    _seed(root)
+    with _server(root) as port:
+        status, created = _request(port, "POST", "/api/decisions",
+                                   {"title": "Pick a database"})
+        assert status == 200
+        decision_id = str(created["decision_id"])
+        status, views = _request(port, "GET", "/api/views")
+        assert status == 200
+        assert views["decisions"][0]["title"] == "Pick a database"  # type: ignore[index]
+        status, result = _request(
+            port, "POST", f"/api/decisions/{decision_id}/decide",
+            {"choice": "SQLite"})
+        assert status == 200
+        assert result["status"] == model.DS_DECIDED
+
+
 def test_api_create_and_materialize_routine(tmp_path: object) -> None:
     from datetime import date
 

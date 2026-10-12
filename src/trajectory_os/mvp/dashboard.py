@@ -559,6 +559,22 @@ class Dashboard:
     def materialize_routines(self, day: str) -> dict[str, Any]:
         return mutations.materialize_routines(self.root, day)
 
+    # --- decisions -----------------------------------------------------------
+
+    def create_decision(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return mutations.create_decision(self.root, payload)
+
+    def update_decision(self, decision_id: str,
+                        payload: Mapping[str, Any]) -> dict[str, Any]:
+        return mutations.update_decision(self.root, decision_id, payload)
+
+    def decide(self, decision_id: str,
+               payload: Mapping[str, Any]) -> dict[str, Any]:
+        return mutations.decide(self.root, decision_id, payload)
+
+    def delete_decision(self, decision_id: str) -> dict[str, Any]:
+        return mutations.delete_decision(self.root, decision_id)
+
 
 def _record_outcome(root: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     task_id = payload.get("task_id")
@@ -852,6 +868,16 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.delete_routine(parts[2])
             if len(parts) == 3 and parts[:2] == ["api", "routines"]:
                 return app.update_routine(parts[2], payload)
+            if parts == ["api", "decisions"]:
+                return app.create_decision(payload)
+            if len(parts) == 4 and parts[:2] == ["api", "decisions"] \
+                    and parts[3] == "decide":
+                return app.decide(parts[2], payload)
+            if len(parts) == 4 and parts[:2] == ["api", "decisions"] \
+                    and parts[3] == "delete":
+                return app.delete_decision(parts[2])
+            if len(parts) == 3 and parts[:2] == ["api", "decisions"]:
+                return app.update_decision(parts[2], payload)
             if parts == ["api", "projects"]:
                 return app.create_project(payload)
             if len(parts) == 4 and parts[:2] == ["api", "projects"] \

@@ -510,8 +510,8 @@ function isRepeatClick(prevId, prevTime, id, now, windowMs){
 
 PAGE_JS = TABLE_JS_HELPERS + r"""
 const VIEWS = [
-  ['today','Today'],['inbox','Inbox'],['waiting','Waiting'],['ready','Ready'],
-  ['tomorrow','Tomorrow'],['week','Week'],
+  ['today','Today'],['inbox','Inbox'],['waiting','Waiting'],['decisions','Decisions'],
+  ['ready','Ready'],['tomorrow','Tomorrow'],['week','Week'],
   ['list','List'],['kanban','Kanban'],['wbs','WBS'],['graph','Dependency Graph'],
   ['gantt','Gantt'],['eisenhower','Eisenhower'],['impact_effort','Impact / Effort'],
   ['portfolio_map','Portfolio Map'],['treemap','Treemap'],['progress','Progress'],
@@ -985,7 +985,7 @@ function renderView(){
     gantt:renderGantt,eisenhower:renderEisenhower,impact_effort:renderImpactEffort,
     portfolio_map:renderPortfolioMap,treemap:renderTreemap,progress:renderProgress,
     heatmap:renderHeatmap,goal_flow:renderGoalFlow,focus:renderFocus,
-    inbox:renderInbox,waiting:renderWaiting}[S.view]
+    inbox:renderInbox,waiting:renderWaiting,decisions:renderDecisions}[S.view]
     ||renderList;
   fn();
 }
@@ -3013,6 +3013,32 @@ function renderWaiting(){
     '</td><td>'+esc(ageDaysText(o.updated_at))+'</td><td>'+
     '<button class="small primary" onclick="chaseWaiting(\''+o.ref_id+
     '\')">Chase</button></td></tr>';}).join('')+'</table>';}
+  $('view-root').innerHTML=h;}
+async function decideDecision(id){
+  const d=(S.views.decisions||[]).filter(function(x){
+    return x.decision_id===id;})[0];
+  const choice=prompt('Decision'+(d?(' - '+d.title):'')+
+    ': what did you choose?','');
+  if(!choice)return;
+  try{await api('/api/decisions/'+encodeURIComponent(id)+'/decide','POST',
+    {choice:choice});await refresh();}catch(err){notice(err.message);}}
+function renderDecisions(){
+  const items=(S.views.decisions||[]);
+  let h='<h2>Decisions</h2><p class="muted">Consequential choices and why. '+
+    'TrajectoryOS never decides on its own.</p>';
+  h+='<table><tr><th>Decision</th><th>Status</th><th>Choice</th>'+
+    '<th>Rationale</th><th></th></tr>'+(items.length?items.map(function(d){
+      const title=d.project_id?('<a onclick="selectObject(\'project:'+
+        esc(d.project_id)+'\')">'+esc(d.title)+'</a>'):esc(d.title);
+      const cls=d.status==='DECIDED'?'ACTIVE':(d.status==='OPEN'?
+        'IN_PROGRESS':'DEFERRED');
+      const action=(d.status==='OPEN'||d.status==='DEFERRED')?
+        ('<button class="small primary" onclick="decideDecision(\''+
+          esc(d.decision_id)+'\')">Decide…</button>'):'';
+      return '<tr><td>'+title+'</td><td>'+pill(d.status,'badge-'+cls)+
+        '</td><td>'+esc(d.choice||'—')+'</td><td>'+esc(d.rationale||'—')+
+        '</td><td>'+action+'</td></tr>';}).join(''):
+      '<tr><td colspan="5" class="muted">no decisions</td></tr>')+'</table>';
   $('view-root').innerHTML=h;}
 function renderInbox(){
   const parked=objects().filter(function(o){return o.kind==='project'&&

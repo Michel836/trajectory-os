@@ -33,7 +33,9 @@ from trajectory_os.mvp import classification, importer, model, outcomes, store
 #: Serialize in-process portfolio mutations. The local cockpit server is
 #: threaded, so two read-modify-write requests could otherwise lose an update.
 #: Cross-process writers (CLI) remain a documented limitation.
-_MUTATION_LOCK = threading.Lock()
+#: Reentrant so a serialized mutation may call another (e.g. decide ->
+#: update_decision) without deadlocking.
+_MUTATION_LOCK = threading.RLock()
 
 
 def _serialized[F: Callable[..., Any]](func: F) -> F:
@@ -641,6 +643,120 @@ def materialize_routines(root: str | Path, day: str) -> dict[str, Any]:
         store.save_portfolio(root, new_portfolio)
     return {"day": day, "created_tasks": len(created),
             "task_ids": [t.task_id for t in created]}
+
+
+# --- decisions ----------------------------------------------------------------
+
+DECISION_EDITABLE = frozenset({
+    "title", "question", "status", "choice", "rationale", "options",
+    "project_id", "deadline",
+})
+
+
+def _decision_from(decision_id: str, payload: Mapping[str, Any],
+                   portfolio: model.Portfolio, *,
+                   decided_at: str) -> model.Decision:
+    project_id = str(_value(payload, "project_id", ""))
+    if project_id and project_id not in portfolio.project_map():
+        raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+    return model.Decision(
+        decision_id=decision_id,
+        title=_required_str(payload, "title"),
+        question=str(_value(payload, "question", "")),
+        status=str(_value(payload, "status", model.DS_OPEN)),
+        choice=str(_value(payload, "choice", "")),
+        rationale=str(_value(payload, "rationale", "")),
+        options=_tuple_field(payload, "options"),
+        project_id=project_id,
+        deadline=_optional_blankable(_value(payload, "deadline")),
+        decided_at=decided_at,
+    ).validate()
+
+
+@_serialized
+def create_decision(root: str | Path,
+                    payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Create one human-authored decision record."""
+    portfolio = _load(root)
+    _reject_unknown(payload,
+                    DECISION_EDITABLE | frozenset({"decision_id"}), "decision")
+    existing = {d.decision_id for d in portfolio.decisions}
+    decision_id = payload.get("decision_id")
+    title = _required_str(payload, "title")
+    if not isinstance(decision_id, str) or not decision_id.strip():
+        decision_id = _unique_id(existing, _slug(title, "decision"))
+    stamp = _updated_at(portfolio)
+    decided_at = (stamp if str(_value(payload, "status", model.DS_OPEN))
+                  in model.DECISION_TERMINAL_STATUSES else "")
+    decision = _decision_from(decision_id, payload, portfolio,
+                              decided_at=decided_at)
+    new_portfolio = replace(
+        portfolio, decisions=portfolio.decisions + (decision,),
+        updated_at=stamp).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"decision_id": decision_id, "status": decision.status}
+
+
+@_serialized
+def update_decision(root: str | Path, decision_id: str,
+                    payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Apply a partial, validated update to one decision."""
+    portfolio = _load(root)
+    _reject_unknown(payload, DECISION_EDITABLE, "decision")
+    decisions = {d.decision_id: d for d in portfolio.decisions}
+    if decision_id not in decisions:
+        raise model.MvpError(model.E_UNKNOWN_ID, decision_id)
+    current = decisions[decision_id]
+    merged: dict[str, Any] = {
+        "title": current.title, "question": current.question,
+        "status": current.status, "choice": current.choice,
+        "rationale": current.rationale, "options": list(current.options),
+        "project_id": current.project_id, "deadline": current.deadline,
+    }
+    merged.update({key: payload[key] for key in DECISION_EDITABLE
+                   if key in payload})
+    settled = str(merged["status"]) in model.DECISION_TERMINAL_STATUSES
+    decided_at = current.decided_at
+    if settled and not decided_at:
+        decided_at = _now()
+    elif not settled:
+        decided_at = ""
+    updated = _decision_from(decision_id, merged, portfolio,
+                             decided_at=decided_at)
+    new_decisions = tuple(updated if d.decision_id == decision_id else d
+                          for d in portfolio.decisions)
+    new_portfolio = replace(portfolio, decisions=new_decisions,
+                            updated_at=_updated_at(portfolio)).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"decision_id": decision_id, "status": updated.status}
+
+
+@_serialized
+def decide(root: str | Path, decision_id: str,
+           payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Record the human's choice for a decision."""
+    _reject_unknown(payload, frozenset({"choice", "rationale", "options"}),
+                    "decide")
+    choice = _required_str(payload, "choice")
+    update: dict[str, Any] = {"status": model.DS_DECIDED, "choice": choice}
+    if "rationale" in payload:
+        update["rationale"] = payload["rationale"]
+    if "options" in payload:
+        update["options"] = payload["options"]
+    return update_decision(root, decision_id, update)
+
+
+@_serialized
+def delete_decision(root: str | Path, decision_id: str) -> dict[str, Any]:
+    portfolio = _load(root)
+    if decision_id not in {d.decision_id for d in portfolio.decisions}:
+        raise model.MvpError(model.E_UNKNOWN_ID, decision_id)
+    new_decisions = tuple(d for d in portfolio.decisions
+                          if d.decision_id != decision_id)
+    new_portfolio = replace(portfolio, decisions=new_decisions,
+                            updated_at=_updated_at(portfolio)).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"decision_id": decision_id, "deleted": True}
 
 
 # --- task mutations -----------------------------------------------------------
