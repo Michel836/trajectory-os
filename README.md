@@ -59,6 +59,109 @@ The target architecture combines:
 
 Complexity is introduced only when the previous layer has demonstrated value.
 
+## Personal execution MVP (V0 — Trajectory Mirror)
+
+The daily personal execution & decision system. It turns real projects into a
+structured portfolio and answers, every morning:
+
+1. What are my most important active projects?
+2. What tasks are actually ready to execute?
+3. What is blocked, and by what?
+4. What should I do today?
+5. What should I do this week?
+6. Why are these actions prioritised?
+7. What can safely be deferred?
+8. What is my realistic workload/capacity?
+9. What changed since yesterday?
+10. What should be replanned after real execution outcomes?
+
+### Start
+
+```bash
+# 1. write the representative seed portfolio (replace it with your real data)
+scripts/mvp init
+
+# 2. full daily cockpit (text)
+scripts/mvp plan
+
+# 3. local visual cockpit (recommended)
+scripts/mvp dashboard          # -> http://127.0.0.1:8787/
+```
+
+### Load real projects
+
+Edit `local_data/mvp/portfolio.json`, or point the MVP at another JSON file:
+
+```bash
+scripts/mvp load --root local_data/mvp path/to/portfolio.json
+```
+
+The portfolio is schema-validated and fails closed on bad ids, dangling
+dependencies, cycles, unknown projects/resources and invalid dates.
+
+### Views
+
+```bash
+scripts/mvp today        # today plan: capacity, calendar, buffer, planned
+scripts/mvp week         # 7-day plan, deadlines, at-risk tasks
+scripts/mvp projects     # project status, progress, next action
+scripts/mvp ready        # ranked ready tasks with reasons
+scripts/mvp blocked      # blocked + waiting tasks with reasons
+scripts/mvp wbs          # objective -> project -> workstream -> deliverable -> task
+scripts/mvp export-sp    # export ready tasks to Super Productivity import JSON
+scripts/mvp export-sp --dry-run   # build the export document, write nothing
+```
+
+The visual cockpit additionally offers a **Today** view (what to do now, with
+why-selected and explicit blocking reasons), a **Ready** view that separates
+READY / IN PROGRESS / BLOCKED / WAITING / DEFERRED / closed-project work, a
+presentation-only **global search** and **saved views** (filter presets stored
+in `ui_state.json`, never in the portfolio).
+
+### Quick Capture (daily input)
+
+```bash
+scripts/mvp capture --text "water the garden plots"      # preview only
+scripts/mvp capture --text "..." --confirm --project P    # apply (human)
+```
+
+Quick Capture is a deterministic, local pipeline: it splits free-form text into
+lines, classifies each one (new task / possible project / existing match /
+duplicate), matches it against the relevant existing projects and tasks, and
+shows a preview. Nothing is written until the human confirms, and a confirm is
+all-or-nothing. The cockpit exposes the same flow as **Quick Capture** with
+Accept / Edit / Skip / Merge per line.
+
+### AI assistance is on demand only
+
+Project-level actions (**Next actions**, **Generate WBS**, **Suggest
+dependencies**, **Suggest deliverables**) keep every generated item
+`SUGGESTED` in an `enrichment/<project>.json` sidecar. Suggestions enter the
+portfolio only through an explicit Accept; Reject keeps them out. There is no
+silent fallback and no auto-accept.
+
+### Record completion (outcome -> replan)
+
+```bash
+scripts/mvp record --task docs.index --outcome COMPLETED --minutes 200
+# outcomes: COMPLETED | DEFERRED | BLOCKED | ABANDONED
+```
+
+Recording an outcome updates the task and project state, releases downstream
+tasks (re-evaluated readiness) and feeds planned-vs-actual statistics; the
+next `plan` is the replan. The cockpit's outcome form captures completion
+status, actual minutes and a result/blocker note in the same validated path,
+and derives the estimation error without any new schema field.
+
+### Reproducible demo
+
+```bash
+scripts/mvp demo          # seed + plan + cockpit.html + cockpit.json
+```
+
+Deterministic, privacy-safe: deadlines are relative to an injected date, no
+personal identifiers, no real amounts, no network access.
+
 ## Operator product layer (M017-M019)
 
 One unified operator CLI projects and controls the canonical goal-execution

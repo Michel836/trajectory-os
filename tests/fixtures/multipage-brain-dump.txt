@@ -1,0 +1,127 @@
+# Brain dump — sample projects and intentions (multi-page)
+
+This sample document collects the current state of a fictional, intentionally
+generic set of community and home projects. Everything is still fairly flat
+and unstructured.
+
+## Community Garden Planner
+
+Build a small planning tool for a neighbourhood community garden: plots,
+volunteer shifts, a planting calendar and shared tools. The goal is a usable
+first version.
+
+- define the plot and volunteer data model
+- connect the calendar import
+- build the planning board
+- rank the open tasks
+- document the README
+
+## Fictional Consulting Portfolio
+
+Assemble a demonstrably fictional consulting portfolio: sample case studies,
+service descriptions and a reusable proposal template. There is a writing part
+and a packaging part.
+
+- collect the sample case studies
+- review the service descriptions
+- organise the proposal template
+- check the publishing checklist
+
+## Language-Learning App
+
+Create a small language-learning app for personal study. It should support
+lessons, vocabulary review and simple progress tracking.
+
+- design the lesson screen
+- build the vocabulary review flow
+- add progress tracking
+- test on a sample device
+
+## Public Conference Preparation
+
+Prepare a talk for a public community conference: abstract, slides, a live
+demo and a rehearsal. Keep the material reusable for future events.
+
+- write the talk abstract
+- outline the session
+- prepare the live demo
+- improve the speaker notes
+
+## Home Lab Backup
+
+Set up a reliable backup routine for a small home lab: local snapshots,
+off-site copies and a documented restore test.
+
+- configure the snapshot schedule
+- configure the off-site copy
+- document the restore procedure
+- verify the first restore
+
+## Sample Training Application
+
+Apply for a sample training programme: gather certificates, shortlist a course
+and submit the application form.
+
+- gather the sample certificates
+- shortlist the course options
+- submit the application form
+
+## Generic Administrative Renewal
+
+Renew a generic administrative document: collect the forms, book an
+appointment and confirm the renewal.
+
+- collect the renewal forms
+- book an appointment
+- confirm the renewal
+
+## Fictional Budget Planning
+
+Plan a fictional monthly budget: categories, monthly limits and scheduled
+transfers.
+
+- list the budget categories
+- set the monthly limits
+- schedule the transfers
+
+## Sample Equipment Maintenance
+
+Maintain a set of sample lab devices: inventory, firmware updates and a
+maintenance log.
+
+- inventory the devices
+- update the firmware
+- record the maintenance log
+
+## Open-Source Documentation Library
+
+Build a small documentation library for open-source notes with a search page.
+
+- choose the documentation tooling
+- index the sample documents
+- connect the search page
+
+## Sample Certification Portfolio
+
+Keep track of sample certifications and update a public profile.
+
+- list completed certifications
+- update the public profile
+- highlight them in the portfolio
+
+## Open questions, resources and waiting items
+
+These are still open, waiting or blocked and need a decision or an external
+reply.
+
+- QUESTION: which hosting option should the garden planner use?
+- RESOURCE: a shared seed inventory spreadsheet
+- WAITING: reply from the community hall about the event date
+- BLOCKER: the demo laptop needs a replacement battery
+- decision needed on the backup retention window
+
+## Someday / ideas
+
+- learn to play the ukulele (someday)
+- repaint the garden shed (someday)
+- vague idea for a plant-swap mobile app (idea)
