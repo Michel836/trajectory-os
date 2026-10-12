@@ -363,7 +363,14 @@ def _cmd_dashboard(args: argparse.Namespace) -> int:
 
     def on_ready(server: Any) -> None:
         host, bound_port = server.server_address[:2]
-        print(f"listening on http://{host}:{bound_port}/")
+        url = f"http://{host}:{bound_port}/"
+        print(f"listening on {url}")
+        if not getattr(args, "no_open", False):
+            try:
+                import webbrowser
+                webbrowser.open(url)
+            except Exception:  # pragma: no cover - best effort convenience
+                pass
 
     try:
         dashboard.serve(app, port=port, on_ready=on_ready)
@@ -485,6 +492,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("dashboard", help="serve the local cockpit")
     p.add_argument("--root", default=DEFAULT_ROOT)
     p.add_argument("--port", type=int, default=8787)
+    p.add_argument("--no-open", action="store_true",
+                   help="do not open the browser automatically")
     p.set_defaults(func=_cmd_dashboard)
 
     p = sub.add_parser("demo", help="run the reproducible demo scenario")

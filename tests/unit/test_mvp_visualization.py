@@ -383,6 +383,12 @@ def test_task_objects_expose_dates(tmp_path: object) -> None:
     assert task["updated_at"] == "2026-02-02T00:00:00Z"
 
 
+def test_quick_capture_shortcut_is_wired() -> None:
+    js = cockpit_ui.PAGE_JS
+    assert "e.key.toLowerCase()==='k'" in js
+    assert "openCapture()" in js
+
+
 def test_suggested_visual_distinction_present() -> None:
     # SUGGESTED content must be visually distinguished everywhere it appears.
     assert "badge-SUGGESTED" in cockpit_ui.PAGE_CSS

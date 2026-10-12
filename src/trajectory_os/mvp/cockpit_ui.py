@@ -769,6 +769,11 @@ function initInspectorWorkspace(){
   if(S.inspectorInit)return;S.inspectorInit=true;
   loadInspectorPrefs();initInspectorSplitter();
   document.addEventListener('keydown',function(e){
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){
+      if(!document.querySelector('.overlay.open')&&
+         typeof openCapture==='function'){
+        e.preventDefault();openCapture();}
+      return;}
     if(e.key!=='Escape')return;
     const duplicateOverlay=$('duplicate-overlay');
     if(duplicateOverlay&&duplicateOverlay.classList.contains('open')){
