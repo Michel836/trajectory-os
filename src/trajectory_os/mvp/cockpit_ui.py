@@ -517,7 +517,7 @@ const VIEWS = [
   ['heatmap','Heatmap'],['goal_flow','Goal Flow'],['focus','Focus']
 ];
 const KANBAN_TASK = ['TODO','IN_PROGRESS','READY','WAITING','BLOCKED','DONE','DEFERRED'];
-const KANBAN_PROJECT = ['ACTIVE','WAITING','BLOCKED','DEFERRED','COMPLETED'];
+const KANBAN_PROJECT = ['ACTIVE','WAITING','BLOCKED','DEFERRED','COMPLETED','IDEA','SOMEDAY'];
 const S = {
   views:null, cockpit:null,
   view:'list', selection:null, filters:{scope:'all',scope_id:null,level:'all',
@@ -1898,7 +1898,7 @@ function editActions(kind){
     'Save changes</button></div>';}
 function projectEditHtml(id){
   const p=obj('project:'+id);if(!p)return '';
-  const statuses=['ACTIVE','WAITING','BLOCKED','DEFERRED','COMPLETED'];
+  const statuses=['ACTIVE','WAITING','BLOCKED','DEFERRED','COMPLETED','IDEA','SOMEDAY'];
   const urgs=['CRITICAL','HIGH','MEDIUM','LOW'];
   const imps=['HIGH','MEDIUM','LOW'];
   let h='<div class="inspector-form">';
@@ -2115,7 +2115,7 @@ function openProject(pid){selectObject('project:'+pid);return;
 function openProjectForm(pid){
   if(pid){startProjectEdit(pid);return;}
   const s={};
-  const opts=['ACTIVE','WAITING','BLOCKED','DEFERRED','COMPLETED'];
+  const opts=['ACTIVE','WAITING','BLOCKED','DEFERRED','COMPLETED','IDEA','SOMEDAY'];
   const urg=['CRITICAL','HIGH','MEDIUM','LOW'];const imp=['HIGH','MEDIUM','LOW'];
   const sel=function(list,cur){return list.map(function(v){
     return '<option'+(v===cur?' selected':'')+'>'+v+'</option>';}).join('');};
@@ -2463,7 +2463,7 @@ function impProjectOptions(selected){const opts=objects().filter(function(o){
       ' selected':'')+'>'+esc(p.title)+'</option>';});
   return '<option value="">(keep document context)</option>'+opts.join('');}
 function impEditForm(c,isProject,isTask){
-  const statuses=isProject?['ACTIVE','WAITING','BLOCKED','DEFERRED','COMPLETED']:
+  const statuses=isProject?['ACTIVE','WAITING','BLOCKED','DEFERRED','COMPLETED','IDEA','SOMEDAY']:
     ['TODO','IN_PROGRESS','BLOCKED','WAITING','COMPLETED','DEFERRED','ABANDONED'];
   const sel=function(id,list,cur){return '<select id="'+id+'">'+
     '<option value="">(default)</option>'+list.map(function(v){
@@ -3290,7 +3290,8 @@ async function analyzeCapture(){
   try{const res=await api('/api/capture','POST',{text:text});S.capture=res;
     renderCapturePreview(res);}catch(err){notice(err.message);}}
 function capBadge(cat){const cls={new_task:'READY',possible_project:'IN_PROGRESS',
-  existing_project:'ACTIVE',existing_task:'WAITING',duplicate:'DEFERRED'}[cat]||'TODO';
+  possible_idea:'IN_PROGRESS',existing_project:'ACTIVE',existing_task:'WAITING',
+  duplicate:'DEFERRED'}[cat]||'TODO';
   return pill(cat,'badge-'+cls);}
 function capActionOptions(item){
   let actions=['accept','skip'];
@@ -3308,6 +3309,7 @@ function capItemRow(item){
         (p.project_id===item.project_id?' selected':'')+'>'+esc(p.title)+
         '</option>';}).join('');
   return '<div class="card" style="margin:.4rem 0"><div>'+capBadge(item.category)+
+    (item.ambiguous?pill('ambiguous','badge-WAITING')+' ':'')+
     ' <input id="cap-title-'+esc(item.capture_id)+'" value="'+esc(item.title)+
     '" style="width:62%"></div>'+
     (item.matched_title?'<div class="muted">matched: '+esc(item.matched_title)+
@@ -3316,7 +3318,7 @@ function capItemRow(item){
     '<div class="bar"><select id="cap-action-'+esc(item.capture_id)+'">'+
     capActionOptions(item)+'</select>'+
     '<select id="cap-kind-'+esc(item.capture_id)+'">'+
-    ['task','project'].map(function(k){return '<option value="'+k+'"'+
+    ['task','project','idea','someday'].map(function(k){return '<option value="'+k+'"'+
       (item.kind===k?' selected':'')+'>'+k+'</option>';}).join('')+'</select>'+
     '<select id="cap-project-'+esc(item.capture_id)+'">'+
     '<option value="">(choose project)</option>'+projectOpts+'</select>'+
@@ -3326,7 +3328,8 @@ function renderCapturePreview(res){
   let h='<div class="card" style="background:#f8fafc"><strong>'+c.items+
     '</strong> item(s) · '+c.matched_existing+' matched existing · '+
     c.duplicates+' duplicate(s) · '+c.new_tasks+' new task(s) · '+
-    c.possible_projects+' possible project(s)<div class="muted">'+
+    c.possible_projects+' possible project(s) · '+c.possible_ideas+
+    ' possible idea(s)<div class="muted">'+
     'engine '+esc(inst.engine||'')+' · model '+esc(inst.model||'')+' · '+
     (inst.elapsed_ms||0)+'ms · cost $'+(inst.cost_usd||0)+
     ' · preview only, nothing written</div></div>';

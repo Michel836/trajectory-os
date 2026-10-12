@@ -35,7 +35,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NoReturn
 
-from trajectory_os.mvp import importer, model, mutations, store
+from trajectory_os.mvp import classification, importer, model, mutations, store
 
 #: Deterministic engine identity reported in instrumentation.
 ENGINE = "deterministic"
@@ -45,13 +45,16 @@ MODEL = "rules-v1"
 
 CAT_NEW_TASK = "new_task"
 CAT_POSSIBLE_PROJECT = "possible_project"
+#: Captured as a vague notion: parked in the Inbox (IDEA / SOMEDAY) instead
+#: of being forced into a project or a task.
+CAT_POSSIBLE_IDEA = "possible_idea"
 CAT_EXISTING_PROJECT = "existing_project"
 CAT_EXISTING_TASK = "existing_task"
 CAT_DUPLICATE = "duplicate"
 
 CATEGORIES = frozenset({
-    CAT_NEW_TASK, CAT_POSSIBLE_PROJECT, CAT_EXISTING_PROJECT,
-    CAT_EXISTING_TASK, CAT_DUPLICATE,
+    CAT_NEW_TASK, CAT_POSSIBLE_PROJECT, CAT_POSSIBLE_IDEA,
+    CAT_EXISTING_PROJECT, CAT_EXISTING_TASK, CAT_DUPLICATE,
 })
 
 #: Categories where the human explicitly confirmed a matched/duplicate item.
@@ -74,6 +77,7 @@ ACTIONS = frozenset({ACT_ACCEPT, ACT_ATTACH, ACT_MERGE, ACT_SKIP})
 _SUGGESTED_ACTION = {
     CAT_NEW_TASK: ACT_ACCEPT,
     CAT_POSSIBLE_PROJECT: ACT_ACCEPT,
+    CAT_POSSIBLE_IDEA: ACT_ACCEPT,
     CAT_EXISTING_PROJECT: ACT_ATTACH,
     CAT_EXISTING_TASK: ACT_SKIP,
     CAT_DUPLICATE: ACT_SKIP,
@@ -92,13 +96,6 @@ PROJECT_HINT_THRESHOLD = 0.35
 MAX_CAPTURE_CHARS = 16_384
 
 _MAX_TITLE = model.MAX_STR_LEN
-
-#: Markers that make a line project/idea-like rather than an atomic task.
-_PROJECT_MARKERS = (
-    "projet", "project", "idee", "idea", "concept", "someday", "un jour",
-    "app", "application", "plateforme", "platform", "roadmap", "programme",
-    "program", "initiative", "lancement", "lancer un", "creer un",
-)
 
 _BULLET_RE = re.compile(r"^\s*(?:[-*•·—–]|\d{1,3}[.)])\s*")
 
@@ -129,6 +126,9 @@ class CaptureItem:
     project_name: str
     reason: str
     duplicate_of: str = ""
+    #: True when the shared classifier found no explicit signal; the preview
+    #: must not pretend an uncertain line is a settled task.
+    ambiguous: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -145,6 +145,7 @@ class CaptureItem:
             "project_id": self.project_id,
             "project_name": self.project_name,
             "reason": self.reason,
+            "ambiguous": self.ambiguous,
             "duplicate_of": self.duplicate_of,
         }
 
@@ -177,15 +178,6 @@ def _now(now: datetime | None) -> datetime:
 def _clean_line(raw: str) -> str:
     line = _BULLET_RE.sub("", raw.strip()).strip()
     return re.sub(r"\s+", " ", line)
-
-
-def _is_project_like(title: str) -> bool:
-    normalized = importer.normalize_text(title)
-    padded = f" {normalized} "
-    return any(
-        f" {marker} " in padded or normalized.startswith(marker + " ")
-        for marker in _PROJECT_MARKERS
-    )
 
 
 def _split_lines(text: str) -> list[str]:
@@ -233,6 +225,8 @@ def preview(root: str | Path, text: str, *,
                          if item.category == CAT_NEW_TASK),
         "possible_projects": sum(1 for item in items
                                  if item.category == CAT_POSSIBLE_PROJECT),
+        "possible_ideas": sum(1 for item in items
+                              if item.category == CAT_POSSIBLE_IDEA),
     }
     elapsed_ms = int(round((time.perf_counter() - started) * 1000))
     instrumentation = {
@@ -242,7 +236,8 @@ def preview(root: str | Path, text: str, *,
         "items_processed": len(items),
         "matches": counts["matched_existing"],
         "duplicates": counts["duplicates"],
-        "new_objects": counts["new_tasks"] + counts["possible_projects"],
+        "new_objects": (counts["new_tasks"] + counts["possible_projects"]
+                        + counts["possible_ideas"]),
         "cost_usd": 0.0,
         "reanalyzed_portfolio": False,
     }
@@ -308,9 +303,10 @@ def _classify(
             else "",
             reason=f"similar existing task: {best_task[1]}")
 
-    project_like = _is_project_like(title)
-
-    project_like = _is_project_like(title)
+    # Shared classification contract (ADR-033): the same criteria used by
+    # the document importer, applied here without any LLM.
+    classified = classification.classify_text(title)
+    project_like = classified.kind in classification.PROJECT_LIKE
     project_match = importer.best_project_match(title, projects)
     if project_match is not None and importer.text_similarity(
             normalized,
@@ -342,6 +338,17 @@ def _classify(
             project_id=project_match[0], project_name=project_match[1],
             reason=f"adds a next action to existing project: {project_match[1]}")
 
+    if classified.kind in classification.INBOX_KINDS:
+        kind = ("someday" if classified.kind == classification.SOMEDAY
+                else "idea")
+        return CaptureItem(
+            capture_id=capture_id, text=line, title=title,
+            category=CAT_POSSIBLE_IDEA, suggested_action=ACT_ACCEPT,
+            kind=kind, matched_kind="", matched_id="", matched_title="",
+            match_score=project_match[2] if project_match else 0.0,
+            project_id="", project_name="",
+            reason=classified.reasons[0] + "; parked in the Inbox")
+
     if project_like:
         return CaptureItem(
             capture_id=capture_id, text=line, title=title,
@@ -349,22 +356,31 @@ def _classify(
             kind="project", matched_kind="", matched_id="", matched_title="",
             match_score=project_match[2] if project_match else 0.0,
             project_id="", project_name="",
-            reason="phrased as an idea/project; confirm before creating")
+            reason=classified.reasons[0] + "; confirm before creating")
 
     target_id = ""
     target_name = ""
     if project_match is not None and project_match[2] >= PROJECT_HINT_THRESHOLD:
         target_id = project_match[0]
         target_name = project_match[1]
+    if classified.ambiguous:
+        # Do not present uncertain text as an already-settled task: default
+        # to skip and surface the ambiguity for an explicit human decision.
+        action = ACT_SKIP
+        reason = ("no clear signal; confirm kind/project or rephrase before "
+                  "accepting")
+    else:
+        action = ACT_ACCEPT
+        reason = (f"new task for {target_name}" if target_id
+                  else "new task; choose a project before accepting")
     return CaptureItem(
         capture_id=capture_id, text=line, title=title,
-        category=CAT_NEW_TASK, suggested_action=ACT_ACCEPT,
+        category=CAT_NEW_TASK, suggested_action=action,
         kind="task", matched_kind="project" if target_id else "",
         matched_id=target_id, matched_title=target_name,
         match_score=project_match[2] if project_match else 0.0,
         project_id=target_id, project_name=target_name,
-        reason=(f"new task for {target_name}" if target_id
-                else "new task; choose a project before accepting"))
+        ambiguous=classified.ambiguous, reason=reason)
 
 
 # --- confirmation -------------------------------------------------------------
@@ -395,8 +411,9 @@ def _decision_from_dict(data: Mapping[str, Any]) -> CaptureDecision:
         value = data.get(key)
         return value.strip() if isinstance(value, str) and value.strip() else None
     kind = _opt("kind")
-    if kind is not None and kind not in ("task", "project"):
-        _fail("kind must be task or project")
+    if kind is not None and kind not in ("task", "project", "idea",
+                                         "someday"):
+        _fail("kind must be task, project, idea or someday")
     return CaptureDecision(
         capture_id=capture_id, action=action, title=_opt("title"),
         kind=kind, project_id=_opt("project_id"),
@@ -461,7 +478,13 @@ def confirm(root: str | Path, text: str,
         # ACT_ACCEPT
         kind = decision.kind or item.kind
         if kind == "project":
-            created_projects.append(_create_project(root, item, decision))
+            created_projects.append(
+                _create_project(root, item, decision, model.PS_ACTIVE))
+        elif kind in ("idea", "someday"):
+            status = (model.PS_SOMEDAY if kind == "someday"
+                      else model.PS_IDEA)
+            created_projects.append(
+                _create_project(root, item, decision, status))
         else:
             project_id = decision.project_id or item.project_id
             created_tasks.append(_create_task(
@@ -498,11 +521,13 @@ def _create_task(root: str | Path, item: CaptureItem,
 
 
 def _create_project(root: str | Path, item: CaptureItem,
-                    decision: CaptureDecision) -> str:
+                    decision: CaptureDecision,
+                    status: str = model.PS_ACTIVE) -> str:
     title = decision.title or item.title
     payload: dict[str, Any] = {
         "name": title,
         "objective": decision.description or item.text or title,
+        "status": status,
     }
     if item.category in _EXPLICIT_DUPLICATE_CATEGORIES:
         payload["allow_duplicate"] = True
@@ -513,7 +538,8 @@ def _create_project(root: str | Path, item: CaptureItem,
 __all__ = [
     "ACT_ACCEPT", "ACT_ATTACH", "ACT_MERGE", "ACT_SKIP", "ACTIONS",
     "CAT_DUPLICATE", "CAT_EXISTING_PROJECT", "CAT_EXISTING_TASK",
-    "CAT_NEW_TASK", "CAT_POSSIBLE_PROJECT", "CATEGORIES",
+    "CAT_NEW_TASK", "CAT_POSSIBLE_IDEA", "CAT_POSSIBLE_PROJECT",
+    "CATEGORIES",
     "DUPLICATE_THRESHOLD", "ENGINE", "MATCH_THRESHOLD", "MODEL",
     "PROJECT_HINT_THRESHOLD", "MAX_CAPTURE_CHARS",
     "CaptureDecision", "CaptureError", "CaptureItem", "CapturePreview",

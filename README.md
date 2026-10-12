@@ -133,11 +133,33 @@ scripts/mvp capture --text "..." --confirm --project P    # apply (human)
 ```
 
 Quick Capture is a deterministic, local pipeline: it splits free-form text into
-lines, classifies each one (new task / possible project / existing match /
-duplicate), matches it against the relevant existing projects and tasks, and
-shows a preview. Nothing is written until the human confirms, and a confirm is
-all-or-nothing. The cockpit exposes the same flow as **Quick Capture** with
-Accept / Edit / Skip / Merge per line.
+lines, classifies each one (new task / possible project / possible idea /
+existing match / duplicate), matches it against the relevant existing projects
+and tasks, and shows a preview. Nothing is written until the human confirms,
+and a confirm is all-or-nothing. The cockpit exposes the same flow as **Quick
+Capture** with Accept / Edit / Skip / Merge per line.
+
+### Project vs task: one shared classification
+
+Capture and document import share a single deterministic taxonomy
+(`trajectory_os.mvp.classification`). A line is classified as project-like
+(project / idea / someday / area) or a leaf (task); a line with no signal is
+reported as `ambiguous` instead of being asserted. The default capture path
+stays deterministic and local — no LLM.
+
+"I don't know yet" is a first-class outcome: an idea or a "someday" notion is
+created as a **parked** project (status `IDEA` / `SOMEDAY`) that stays in the
+Inbox and is excluded from readiness, priority and scheduling. Converting
+between a task and a project is explicit, reversible and human-decided:
+
+```bash
+scripts/mvp promote --task ID --name "New project"   # task -> its own project
+scripts/mvp demote  --project ID --target ID         # project -> another project
+scripts/mvp park    --project ID --kind IDEA         # park in the Inbox
+scripts/mvp park    --project ID --status ACTIVE     # leave the Inbox
+```
+
+See ADR-033.
 
 ### AI assistance is on demand only
 

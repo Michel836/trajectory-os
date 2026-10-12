@@ -18,14 +18,29 @@ data root.
 
 from __future__ import annotations
 
+import functools
 import re
-from collections.abc import Mapping
+import threading
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from trajectory_os.intelligence import model as intel_model
-from trajectory_os.mvp import importer, model, outcomes, store
+from trajectory_os.mvp import classification, importer, model, outcomes, store
+
+#: Serialize in-process portfolio mutations. The local cockpit server is
+#: threaded, so two read-modify-write requests could otherwise lose an update.
+#: Cross-process writers (CLI) remain a documented limitation.
+_MUTATION_LOCK = threading.Lock()
+
+
+def _serialized[F: Callable[..., Any]](func: F) -> F:
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        with _MUTATION_LOCK:
+            return func(*args, **kwargs)
+    return cast(F, wrapper)
 
 #: Fields the dashboard may edit on a project (fail closed on anything else).
 PROJECT_EDITABLE = frozenset({
@@ -167,6 +182,7 @@ def _updated_at(portfolio: model.Portfolio) -> str:
 # --- project mutations --------------------------------------------------------
 
 
+@_serialized
 def create_project(root: str | Path,
                    payload: Mapping[str, Any]) -> dict[str, Any]:
     """Create one project; ``project_id`` is optional (slug generated)."""
@@ -212,6 +228,7 @@ def create_project(root: str | Path,
     return {"project_id": project_id, "name": name}
 
 
+@_serialized
 def update_project(root: str | Path, project_id: str,
                    payload: Mapping[str, Any]) -> dict[str, Any]:
     """Apply a partial, validated update to one project."""
@@ -239,9 +256,160 @@ def update_project(root: str | Path, project_id: str,
     return {"project_id": project_id, "status": updated.status}
 
 
+# --- project / task conversion & parking --------------------------------------
+#
+# The taxonomy (``classification``) says when something *should* be a project
+# or a task; these operations let the human *apply* that decision without
+# losing data. Every operation is validated, atomic and reversible.
+
+
+@_serialized
+def park_project(root: str | Path, project_id: str,
+                 payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Park a project in the Inbox, or bring it back out.
+
+    ``payload["kind"]`` selects the parked status (``IDEA`` by default, or
+    ``SOMEDAY``); an explicit ``status`` (any valid project status, e.g.
+    ``ACTIVE``) overrides it, which is how the project leaves the Inbox. A
+    parked project stays visible but is excluded from readiness, priority and
+    scheduling.
+    """
+    portfolio = _load(root)
+    _reject_unknown(payload, frozenset({"kind", "status"}), "park")
+    projects = portfolio.project_map()
+    if project_id not in projects:
+        raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+    kind = _value(payload, "kind", classification.IDEA)
+    parked_status = {
+        classification.IDEA: model.PS_IDEA,
+        classification.SOMEDAY: model.PS_SOMEDAY,
+    }
+    if kind not in parked_status:
+        raise model.MvpError(model.E_MALFORMED,
+                             "kind must be IDEA or SOMEDAY")
+    status = str(_value(payload, "status", parked_status[kind]))
+    updated = replace(projects[project_id], status=status)
+    new_projects = tuple(updated if p.project_id == project_id else p
+                         for p in portfolio.projects)
+    new_portfolio = replace(portfolio, projects=new_projects,
+                            updated_at=_updated_at(portfolio)).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"project_id": project_id, "status": updated.status,
+            "parked": updated.parked}
+
+
+@_serialized
+def promote_task(root: str | Path, task_id: str,
+                 payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Promote a task into its own project and move the task into it.
+
+    Non-destructive and reversible: the task keeps every field and simply
+    gains a new ``project_id``; ``demote_project`` moves it back and removes
+    the wrapper project. Optional ``name`` / ``objective`` / ``domain``
+    override the values derived from the task.
+    """
+    portfolio = _load(root)
+    _reject_unknown(payload, frozenset({"name", "objective", "domain"}),
+                    "promote")
+    tasks = portfolio.task_map()
+    if task_id not in tasks:
+        raise model.MvpError(model.E_UNKNOWN_ID, task_id)
+    task = tasks[task_id]
+    name = _value(payload, "name", task.title)
+    if not isinstance(name, str) or not name.strip():
+        raise model.MvpError(model.E_MALFORMED, "name must be a string")
+    name = name.strip()
+    # No allow_duplicate bypass: a retried promotion fails closed instead of
+    # creating a second, empty project with the same normalized name.
+    duplicate = _duplicate_project(portfolio, name)
+    if duplicate is not None:
+        raise model.MvpError(
+            model.E_DUPLICATE_OBJECT,
+            "A project with the same normalized name already exists.",
+            metadata=_duplicate_metadata(
+                obj_id="project:" + duplicate.project_id, kind="project",
+                ref_id=duplicate.project_id, title=duplicate.name,
+                status=duplicate.status,
+                project_id=duplicate.project_id, project=duplicate.name))
+    parent = portfolio.project_map()[task.project_id]
+    objective = _value(payload, "objective", task.description or task.title)
+    if not isinstance(objective, str) or not objective.strip():
+        objective = task.title
+    domain = _value(payload, "domain", parent.domain)
+    existing = {p.project_id for p in portfolio.projects}
+    project_id = _unique_id(existing, _slug(name, "project"))
+    stamp = _updated_at(portfolio)
+    project = model.Project(
+        project_id=project_id, name=name, objective=objective.strip(),
+        status=model.PS_ACTIVE, domain=str(domain))
+    moved = replace(task, project_id=project_id, updated_at=stamp)
+    new_tasks = tuple(moved if t.task_id == task_id else t
+                      for t in portfolio.tasks)
+    new_portfolio = replace(
+        portfolio, projects=portfolio.projects + (project,), tasks=new_tasks,
+        updated_at=stamp).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"task_id": task_id, "project_id": project_id, "name": name,
+            "previous_project_id": task.project_id}
+
+
+@_serialized
+def demote_project(root: str | Path, project_id: str,
+                   payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Move a project's tasks to another project and remove the empty one.
+
+    The reverse of :func:`promote_task`: a project that turned out to be a
+    single task (or a thin grouping) is folded back into an existing project.
+    Fails closed if the target is missing or is the project itself; the
+    project is only removed once none of its tasks reference it.
+    """
+    portfolio = _load(root)
+    _reject_unknown(payload,
+                    frozenset({"target_project_id", "confirm_discard"}),
+                    "demote")
+    projects = portfolio.project_map()
+    if project_id not in projects:
+        raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+    target = _required_str(payload, "target_project_id")
+    if target == project_id:
+        raise model.MvpError(
+            model.E_MALFORMED,
+            "target_project_id must differ from project_id")
+    if target not in projects:
+        raise model.MvpError(model.E_UNKNOWN_PROJECT, target)
+    current = projects[project_id]
+    has_metadata = (bool(current.description.strip())
+                    or current.deadline is not None
+                    or current.objective.strip() not in ("", current.name))
+    if has_metadata and payload.get("confirm_discard") is not True:
+        raise model.MvpError(
+            model.E_MALFORMED,
+            "project has metadata (objective/description/deadline); pass "
+            "confirm_discard=true to drop it on demotion")
+    stamp = _updated_at(portfolio)
+    moved = 0
+    new_tasks: list[model.Task] = []
+    for task in portfolio.tasks:
+        if task.project_id == project_id:
+            new_tasks.append(replace(task, project_id=target,
+                                     updated_at=stamp))
+            moved += 1
+        else:
+            new_tasks.append(task)
+    new_projects = tuple(p for p in portfolio.projects
+                         if p.project_id != project_id)
+    new_portfolio = replace(
+        portfolio, projects=new_projects, tasks=tuple(new_tasks),
+        updated_at=stamp).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"project_id": project_id, "target_project_id": target,
+            "moved_tasks": moved}
+
+
 # --- task mutations -----------------------------------------------------------
 
 
+@_serialized
 def create_task(root: str | Path,
                 payload: Mapping[str, Any]) -> dict[str, Any]:
     """Create one task; ``task_id`` is optional (slug generated)."""
@@ -301,6 +469,7 @@ def create_task(root: str | Path,
     return {"task_id": task_id, "project_id": project_id}
 
 
+@_serialized
 def update_task(root: str | Path, task_id: str,
                 payload: Mapping[str, Any]) -> dict[str, Any]:
     """Apply a partial, validated update to one task.
@@ -364,6 +533,7 @@ def _derive_projects(portfolio: model.Portfolio,
 # --- dependency mutations -----------------------------------------------------
 
 
+@_serialized
 def add_dependency(root: str | Path, task_id: str,
                    dependency: str) -> dict[str, Any]:
     """Add one dependency edge (validated; cycles fail closed)."""
@@ -391,6 +561,7 @@ def add_dependency(root: str | Path, task_id: str,
     return {"task_id": task_id, "dependency": dependency, "added": True}
 
 
+@_serialized
 def remove_dependency(root: str | Path, task_id: str,
                       dependency: str) -> dict[str, Any]:
     """Remove one dependency edge from a task's dependencies."""

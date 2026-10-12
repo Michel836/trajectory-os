@@ -202,3 +202,47 @@ def test_capture_is_lightweight_with_hundreds_of_tasks(tmp_path: object) -> None
     elapsed = time.perf_counter() - started
     assert len(preview.items) == 40
     assert elapsed < 2.0, f"capture preview too slow: {elapsed:.3f}s"
+
+
+# --- shared classification contract / Inbox (ADR-033) -------------------------
+
+
+def test_preview_classifies_idea_and_someday_as_inbox(tmp_path: object) -> None:
+    _seed(tmp_path)
+    result = capture.preview(
+        str(tmp_path),
+        "Someday apprendre la poterie\nIdée de podcast tech\n")
+    by_title = {item.title: item for item in result.items}
+    someday = by_title["Someday apprendre la poterie"]
+    idea = by_title["Idée de podcast tech"]
+    assert someday.category == capture.CAT_POSSIBLE_IDEA
+    assert someday.kind == "someday"
+    assert idea.category == capture.CAT_POSSIBLE_IDEA
+    assert idea.kind == "idea"
+    assert result.counts["possible_ideas"] == 2
+    assert result.counts["new_tasks"] == 0
+
+
+def test_ambiguous_line_is_not_silently_actionable(tmp_path: object) -> None:
+    _seed(tmp_path)
+    result = capture.preview(str(tmp_path), "Le grand livre rouge\n")
+    item = result.items[0]
+    assert item.ambiguous is True
+    assert item.suggested_action == capture.ACT_SKIP
+    assert item.to_dict()["ambiguous"] is True
+
+
+def test_confirm_parks_an_idea_in_the_inbox(tmp_path: object) -> None:
+    _seed(tmp_path)
+    text = "Someday apprendre la poterie\n"
+    preview = capture.preview(str(tmp_path), text)
+    item = preview.items[0]
+    summary = capture.confirm(str(tmp_path), text, [
+        {"capture_id": item.capture_id, "action": capture.ACT_ACCEPT}])
+    assert summary["created_projects"] == 1
+    assert summary["created_tasks"] == 0
+    portfolio = store.load_portfolio(str(tmp_path))
+    assert portfolio is not None
+    parked = [p for p in portfolio.projects if p.parked]
+    assert len(parked) == 1
+    assert parked[0].status == model.PS_SOMEDAY

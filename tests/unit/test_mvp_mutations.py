@@ -392,3 +392,166 @@ def test_historical_duplicates_remain_loadable(tmp_path: object) -> None:
     assert loaded is not None
     assert len(loaded.projects) == 2
     assert len(loaded.tasks) == 2
+
+
+# --- project / task conversion & parking --------------------------------------
+
+
+def test_park_project_moves_it_to_the_inbox(tmp_path: object) -> None:
+    _seed(tmp_path)
+    result = mutations.park_project(_root(tmp_path), "p1", {})
+    assert result == {"project_id": "p1", "status": model.PS_IDEA,
+                      "parked": True}
+    portfolio = store.load_portfolio(_root(tmp_path))
+    assert portfolio is not None
+    project = portfolio.project_map()["p1"]
+    assert project.status == model.PS_IDEA
+    assert project.open is False
+    assert project.parked is True
+
+
+def test_park_project_someday_and_unpark(tmp_path: object) -> None:
+    _seed(tmp_path)
+    mutations.park_project(_root(tmp_path), "p1",
+                           {"kind": model.PS_SOMEDAY})
+    portfolio = store.load_portfolio(_root(tmp_path))
+    assert portfolio is not None
+    assert portfolio.project_map()["p1"].status == model.PS_SOMEDAY
+    # An explicit status is how the project leaves the Inbox.
+    result = mutations.park_project(_root(tmp_path), "p1",
+                                    {"status": model.PS_ACTIVE})
+    assert result["parked"] is False
+    portfolio = store.load_portfolio(_root(tmp_path))
+    assert portfolio is not None
+    assert portfolio.project_map()["p1"].status == model.PS_ACTIVE
+
+
+def test_park_project_rejects_unknown_kind_and_project(
+        tmp_path: object) -> None:
+    _seed(tmp_path)
+    with pytest.raises(model.MvpError) as exc:
+        mutations.park_project(_root(tmp_path), "p1", {"kind": "BOGUS"})
+    assert exc.value.code == model.E_MALFORMED
+    with pytest.raises(model.MvpError) as exc:
+        mutations.park_project(_root(tmp_path), "missing", {})
+    assert exc.value.code == model.E_UNKNOWN_PROJECT
+
+
+def test_parked_project_tasks_are_not_ready(tmp_path: object) -> None:
+    _seed(tmp_path)
+    mutations.park_project(_root(tmp_path), "p1", {})
+    portfolio = store.load_portfolio(_root(tmp_path))
+    assert portfolio is not None
+    states = {item.task_id: item for item in readiness.evaluate(portfolio)}
+    assert states["a"].ready is False
+    assert states["a"].state == readiness.RS_PROJECT_CLOSED
+
+
+def test_promote_task_creates_project_and_moves_task(
+        tmp_path: object) -> None:
+    _seed(tmp_path)
+    result = mutations.promote_task(_root(tmp_path), "a",
+                                    {"name": "Alpha effort"})
+    assert result["previous_project_id"] == "p1"
+    new_id = str(result["project_id"])
+    assert new_id != "p1"
+    portfolio = store.load_portfolio(_root(tmp_path))
+    assert portfolio is not None
+    assert sorted(p.project_id for p in portfolio.projects) == \
+        sorted(["p1", new_id])
+    assert portfolio.task_map()["a"].project_id == new_id
+    assert portfolio.project_map()[new_id].name == "Alpha effort"
+    # No data is lost: the original project still owns its other tasks.
+    assert portfolio.task_map()["b"].project_id == "p1"
+
+
+def test_promote_task_derives_name_from_title(tmp_path: object) -> None:
+    _seed(tmp_path)
+    result = mutations.promote_task(_root(tmp_path), "a", {})
+    portfolio = store.load_portfolio(_root(tmp_path))
+    assert portfolio is not None
+    assert portfolio.project_map()[str(result["project_id"])].name == "A"
+
+
+def test_promote_task_rejects_unknown_task(tmp_path: object) -> None:
+    _seed(tmp_path)
+    with pytest.raises(model.MvpError) as exc:
+        mutations.promote_task(_root(tmp_path), "missing", {})
+    assert exc.value.code == model.E_UNKNOWN_ID
+
+
+def test_promote_task_blocks_duplicate_project(tmp_path: object) -> None:
+    _seed(tmp_path)
+    with pytest.raises(model.MvpError) as exc:
+        mutations.promote_task(_root(tmp_path), "a", {"name": "P1"})
+    assert exc.value.code == model.E_DUPLICATE_OBJECT
+    # A retried promotion cannot bypass the guard and create an empty clone.
+    with pytest.raises(model.MvpError) as exc:
+        mutations.promote_task(_root(tmp_path), "a",
+                               {"name": "P1", "allow_duplicate": True})
+    assert exc.value.code == model.E_MALFORMED
+
+
+def test_demote_project_moves_tasks_and_removes_project(
+        tmp_path: object) -> None:
+    _seed(tmp_path)
+    promoted = mutations.promote_task(_root(tmp_path), "a", {})
+    new_id = str(promoted["project_id"])
+    result = mutations.demote_project(_root(tmp_path), new_id,
+                                      {"target_project_id": "p1"})
+    assert result == {"project_id": new_id, "target_project_id": "p1",
+                      "moved_tasks": 1}
+    portfolio = store.load_portfolio(_root(tmp_path))
+    assert portfolio is not None
+    assert [p.project_id for p in portfolio.projects] == ["p1"]
+    assert portfolio.task_map()["a"].project_id == "p1"
+
+
+def test_demote_project_requires_confirmation_when_metadata(
+        tmp_path: object) -> None:
+    _seed(tmp_path)
+    promoted = mutations.promote_task(
+        _root(tmp_path), "a",
+        {"name": "Alpha effort", "objective": "A real outcome"})
+    new_id = str(promoted["project_id"])
+    with pytest.raises(model.MvpError) as exc:
+        mutations.demote_project(_root(tmp_path), new_id,
+                                 {"target_project_id": "p1"})
+    assert exc.value.code == model.E_MALFORMED
+    result = mutations.demote_project(
+        _root(tmp_path), new_id,
+        {"target_project_id": "p1", "confirm_discard": True})
+    assert result["moved_tasks"] == 1
+
+
+def test_parked_project_hides_blocked_task(tmp_path: object) -> None:
+    store.save_portfolio(_root(tmp_path), model.Portfolio(
+        schema_version=model.SCHEMA_VERSION, name="t",
+        projects=(model.Project(project_id="p1", name="P1", objective="o",
+                                status=model.PS_IDEA),),
+        tasks=(model.Task(task_id="a", project_id="p1", title="A",
+                          status=model.TS_BLOCKED),),
+    ))
+    portfolio = store.load_portfolio(_root(tmp_path))
+    assert portfolio is not None
+    state = next(i for i in readiness.evaluate(portfolio) if i.task_id == "a")
+    assert state.state == readiness.RS_PROJECT_CLOSED
+
+
+def test_demote_project_validation(tmp_path: object) -> None:
+    _seed(tmp_path)
+    with pytest.raises(model.MvpError) as exc:
+        mutations.demote_project(_root(tmp_path), "p1",
+                                 {"target_project_id": "p1"})
+    assert exc.value.code == model.E_MALFORMED
+    with pytest.raises(model.MvpError) as exc:
+        mutations.demote_project(_root(tmp_path), "p1",
+                                 {"target_project_id": "missing"})
+    assert exc.value.code == model.E_UNKNOWN_PROJECT
+    with pytest.raises(model.MvpError) as exc:
+        mutations.demote_project(_root(tmp_path), "missing",
+                                 {"target_project_id": "p1"})
+    assert exc.value.code == model.E_UNKNOWN_PROJECT
+    with pytest.raises(model.MvpError) as exc:
+        mutations.demote_project(_root(tmp_path), "p1", {})
+    assert exc.value.code == model.E_MALFORMED

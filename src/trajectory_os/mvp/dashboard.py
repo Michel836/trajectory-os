@@ -515,6 +515,20 @@ class Dashboard:
                           dependency: str) -> dict[str, Any]:
         return mutations.remove_dependency(self.root, task_id, dependency)
 
+    # --- project / task conversion & parking ---------------------------------
+
+    def park_project(self, project_id: str,
+                     payload: Mapping[str, Any]) -> dict[str, Any]:
+        return mutations.park_project(self.root, project_id, payload)
+
+    def promote_task(self, task_id: str,
+                     payload: Mapping[str, Any]) -> dict[str, Any]:
+        return mutations.promote_task(self.root, task_id, payload)
+
+    def demote_project(self, project_id: str,
+                       payload: Mapping[str, Any]) -> dict[str, Any]:
+        return mutations.demote_project(self.root, project_id, payload)
+
 
 def _record_outcome(root: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     task_id = payload.get("task_id")
@@ -786,10 +800,19 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.reject_suggestion(parts[2], payload)
             if parts == ["api", "projects"]:
                 return app.create_project(payload)
+            if len(parts) == 4 and parts[:2] == ["api", "projects"] \
+                    and parts[3] == "demote":
+                return app.demote_project(parts[2], payload)
+            if len(parts) == 4 and parts[:2] == ["api", "projects"] \
+                    and parts[3] == "park":
+                return app.park_project(parts[2], payload)
             if len(parts) == 3 and parts[:2] == ["api", "projects"]:
                 return app.update_project(parts[2], payload)
             if parts == ["api", "tasks"]:
                 return app.create_task(payload)
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] \
+                    and parts[3] == "promote":
+                return app.promote_task(parts[2], payload)
             if len(parts) == 4 and parts[:2] == ["api", "tasks"] \
                     and parts[3] == "outcome":
                 outcome_payload = dict(payload)
