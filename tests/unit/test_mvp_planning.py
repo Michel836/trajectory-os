@@ -483,10 +483,17 @@ def test_review_exposes_weekly_signals(tmp_path: object) -> None:
         ),
         tasks=(
             model.Task(task_id="t1", project_id="p1", title="Due soon",
+                       estimated_minutes=60,
                        deadline=(MONDAY + timedelta(days=1)).isoformat()),
         ),
     ))
+    store.append_outcome(root, model.OutcomeRecord(
+        task_id="t1", outcome=model.O_COMPLETED,
+        recorded_at="2026-01-06T10:00:00Z", actual_minutes=90))
     review = planning.build_review(root, today=MONDAY)
-    assert any(item["task_id"] == "t1" for item in review["at_risk"])
-    assert any(p["project_id"] == "p2" for p in review["stale_projects"])
-    assert "mean_absolute_error_minutes" in review["estimation"]
+    assert [item["task_id"] for item in review["at_risk"]] == ["t1"]
+    # p1 has a ready task and must NOT be flagged; p2 has none and must be.
+    assert {p["project_id"] for p in review["stale_projects"]} == {"p2"}
+    # Estimation accuracy reflects the ledger: 60 estimated, 90 actual.
+    assert review["estimation"]["completed_with_actual"] == 1
+    assert review["estimation"]["mean_absolute_error_minutes"] == 30.0
