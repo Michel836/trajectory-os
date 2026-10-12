@@ -422,6 +422,13 @@ def test_quick_capture_shortcut_is_wired(tmp_path: object) -> None:
         False, False, False, False, False, False, True]
 
 
+def test_calibration_is_exposed_and_wired(tmp_path: object) -> None:
+    views = _views(str(tmp_path))
+    assert views["calibration"]["min_samples"] == 5
+    assert "global" in views["calibration"]
+    assert "function calibrateTask(" in cockpit_ui.PAGE_JS
+
+
 def test_decisions_view_is_wired() -> None:
     js = cockpit_ui.PAGE_JS
     assert "decisions" in uistate.VIEWS

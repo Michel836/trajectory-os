@@ -511,6 +511,9 @@ class Dashboard:
                        dependency: str) -> dict[str, Any]:
         return mutations.add_dependency(self.root, task_id, dependency)
 
+    def calibrate_task(self, task_id: str) -> dict[str, Any]:
+        return mutations.apply_calibrated_estimate(self.root, task_id)
+
     def remove_dependency(self, task_id: str,
                           dependency: str) -> dict[str, Any]:
         return mutations.remove_dependency(self.root, task_id, dependency)
@@ -893,6 +896,9 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
             if len(parts) == 4 and parts[:2] == ["api", "tasks"] \
                     and parts[3] == "promote":
                 return app.promote_task(parts[2], payload)
+            if len(parts) == 4 and parts[:2] == ["api", "tasks"] \
+                    and parts[3] == "calibrate":
+                return app.calibrate_task(parts[2])
             if len(parts) == 4 and parts[:2] == ["api", "tasks"] \
                     and parts[3] == "outcome":
                 outcome_payload = dict(payload)

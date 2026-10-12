@@ -28,7 +28,14 @@ from pathlib import Path
 from typing import Any, cast
 
 from trajectory_os.intelligence import model as intel_model
-from trajectory_os.mvp import classification, importer, model, outcomes, store
+from trajectory_os.mvp import (
+    calibration,
+    classification,
+    importer,
+    model,
+    outcomes,
+    store,
+)
 
 #: Serialize in-process portfolio mutations. The local cockpit server is
 #: threaded, so two read-modify-write requests could otherwise lose an update.
@@ -820,6 +827,47 @@ def create_task(root: str | Path,
     ).validate()
     store.save_portfolio(root, new_portfolio)
     return {"task_id": task_id, "project_id": project_id}
+
+
+@_serialized
+def apply_calibrated_estimate(root: str | Path,
+                              task_id: str) -> dict[str, Any]:
+    """Replace one task's estimate with its calibrated value.
+
+    Human-triggered only. Fails closed when the task has no estimate or when
+    no scope (project / domain / global) has enough real outcomes.
+    """
+    portfolio = _load(root)
+    tasks = portfolio.task_map()
+    if task_id not in tasks:
+        raise model.MvpError(model.E_UNKNOWN_ID, task_id)
+    task = tasks[task_id]
+    if not task.estimated_minutes:
+        raise model.MvpError(model.E_MALFORMED,
+                             "task has no estimate to calibrate")
+    result = calibration.calibration_for_task(
+        portfolio, store.read_outcomes(root), task_id)
+    if result is None or not result.sufficient:
+        raise model.MvpError(
+            model.E_MALFORMED,
+            "insufficient outcome data to calibrate this task")
+    adjusted = result.adjusted(task.estimated_minutes)
+    assert adjusted is not None
+    stamp = _updated_at(portfolio)
+    updated = replace(task, estimated_minutes=adjusted, updated_at=stamp)
+    new_tasks = tuple(updated if t.task_id == task_id else t
+                      for t in portfolio.tasks)
+    new_portfolio = replace(portfolio, tasks=new_tasks,
+                            updated_at=stamp).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {
+        "task_id": task_id,
+        "previous_minutes": task.estimated_minutes,
+        "estimated_minutes": adjusted,
+        "factor": result.factor,
+        "samples": result.samples,
+        "scope": result.scope,
+    }
 
 
 @_serialized

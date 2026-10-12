@@ -9,6 +9,7 @@ chosen export path):
     mvp plan [--root DIR] [--today DATE]     full daily cockpit (text)
     mvp today | week | ready | blocked | projects | wbs
     mvp record --task ID --outcome O [--minutes N] [--note TEXT]
+    mvp calibration          effort calibration from real outcomes
     mvp decisions            list decisions (--decide ID --choice TEXT)
     mvp routines [--materialize] [--today DATE]  list / materialize routines
     mvp promote --task ID [--name NAME]      task -> its own project
@@ -230,6 +231,31 @@ def _cmd_record(args: argparse.Namespace) -> int:
         print(f"recorded {result['outcome']} for {result['task_id']} "
               f"-> task {result['task_status']}, "
               f"project {result['project_status']}")
+    return EXIT_OK
+
+
+def _cmd_calibration(args: argparse.Namespace) -> int:
+    _load_or_fail(args.root)
+    portfolio = store.load_portfolio(args.root)
+    assert portfolio is not None
+    from trajectory_os.mvp import calibration
+
+    payload = calibration.summary(portfolio, store.read_outcomes(args.root))
+    if args.json:
+        _print_json(payload)
+        return EXIT_OK
+    global_cal = payload["global"]
+    if not global_cal["sufficient"]:
+        print(f"insufficient data ({global_cal['samples']}/"
+              f"{payload['min_samples']} outcomes)")
+        return EXIT_OK
+    print(f"global factor {global_cal['factor']} "
+          f"[{global_cal['low']}..{global_cal['high']}] over "
+          f"{global_cal['samples']} outcomes")
+    for project_id, entry in payload["projects"].items():
+        if entry["sufficient"]:
+            print(f"- {project_id}: factor {entry['factor']} "
+                  f"[{entry['low']}..{entry['high']}] ({entry['samples']})")
     return EXIT_OK
 
 
@@ -498,6 +524,12 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note", default="")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_record)
+
+    p = sub.add_parser("calibration",
+                       help="show effort calibration from the outcome ledger")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_calibration)
 
     p = sub.add_parser("decisions", help="list decisions or record one")
     p.add_argument("--root", default=DEFAULT_ROOT)
