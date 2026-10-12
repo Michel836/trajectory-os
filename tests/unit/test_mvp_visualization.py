@@ -429,6 +429,22 @@ def test_suggested_visual_distinction_present() -> None:
     assert "stroke-dasharray" in cockpit_ui.PAGE_JS
 
 
+def test_views_payload_exposes_triage(tmp_path: object) -> None:
+    root = str(tmp_path)
+    store.save_portfolio(root, model.Portfolio(
+        schema_version=model.SCHEMA_VERSION, name="t",
+        projects=(model.Project(project_id="p1", name="P1",
+                                objective="o"),),
+        tasks=(model.Task(task_id="t1", project_id="p1",
+                          title="Lancer un projet de refonte",
+                          estimated_minutes=300),),
+    ))
+    views = visualization.build_views(root)
+    assert any(s["action"] == "promote" and s["ref_id"] == "t1"
+               for s in views["triage"])
+    assert "S.views.triage" in cockpit_ui.PAGE_JS
+
+
 def test_views_payload_is_json_serialisable(tmp_path: object) -> None:
     root = str(tmp_path)
     views = _views(root)
