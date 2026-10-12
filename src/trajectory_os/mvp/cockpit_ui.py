@@ -510,8 +510,8 @@ function isRepeatClick(prevId, prevTime, id, now, windowMs){
 
 PAGE_JS = TABLE_JS_HELPERS + r"""
 const VIEWS = [
-  ['today','Today'],['inbox','Inbox'],['ready','Ready'],['tomorrow','Tomorrow'],
-  ['week','Week'],
+  ['today','Today'],['inbox','Inbox'],['waiting','Waiting'],['ready','Ready'],
+  ['tomorrow','Tomorrow'],['week','Week'],
   ['list','List'],['kanban','Kanban'],['wbs','WBS'],['graph','Dependency Graph'],
   ['gantt','Gantt'],['eisenhower','Eisenhower'],['impact_effort','Impact / Effort'],
   ['portfolio_map','Portfolio Map'],['treemap','Treemap'],['progress','Progress'],
@@ -658,9 +658,14 @@ function applyPrefs(p){if(!p)return;S.prefs=p;
   S.readySort=p.ready_sort||'recommended';
   S.tomorrowSort=p.tomorrow_sort||'planned';
   S.weekSort=p.week_sort||'manual';}
+var VIEW_SEQ=0;
 async function refresh(){
+  const seq=++VIEW_SEQ;
   try{
     const res=await api('/api/views');
+    // Discard a response superseded by a later request, so an older refresh
+    // can never overwrite newer data (e.g. hide a just-created follow-up).
+    if(seq!==VIEW_SEQ)return;
     S.views=res;
     applyPrefs(res.preferences);
     reconcileSelection();
@@ -970,7 +975,7 @@ function renderView(){
     gantt:renderGantt,eisenhower:renderEisenhower,impact_effort:renderImpactEffort,
     portfolio_map:renderPortfolioMap,treemap:renderTreemap,progress:renderProgress,
     heatmap:renderHeatmap,goal_flow:renderGoalFlow,focus:renderFocus,
-    inbox:renderInbox}[S.view]
+    inbox:renderInbox,waiting:renderWaiting}[S.view]
     ||renderList;
   fn();
 }
@@ -2957,6 +2962,29 @@ function renderToday(){
         '</a></li>';}).join('')+'</ul>';}
   h+='<p><button class="small" onclick="setView(\'ready\')">See the full '+
     'Ready / Blocked / Waiting breakdown →</button></p>';
+  $('view-root').innerHTML=h;}
+function ageDaysText(iso){if(!iso)return '—';
+  const d=new Date(iso);if(isNaN(d.getTime()))return '—';
+  const days=Math.floor((Date.now()-d.getTime())/86400000);
+  return days<=0?'today':(days===1?'1 day':days+' days');}
+async function chaseWaiting(id){const t=obj('task:'+id);if(!t)return;
+  try{await api('/api/tasks','POST',{project_id:t.project_id,
+    title:'Chase: '+t.title,allow_duplicate:true,
+    description:'Follow-up on waiting item: '+(t.waiting_for||[]).join(', ')});
+    notice('Follow-up created');await refresh();}catch(err){notice(err.message);}}
+function renderWaiting(){
+  const items=objects().filter(function(o){return o.kind==='task'&&
+    (((o.waiting_for||[]).length)||o.readiness==='WAITING');});
+  let h='<h2>Waiting &amp; follow-ups</h2><p class="muted">'+items.length+
+    ' item(s) waiting on someone or something. Age is since the last change.</p>';
+  if(!items.length){h+='<p class="muted">Nothing is waiting.</p>';}
+  else{h+='<table><tr><th>Task</th><th>Project</th><th>Waiting for</th>'+
+    '<th>Since</th><th></th></tr>'+items.map(function(o){return '<tr><td><a '+
+    'onclick="selectObject(\''+o.id+'\')">'+esc(o.title)+'</a></td><td>'+
+    esc(o.project||'')+'</td><td>'+esc((o.waiting_for||[]).join(', ')||'—')+
+    '</td><td>'+esc(ageDaysText(o.updated_at))+'</td><td>'+
+    '<button class="small primary" onclick="chaseWaiting(\''+o.ref_id+
+    '\')">Chase</button></td></tr>';}).join('')+'</table>';}
   $('view-root').innerHTML=h;}
 function renderInbox(){
   const parked=objects().filter(function(o){return o.kind==='project'&&

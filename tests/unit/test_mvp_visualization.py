@@ -355,6 +355,34 @@ def test_inbox_and_conversion_controls_are_wired() -> None:
         assert "function " + fn + "(" in js, fn
 
 
+def test_waiting_view_is_wired() -> None:
+    from trajectory_os.mvp import uistate
+
+    js = cockpit_ui.PAGE_JS
+    assert "waiting" in uistate.VIEWS
+    assert "['waiting','Waiting']" in js
+    # The dispatcher must actually route the view to its renderer.
+    assert "waiting:renderWaiting" in js
+    for fn in ("renderWaiting", "chaseWaiting", "ageDaysText"):
+        assert "function " + fn + "(" in js, fn
+
+
+def test_task_objects_expose_dates(tmp_path: object) -> None:
+    from trajectory_os.mvp import model, store
+
+    root = str(tmp_path)
+    store.save_portfolio(root, model.Portfolio(
+        schema_version=model.SCHEMA_VERSION, name="t",
+        projects=(model.Project(project_id="p1", name="P", objective="o"),),
+        tasks=(model.Task(task_id="t1", project_id="p1", title="T1",
+                          created_at="2026-01-01T00:00:00Z",
+                          updated_at="2026-02-02T00:00:00Z"),),
+    ))
+    task = visualization.build_views(root)["object_index"]["task:t1"]
+    assert task["created_at"] == "2026-01-01T00:00:00Z"
+    assert task["updated_at"] == "2026-02-02T00:00:00Z"
+
+
 def test_suggested_visual_distinction_present() -> None:
     # SUGGESTED content must be visually distinguished everywhere it appears.
     assert "badge-SUGGESTED" in cockpit_ui.PAGE_CSS

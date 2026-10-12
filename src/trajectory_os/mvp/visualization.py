@@ -333,6 +333,8 @@ def _task_object(
         "unlocks_count": dep_graph.transitive_unblocks(task.task_id),
         "outcomes": [record.to_dict() for record in records],
         "latest_outcome": latest.to_dict() if latest is not None else None,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
         "evidence": EV_FACT,
         "confidence": "human-confirmed",
         "provenance": ("imported" if task.created_at else "created in cockpit"),
