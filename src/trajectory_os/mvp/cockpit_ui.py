@@ -2245,7 +2245,7 @@ async function saveProject(){const id=$('pf-id').value;
     if(!id&&handleDuplicate(err,'project',body))return;
     notice(err.message);}}
 function normalizedTitle(v){return String(v==null?'':v).toLowerCase()
-  .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+  .normalize('NFKD').replace(/\p{M}/gu,'')
   .replace(/[^a-z0-9]+/g,' ').trim();}
 function similarExistingTask(projectId,title){
   const needle=normalizedTitle(title);if(!needle)return null;
