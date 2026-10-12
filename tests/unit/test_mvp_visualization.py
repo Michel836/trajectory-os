@@ -355,6 +355,24 @@ def test_inbox_and_conversion_controls_are_wired() -> None:
         assert "function " + fn + "(" in js, fn
 
 
+def test_waiting_view_is_wired() -> None:
+    from trajectory_os.mvp import uistate
+
+    js = cockpit_ui.PAGE_JS
+    assert "waiting" in uistate.VIEWS
+    assert "['waiting','Waiting']" in js
+    for fn in ("renderWaiting", "chaseWaiting", "ageDaysText"):
+        assert "function " + fn + "(" in js, fn
+
+
+def test_task_objects_expose_dates(tmp_path: object) -> None:
+    root = str(tmp_path)
+    views = _views(root)
+    task = next(obj for obj in views["objects"] if obj["kind"] == "task")
+    assert "created_at" in task
+    assert "updated_at" in task
+
+
 def test_suggested_visual_distinction_present() -> None:
     # SUGGESTED content must be visually distinguished everywhere it appears.
     assert "badge-SUGGESTED" in cockpit_ui.PAGE_CSS
