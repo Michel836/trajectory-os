@@ -9,6 +9,7 @@ chosen export path):
     mvp plan [--root DIR] [--today DATE]     full daily cockpit (text)
     mvp today | week | ready | blocked | projects | wbs
     mvp record --task ID --outcome O [--minutes N] [--note TEXT]
+    mvp decisions            list decisions (--decide ID --choice TEXT)
     mvp routines [--materialize] [--today DATE]  list / materialize routines
     mvp promote --task ID [--name NAME]      task -> its own project
     mvp demote --project ID --target ID      project -> tasks of another
@@ -229,6 +230,32 @@ def _cmd_record(args: argparse.Namespace) -> int:
         print(f"recorded {result['outcome']} for {result['task_id']} "
               f"-> task {result['task_status']}, "
               f"project {result['project_status']}")
+    return EXIT_OK
+
+
+def _cmd_decisions(args: argparse.Namespace) -> int:
+    _load_or_fail(args.root)
+    if args.decide:
+        payload: dict[str, object] = {"choice": args.choice or ""}
+        if args.rationale:
+            payload["rationale"] = args.rationale
+        result = mutations.decide(args.root, args.decide, payload)
+        if args.json:
+            _print_json(result)
+        else:
+            print(f"decided {result['decision_id']}: {result['status']}")
+        return EXIT_OK
+    portfolio = store.load_portfolio(args.root)
+    assert portfolio is not None
+    decisions = portfolio.decisions
+    if args.json:
+        _print_json([d.to_dict() for d in decisions])
+    elif not decisions:
+        print("no decisions")
+    else:
+        for decision in decisions:
+            print(f"- [{decision.status}] {decision.title}"
+                  + (f" -> {decision.choice}" if decision.choice else ""))
     return EXIT_OK
 
 
@@ -471,6 +498,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note", default="")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_record)
+
+    p = sub.add_parser("decisions", help="list decisions or record one")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("--decide", default=None,
+                   help="decision id to settle")
+    p.add_argument("--choice", default=None)
+    p.add_argument("--rationale", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_decisions)
 
     p = sub.add_parser("routines", help="list routines or materialize today's")
     p.add_argument("--root", default=DEFAULT_ROOT)

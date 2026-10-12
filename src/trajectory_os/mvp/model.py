@@ -50,6 +50,8 @@ MAX_RESOURCES = 64
 MAX_EVENTS = 256
 MAX_DAYS_OFF = 366
 MAX_ROUTINES = 256
+MAX_DECISIONS = 512
+MAX_OPTIONS = 16
 MAX_DEPENDENCIES_PER_TASK = 16
 MAX_BLOCKERS_PER_TASK = 16
 MAX_WAITING_PER_TASK = 8
@@ -111,6 +113,17 @@ TASK_STATUSES = frozenset({
 
 #: Task statuses that are terminal for readiness purposes.
 TASK_TERMINAL_STATUSES = frozenset({TS_COMPLETED, TS_ABANDONED})
+
+# --- decision statuses (closed set) -------------------------------------------
+
+DS_OPEN = "OPEN"
+DS_DECIDED = "DECIDED"
+DS_DEFERRED = "DEFERRED"
+DS_SUPERSEDED = "SUPERSEDED"
+DECISION_STATUSES = frozenset({DS_OPEN, DS_DECIDED, DS_DEFERRED,
+                               DS_SUPERSEDED})
+#: A decision that has been made (or replaced) is no longer actionable.
+DECISION_TERMINAL_STATUSES = frozenset({DS_DECIDED, DS_SUPERSEDED})
 
 # --- urgency / impact ---------------------------------------------------------
 
@@ -780,6 +793,87 @@ class Routine:
 
 
 @dataclass(frozen=True)
+class Decision:
+    """One consequential decision, with its reasoning retained.
+
+    A decision is a durable record of a *choice* and *why*: the question, the
+    options considered, the status, the chosen option and the rationale. It is
+    human-authored; TrajectoryOS never decides on its own.
+    """
+
+    decision_id: str
+    title: str
+    question: str = ""
+    status: str = DS_OPEN
+    choice: str = ""
+    rationale: str = ""
+    options: tuple[str, ...] = ()
+    project_id: str = ""
+    deadline: str | None = None
+    decided_at: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+    def validate(self) -> Decision:
+        _require_id(self.decision_id, "decision_id")
+        _require_str(self.title, "title")
+        if self.question:
+            _require_str(self.question, "question", maximum=MAX_TEXT_LEN)
+        _require_enum(self.status, "status", DECISION_STATUSES)
+        if self.choice:
+            _require_str(self.choice, "choice", maximum=MAX_TEXT_LEN)
+        if self.rationale:
+            _require_str(self.rationale, "rationale", maximum=MAX_TEXT_LEN)
+        _require_text_list(self.options, "options", maximum=MAX_OPTIONS)
+        if self.project_id:
+            _require_id(self.project_id, "project_id")
+        _require_deadline(self.deadline, "deadline")
+        if self.status in DECISION_TERMINAL_STATUSES and not self.choice:
+            _fail(E_MALFORMED, "a settled decision needs a choice")
+        return self
+
+    @property
+    def settled(self) -> bool:
+        return self.status in DECISION_TERMINAL_STATUSES
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "decision_id": self.decision_id,
+            "title": self.title,
+            "question": self.question,
+            "status": self.status,
+            "choice": self.choice,
+            "rationale": self.rationale,
+            "options": list(self.options),
+            "project_id": self.project_id,
+            "deadline": self.deadline,
+            "decided_at": self.decided_at,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @staticmethod
+    def from_dict(data: Mapping[str, Any]) -> Decision:
+        raw_options = data.get("options") or []
+        options = tuple(str(item) for item in raw_options) \
+            if isinstance(raw_options, (list, tuple)) else ()
+        return Decision(
+            decision_id=str(data.get("decision_id", "")),
+            title=str(data.get("title", "")),
+            question=str(data.get("question", "")),
+            status=str(data.get("status", DS_OPEN)),
+            choice=str(data.get("choice", "")),
+            rationale=str(data.get("rationale", "")),
+            options=options,
+            project_id=str(data.get("project_id", "")),
+            deadline=_require_deadline(data.get("deadline"), "deadline"),
+            decided_at=str(data.get("decided_at", "")),
+            created_at=str(data.get("created_at", "")),
+            updated_at=str(data.get("updated_at", "")),
+        ).validate()
+
+
+@dataclass(frozen=True)
 class Portfolio:
     """The whole structured personal portfolio."""
 
@@ -788,6 +882,7 @@ class Portfolio:
     projects: tuple[Project, ...]
     tasks: tuple[Task, ...]
     routines: tuple[Routine, ...] = ()
+    decisions: tuple[Decision, ...] = ()
     resources: tuple[Resource, ...] = ()
     calendar: tuple[CalendarEvent, ...] = ()
     days_off: tuple[str, ...] = ()
@@ -805,6 +900,8 @@ class Portfolio:
             _fail(E_OVERFLOW, "too many tasks")
         if len(self.routines) > MAX_ROUTINES:
             _fail(E_OVERFLOW, "too many routines")
+        if len(self.decisions) > MAX_DECISIONS:
+            _fail(E_OVERFLOW, "too many decisions")
         if len(self.resources) > MAX_RESOURCES:
             _fail(E_OVERFLOW, "too many resources")
         if len(self.calendar) > MAX_EVENTS:
@@ -824,6 +921,8 @@ class Portfolio:
             [e.event_id for e in self.calendar], "event")
         _validate_unique_ids(
             [r.routine_id for r in self.routines], "routine")
+        _validate_unique_ids(
+            [d.decision_id for d in self.decisions], "decision")
 
         for project in self.projects:
             project.validate()
@@ -835,6 +934,10 @@ class Portfolio:
             routine.validate()
             if routine.project_id not in project_ids:
                 _fail(E_UNKNOWN_PROJECT, routine.routine_id)
+        for decision in self.decisions:
+            decision.validate()
+            if decision.project_id and decision.project_id not in project_ids:
+                _fail(E_UNKNOWN_PROJECT, decision.decision_id)
 
         for task in self.tasks:
             task.validate()
@@ -869,6 +972,7 @@ class Portfolio:
             "projects": [p.to_dict() for p in self.projects],
             "tasks": [t.to_dict() for t in self.tasks],
             "routines": [r.to_dict() for r in self.routines],
+            "decisions": [d.to_dict() for d in self.decisions],
             "resources": [r.to_dict() for r in self.resources],
             "calendar": [e.to_dict() for e in self.calendar],
             "days_off": list(self.days_off),
@@ -886,6 +990,7 @@ class Portfolio:
         raw_projects = data.get("projects") or []
         raw_tasks = data.get("tasks") or []
         raw_routines = data.get("routines") or []
+        raw_decisions = data.get("decisions") or []
         raw_resources = data.get("resources") or []
         raw_calendar = data.get("calendar") or []
         raw_days_off = data.get("days_off") or []
@@ -905,6 +1010,9 @@ class Portfolio:
             routines=tuple(Routine.from_dict(item)
                            for item in raw_routines
                            if isinstance(item, Mapping)),
+            decisions=tuple(Decision.from_dict(item)
+                            for item in raw_decisions
+                            if isinstance(item, Mapping)),
             resources=tuple(Resource.from_dict(item)
                             for item in raw_resources
                             if isinstance(item, Mapping)),
@@ -969,5 +1077,7 @@ __all__ = [
     "TASK_STATUSES", "TASK_TERMINAL_STATUSES",
     "U_CRITICAL", "U_HIGH", "U_LOW", "U_MEDIUM", "URGENCIES", "URGENCY_RANK",
     "CalendarEvent", "Capacity", "MvpError", "OutcomeRecord", "Portfolio",
-    "Project", "Resource", "Routine", "Task",
+    "DS_DECIDED", "DS_DEFERRED", "DS_OPEN", "DS_SUPERSEDED",
+    "DECISION_STATUSES", "DECISION_TERMINAL_STATUSES",
+    "Decision", "Project", "Resource", "Routine", "Task",
 ]
