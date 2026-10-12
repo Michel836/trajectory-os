@@ -200,6 +200,7 @@ def build_views(root: str | Path, *, today: date | None = None,
         "today_plan": day.to_dict(),
         "today_handoff": today_handoff,
         "triage": [item.to_dict() for item in triage.suggest(portfolio)],
+        "routines": [routine.to_dict() for routine in portfolio.routines],
         "ready_workflow": _ready_workflow(portfolio, readiness_map),
         "planning": planning_state.to_dict(),
         "tomorrow_view": planning.build_tomorrow_view(

@@ -9,6 +9,7 @@ chosen export path):
     mvp plan [--root DIR] [--today DATE]     full daily cockpit (text)
     mvp today | week | ready | blocked | projects | wbs
     mvp record --task ID --outcome O [--minutes N] [--note TEXT]
+    mvp routines [--materialize] [--today DATE]  list / materialize routines
     mvp promote --task ID [--name NAME]      task -> its own project
     mvp demote --project ID --target ID      project -> tasks of another
     mvp park --project ID [--kind IDEA|SOMEDAY]  park in / leave the Inbox
@@ -231,6 +232,33 @@ def _cmd_record(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_routines(args: argparse.Namespace) -> int:
+    _load_or_fail(args.root)
+    if args.materialize:
+        day = args.today or date.today().isoformat()
+        result = mutations.materialize_routines(args.root, day)
+        if args.json:
+            _print_json(result)
+        else:
+            print(f"materialized {result['created_tasks']} routine task(s) "
+                  f"on {result['day']}")
+        return EXIT_OK
+    portfolio = store.load_portfolio(args.root)
+    assert portfolio is not None
+    routines = portfolio.routines
+    if args.json:
+        _print_json([routine.to_dict() for routine in routines])
+    elif not routines:
+        print("no routines")
+    else:
+        for routine in routines:
+            days = ",".join(str(day) for day in routine.weekdays)
+            state = "" if routine.active else " (inactive)"
+            print(f"- {routine.routine_id} [{days}] {routine.title} "
+                  f"({routine.project_id}){state}")
+    return EXIT_OK
+
+
 def _cmd_promote(args: argparse.Namespace) -> int:
     _load_or_fail(args.root)
     payload = {"name": args.name} if args.name else {}
@@ -443,6 +471,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note", default="")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_record)
+
+    p = sub.add_parser("routines", help="list routines or materialize today's")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("--materialize", action="store_true")
+    p.add_argument("--today", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_routines)
 
     p = sub.add_parser("promote", help="promote a task into its own project")
     p.add_argument("--root", default=DEFAULT_ROOT)

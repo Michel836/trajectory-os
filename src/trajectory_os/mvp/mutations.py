@@ -23,6 +23,7 @@ import re
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
@@ -501,6 +502,145 @@ def set_day_off(root: str | Path, day: str, *, off: bool) -> dict[str, Any]:
         updated_at=_updated_at(portfolio)).validate()
     store.save_portfolio(root, new_portfolio)
     return {"day": day, "off": off, "days_off": list(new_portfolio.days_off)}
+
+
+# --- routines -----------------------------------------------------------------
+
+ROUTINE_EDITABLE = frozenset({
+    "title", "project_id", "weekdays", "estimated_minutes", "workstream",
+    "active",
+})
+
+
+def _weekdays_field(payload: Mapping[str, Any],
+                    default: tuple[int, ...]) -> tuple[int, ...]:
+    if "weekdays" not in payload:
+        return default
+    value = payload["weekdays"]
+    if not isinstance(value, (list, tuple)) or not all(
+            isinstance(day, int) and not isinstance(day, bool)
+            for day in value):
+        raise model.MvpError(model.E_MALFORMED,
+                             "weekdays must be a list of integers")
+    return tuple(value)
+
+
+@_serialized
+def create_routine(root: str | Path,
+                   payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Create one recurring routine template."""
+    portfolio = _load(root)
+    _reject_unknown(payload, ROUTINE_EDITABLE | frozenset({"routine_id"}),
+                    "routine")
+    title = _required_str(payload, "title")
+    project_id = _required_str(payload, "project_id")
+    if project_id not in portfolio.project_map():
+        raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+    existing = {r.routine_id for r in portfolio.routines}
+    routine_id = payload.get("routine_id")
+    if not isinstance(routine_id, str) or not routine_id.strip():
+        routine_id = _unique_id(existing, _slug(title, "routine"))
+    routine = model.Routine(
+        routine_id=routine_id, title=title, project_id=project_id,
+        weekdays=_weekdays_field(payload, (0,)),
+        estimated_minutes=_optional_blankable(
+            _value(payload, "estimated_minutes")),
+        workstream=str(_value(payload, "workstream", "")),
+        active=bool(_value(payload, "active", True)),
+    ).validate()
+    new_portfolio = replace(
+        portfolio, routines=portfolio.routines + (routine,),
+        updated_at=_updated_at(portfolio)).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"routine_id": routine_id, "project_id": project_id}
+
+
+@_serialized
+def update_routine(root: str | Path, routine_id: str,
+                   payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Apply a partial, validated update to one routine."""
+    portfolio = _load(root)
+    _reject_unknown(payload, ROUTINE_EDITABLE, "routine")
+    routines = {r.routine_id: r for r in portfolio.routines}
+    if routine_id not in routines:
+        raise model.MvpError(model.E_UNKNOWN_ID, routine_id)
+    current = routines[routine_id]
+    merged: dict[str, Any] = {
+        "title": current.title, "project_id": current.project_id,
+        "weekdays": list(current.weekdays),
+        "estimated_minutes": current.estimated_minutes,
+        "workstream": current.workstream, "active": current.active,
+    }
+    merged.update({key: payload[key] for key in ROUTINE_EDITABLE
+                   if key in payload})
+    if merged["project_id"] not in portfolio.project_map():
+        raise model.MvpError(model.E_UNKNOWN_PROJECT,
+                             str(merged["project_id"]))
+    updated = model.Routine(
+        routine_id=routine_id, title=str(merged["title"]),
+        project_id=str(merged["project_id"]),
+        weekdays=tuple(merged["weekdays"]),
+        estimated_minutes=merged["estimated_minutes"],
+        workstream=str(merged["workstream"]),
+        active=bool(merged["active"]),
+    ).validate()
+    new_routines = tuple(updated if r.routine_id == routine_id else r
+                         for r in portfolio.routines)
+    new_portfolio = replace(portfolio, routines=new_routines,
+                            updated_at=_updated_at(portfolio)).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"routine_id": routine_id, "active": updated.active}
+
+
+@_serialized
+def delete_routine(root: str | Path, routine_id: str) -> dict[str, Any]:
+    portfolio = _load(root)
+    if routine_id not in {r.routine_id for r in portfolio.routines}:
+        raise model.MvpError(model.E_UNKNOWN_ID, routine_id)
+    new_routines = tuple(r for r in portfolio.routines
+                         if r.routine_id != routine_id)
+    new_portfolio = replace(portfolio, routines=new_routines,
+                            updated_at=_updated_at(portfolio)).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"routine_id": routine_id, "deleted": True}
+
+
+@_serialized
+def materialize_routines(root: str | Path, day: str) -> dict[str, Any]:
+    """Create the tasks due from active routines on ``day`` (idempotent).
+
+    The created task id is deterministic (``<routine_id>-<day>``), so running
+    this again for the same day creates nothing.
+    """
+    portfolio = _load(root)
+    try:
+        target = date.fromisoformat(day)
+    except ValueError as exc:
+        raise model.MvpError(model.E_MALFORMED,
+                             "day must be YYYY-MM-DD") from exc
+    projects = portfolio.project_map()
+    existing_ids = {t.task_id for t in portfolio.tasks}
+    stamp = _updated_at(portfolio)
+    created: list[model.Task] = []
+    for routine in portfolio.routines:
+        if routine.project_id not in projects or not routine.due_on(target):
+            continue
+        task_id = _slug(f"{routine.routine_id}-{day}", "routine")
+        if task_id in existing_ids:
+            continue
+        existing_ids.add(task_id)
+        created.append(model.Task(
+            task_id=task_id, project_id=routine.project_id,
+            title=routine.title, workstream=routine.workstream,
+            estimated_minutes=routine.estimated_minutes,
+            status=model.TS_TODO, created_at=stamp, updated_at=stamp))
+    if created:
+        new_portfolio = replace(
+            portfolio, tasks=portfolio.tasks + tuple(created),
+            updated_at=stamp).validate()
+        store.save_portfolio(root, new_portfolio)
+    return {"day": day, "created_tasks": len(created),
+            "task_ids": [t.task_id for t in created]}
 
 
 # --- task mutations -----------------------------------------------------------

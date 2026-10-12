@@ -49,6 +49,7 @@ MAX_TASKS = 2048
 MAX_RESOURCES = 64
 MAX_EVENTS = 256
 MAX_DAYS_OFF = 366
+MAX_ROUTINES = 256
 MAX_DEPENDENCIES_PER_TASK = 16
 MAX_BLOCKERS_PER_TASK = 16
 MAX_WAITING_PER_TASK = 8
@@ -704,6 +705,81 @@ class OutcomeRecord:
 
 
 @dataclass(frozen=True)
+class Routine:
+    """One recurring task template.
+
+    A routine is not executed directly: it *materializes* concrete tasks for
+    the days it is due (see :func:`trajectory_os.mvp.mutations.materialize_routines`).
+    Materialization is idempotent because the created task id is deterministic,
+    so re-running never duplicates work.
+    """
+
+    routine_id: str
+    title: str
+    project_id: str
+    weekdays: tuple[int, ...] = (0,)  # 0 = Monday .. 6 = Sunday
+    estimated_minutes: int | None = None
+    workstream: str = ""
+    active: bool = True
+
+    def validate(self) -> Routine:
+        _require_id(self.routine_id, "routine_id")
+        _require_str(self.title, "title")
+        _require_id(self.project_id, "project_id")
+        if not self.weekdays:
+            _fail(E_MALFORMED, "weekdays must not be empty")
+        if len(set(self.weekdays)) != len(self.weekdays):
+            _fail(E_MALFORMED, "weekdays must be unique")
+        for weekday in self.weekdays:
+            _require_int(weekday, "weekdays", minimum=0, maximum=6)
+        if self.estimated_minutes is not None:
+            _require_int(self.estimated_minutes, "estimated_minutes",
+                         minimum=1, maximum=1440)
+        if self.workstream:
+            _require_str(self.workstream, "workstream")
+        if not isinstance(self.active, bool):
+            _fail(E_MALFORMED, "active must be a boolean")
+        return self
+
+    def due_on(self, day: date) -> bool:
+        return self.active and day.weekday() in self.weekdays
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "routine_id": self.routine_id,
+            "title": self.title,
+            "project_id": self.project_id,
+            "weekdays": list(self.weekdays),
+            "estimated_minutes": self.estimated_minutes,
+            "workstream": self.workstream,
+            "active": self.active,
+        }
+
+    @staticmethod
+    def from_dict(data: Mapping[str, Any]) -> Routine:
+        raw = data.get("weekdays")
+        weekdays: tuple[int, ...]
+        if raw is None:
+            weekdays = (0,)
+        elif isinstance(raw, (list, tuple)):
+            weekdays = tuple(_require_int(day, "weekdays", minimum=0,
+                                          maximum=6) for day in raw)
+        else:
+            _fail(E_MALFORMED, "weekdays must be a list")
+        return Routine(
+            routine_id=str(data.get("routine_id", "")),
+            title=str(data.get("title", "")),
+            project_id=str(data.get("project_id", "")),
+            weekdays=weekdays,
+            estimated_minutes=_optional_int(
+                data.get("estimated_minutes"), "estimated_minutes",
+                minimum=1, maximum=1440),
+            workstream=str(data.get("workstream", "")),
+            active=bool(data.get("active", True)),
+        ).validate()
+
+
+@dataclass(frozen=True)
 class Portfolio:
     """The whole structured personal portfolio."""
 
@@ -711,6 +787,7 @@ class Portfolio:
     name: str
     projects: tuple[Project, ...]
     tasks: tuple[Task, ...]
+    routines: tuple[Routine, ...] = ()
     resources: tuple[Resource, ...] = ()
     calendar: tuple[CalendarEvent, ...] = ()
     days_off: tuple[str, ...] = ()
@@ -726,6 +803,8 @@ class Portfolio:
             _fail(E_OVERFLOW, "too many projects")
         if len(self.tasks) > MAX_TASKS:
             _fail(E_OVERFLOW, "too many tasks")
+        if len(self.routines) > MAX_ROUTINES:
+            _fail(E_OVERFLOW, "too many routines")
         if len(self.resources) > MAX_RESOURCES:
             _fail(E_OVERFLOW, "too many resources")
         if len(self.calendar) > MAX_EVENTS:
@@ -743,6 +822,8 @@ class Portfolio:
             [r.resource_id for r in self.resources], "resource")
         _validate_unique_ids(
             [e.event_id for e in self.calendar], "event")
+        _validate_unique_ids(
+            [r.routine_id for r in self.routines], "routine")
 
         for project in self.projects:
             project.validate()
@@ -750,6 +831,10 @@ class Portfolio:
             resource.validate()
         for event in self.calendar:
             event.validate()
+        for routine in self.routines:
+            routine.validate()
+            if routine.project_id not in project_ids:
+                _fail(E_UNKNOWN_PROJECT, routine.routine_id)
 
         for task in self.tasks:
             task.validate()
@@ -783,6 +868,7 @@ class Portfolio:
             "name": self.name,
             "projects": [p.to_dict() for p in self.projects],
             "tasks": [t.to_dict() for t in self.tasks],
+            "routines": [r.to_dict() for r in self.routines],
             "resources": [r.to_dict() for r in self.resources],
             "calendar": [e.to_dict() for e in self.calendar],
             "days_off": list(self.days_off),
@@ -799,6 +885,7 @@ class Portfolio:
                   f"schema_version={version!r}")
         raw_projects = data.get("projects") or []
         raw_tasks = data.get("tasks") or []
+        raw_routines = data.get("routines") or []
         raw_resources = data.get("resources") or []
         raw_calendar = data.get("calendar") or []
         raw_days_off = data.get("days_off") or []
@@ -815,6 +902,9 @@ class Portfolio:
                            if isinstance(item, Mapping)),
             tasks=tuple(Task.from_dict(item)
                         for item in raw_tasks if isinstance(item, Mapping)),
+            routines=tuple(Routine.from_dict(item)
+                           for item in raw_routines
+                           if isinstance(item, Mapping)),
             resources=tuple(Resource.from_dict(item)
                             for item in raw_resources
                             if isinstance(item, Mapping)),
@@ -879,5 +969,5 @@ __all__ = [
     "TASK_STATUSES", "TASK_TERMINAL_STATUSES",
     "U_CRITICAL", "U_HIGH", "U_LOW", "U_MEDIUM", "URGENCIES", "URGENCY_RANK",
     "CalendarEvent", "Capacity", "MvpError", "OutcomeRecord", "Portfolio",
-    "Project", "Resource", "Task",
+    "Project", "Resource", "Routine", "Task",
 ]
