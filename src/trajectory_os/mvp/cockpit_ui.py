@@ -658,9 +658,14 @@ function applyPrefs(p){if(!p)return;S.prefs=p;
   S.readySort=p.ready_sort||'recommended';
   S.tomorrowSort=p.tomorrow_sort||'planned';
   S.weekSort=p.week_sort||'manual';}
+var VIEW_SEQ=0;
 async function refresh(){
+  const seq=++VIEW_SEQ;
   try{
     const res=await api('/api/views');
+    // Discard a response superseded by a later request, so an older refresh
+    // can never overwrite newer data (e.g. hide a just-created follow-up).
+    if(seq!==VIEW_SEQ)return;
     S.views=res;
     applyPrefs(res.preferences);
     reconcileSelection();
