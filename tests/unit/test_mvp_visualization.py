@@ -422,6 +422,43 @@ def test_quick_capture_shortcut_is_wired(tmp_path: object) -> None:
         False, False, False, False, False, False, True]
 
 
+def test_search_before_capture_is_wired(tmp_path: object) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    js = cockpit_ui.PAGE_JS
+    for fn in ("normalizedTitle", "similarExistingTask",
+               "refreshDuplicateHint"):
+        assert "function " + fn + "(" in js, fn
+    functions = "\n".join(_js_function(js, name) for name in (
+        "normalizedTitle", "similarExistingTask", "refreshDuplicateHint"))
+    script = functions + (
+        "\nconst els={'nt-dupe':{innerHTML:''},"
+        "'nt-project':{value:'p1'},'nt-title':{value:'preparer portfolio apec'}};"
+        "globalThis.$=function(id){return els[id]||null;};"
+        "globalThis.esc=function(v){return String(v==null?'':v);};"
+        "globalThis.objects=function(){return [{kind:'task',project_id:'p1',"
+        "ref_id:'t1',title:'Préparer Portfolio APEC'}];};"
+        "refreshDuplicateHint();"
+        "console.log(JSON.stringify({"
+        "normalized:normalizedTitle('Préparer  Portfolio APEC'),"
+        "match:(similarExistingTask('p1','preparer portfolio apec')||{}).ref_id,"
+        "noMatch:similarExistingTask('p1','autre chose'),"
+        "hint:els['nt-dupe'].innerHTML}));")
+    path = Path(str(tmp_path)) / "normalize.js"
+    path.write_text(script, encoding="utf-8")
+    result = subprocess.run([node, str(path)], capture_output=True, text=True,
+                            check=False)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    # Must match the server's importer.normalize_text.
+    assert payload["normalized"] == "preparer portfolio apec"
+    assert payload["match"] == "t1"
+    assert payload["noMatch"] is None
+    assert "task:t1" in payload["hint"]
+    assert "Préparer Portfolio APEC" in payload["hint"]
+
+
 def test_suggested_visual_distinction_present() -> None:
     # SUGGESTED content must be visually distinguished everywhere it appears.
     assert "badge-SUGGESTED" in cockpit_ui.PAGE_CSS
