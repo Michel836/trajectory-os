@@ -36,6 +36,7 @@ from trajectory_os.mvp import (
     model,
     planning,
     scheduler,
+    search_memory,
     store,
     uistate,
 )
@@ -158,6 +159,7 @@ def build_views(root: str | Path, *, today: date | None = None,
     objects: list[dict[str, Any]] = [
         project_objects[pid] for pid in sorted(project_objects)
     ] + [task_objects[tid] for tid in sorted(task_objects)]
+    _attach_import_search_memory(objects, root, portfolio)
 
     week = scheduler.plan_week(portfolio, ranked, today)
     day = scheduler.plan_day(portfolio, ranked, today)
@@ -207,6 +209,36 @@ def build_views(root: str | Path, *, today: date | None = None,
         "preferences": prefs.to_dict(),
         "wbs_levels": list(WBS_LEVELS),
     }
+
+
+# --- import-aware search memory -----------------------------------------------
+
+
+def _attach_import_search_memory(
+    objects: list[dict[str, Any]],
+    root: str | Path,
+    portfolio: model.Portfolio,
+) -> None:
+    """Attach derived imported vocabulary so global search is import-aware.
+
+    The import artifact stays the source of truth; this only copies a bounded,
+    deduplicated ``search_text`` (and its ``search_sources`` for explicability)
+    onto the matching project/task objects. Read-only and fail-soft: a missing
+    or broken import memory leaves the objects exactly as before.
+    """
+    index = search_memory.build_index(
+        root,
+        project_ids=[p.project_id for p in portfolio.projects],
+        task_ids=[t.task_id for t in portfolio.tasks],
+    )
+    if not index:
+        return
+    for obj in objects:
+        memory = index.get(obj["kind"], obj["ref_id"])
+        if memory is None:
+            continue
+        obj["search_text"] = memory.text
+        obj["search_sources"] = list(memory.sources)
 
 
 # --- normalised objects -------------------------------------------------------
