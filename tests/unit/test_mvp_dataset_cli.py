@@ -7,6 +7,12 @@ from datetime import date
 from trajectory_os.mvp import cli, dataset, model
 
 
+def test_dashboard_accepts_no_open_flag() -> None:
+    parser = cli._build_parser()
+    assert parser.parse_args(["dashboard"]).no_open is False
+    assert parser.parse_args(["dashboard", "--no-open"]).no_open is True
+
+
 def test_seed_has_representative_projects() -> None:
     portfolio = dataset.build_portfolio(today=date(2026, 9, 20))
     assert 10 <= len(portfolio.projects) <= 15
