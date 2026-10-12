@@ -223,6 +223,15 @@ def test_preview_classifies_idea_and_someday_as_inbox(tmp_path: object) -> None:
     assert result.counts["new_tasks"] == 0
 
 
+def test_ambiguous_line_is_not_silently_actionable(tmp_path: object) -> None:
+    _seed(tmp_path)
+    result = capture.preview(str(tmp_path), "Le grand livre rouge\n")
+    item = result.items[0]
+    assert item.ambiguous is True
+    assert item.suggested_action == capture.ACT_SKIP
+    assert item.to_dict()["ambiguous"] is True
+
+
 def test_confirm_parks_an_idea_in_the_inbox(tmp_path: object) -> None:
     _seed(tmp_path)
     text = "Someday apprendre la poterie\n"

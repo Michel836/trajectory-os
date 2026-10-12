@@ -97,7 +97,12 @@ def _evaluate_task(
         return TaskReadiness(task.task_id, task.project_id, RS_DEFERRED,
                              False, ("task deferred by decision",), (), ())
     if not project.open:
-        reasons.append(f"project {project.name!r} is {project.status}")
+        # A closed or parked project closes its tasks first: they must never
+        # appear in an action queue merely because they are also blocked or
+        # waiting.
+        return TaskReadiness(
+            task.task_id, task.project_id, RS_PROJECT_CLOSED, False,
+            (f"project {project.name!r} is {project.status}",), (), ())
 
     for dep in dep_graph.upstream(task.task_id):
         dep_task = tasks[dep]
@@ -126,8 +131,6 @@ def _evaluate_task(
         state = RS_BLOCKED
     elif task.waiting_for:
         state = RS_WAITING
-    elif not project.open:
-        state = RS_PROJECT_CLOSED
     elif task.status == model.TS_IN_PROGRESS:
         state = RS_IN_PROGRESS
     else:

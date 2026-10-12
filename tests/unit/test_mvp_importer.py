@@ -179,7 +179,7 @@ def test_project_without_suggestion_defaults_to_deferred(tmp_path: object) -> No
     assert project.status == model.PS_DEFERRED
 
 
-def test_someday_kind_defaults_to_deferred(tmp_path: object) -> None:
+def test_someday_kind_is_parked_in_the_inbox(tmp_path: object) -> None:
     _seed(tmp_path)
     portfolio = store.load_portfolio(_root(tmp_path))
     assert portfolio is not None
@@ -196,7 +196,9 @@ def test_someday_kind_defaults_to_deferred(tmp_path: object) -> None:
     new_portfolio, _ = importer.apply_decisions(portfolio, analysis, decisions)
     project = next(p for p in new_portfolio.projects
                    if p.name == "Study spiral")
-    assert project.status == model.PS_DEFERRED
+    # An imported someday notion is Inbox content, not an active project.
+    assert project.status == model.PS_SOMEDAY
+    assert project.parked is True
 
 
 def test_apply_decisions_invalid_merge_fails(tmp_path: object) -> None:

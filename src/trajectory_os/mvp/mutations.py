@@ -18,14 +18,29 @@ data root.
 
 from __future__ import annotations
 
+import functools
 import re
-from collections.abc import Mapping
+import threading
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from trajectory_os.intelligence import model as intel_model
 from trajectory_os.mvp import classification, importer, model, outcomes, store
+
+#: Serialize in-process portfolio mutations. The local cockpit server is
+#: threaded, so two read-modify-write requests could otherwise lose an update.
+#: Cross-process writers (CLI) remain a documented limitation.
+_MUTATION_LOCK = threading.Lock()
+
+
+def _serialized[F: Callable[..., Any]](func: F) -> F:
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        with _MUTATION_LOCK:
+            return func(*args, **kwargs)
+    return cast(F, wrapper)
 
 #: Fields the dashboard may edit on a project (fail closed on anything else).
 PROJECT_EDITABLE = frozenset({
@@ -167,6 +182,7 @@ def _updated_at(portfolio: model.Portfolio) -> str:
 # --- project mutations --------------------------------------------------------
 
 
+@_serialized
 def create_project(root: str | Path,
                    payload: Mapping[str, Any]) -> dict[str, Any]:
     """Create one project; ``project_id`` is optional (slug generated)."""
@@ -212,6 +228,7 @@ def create_project(root: str | Path,
     return {"project_id": project_id, "name": name}
 
 
+@_serialized
 def update_project(root: str | Path, project_id: str,
                    payload: Mapping[str, Any]) -> dict[str, Any]:
     """Apply a partial, validated update to one project."""
@@ -246,6 +263,7 @@ def update_project(root: str | Path, project_id: str,
 # losing data. Every operation is validated, atomic and reversible.
 
 
+@_serialized
 def park_project(root: str | Path, project_id: str,
                  payload: Mapping[str, Any]) -> dict[str, Any]:
     """Park a project in the Inbox, or bring it back out.
@@ -280,6 +298,7 @@ def park_project(root: str | Path, project_id: str,
             "parked": updated.parked}
 
 
+@_serialized
 def promote_task(root: str | Path, task_id: str,
                  payload: Mapping[str, Any]) -> dict[str, Any]:
     """Promote a task into its own project and move the task into it.
@@ -290,10 +309,8 @@ def promote_task(root: str | Path, task_id: str,
     override the values derived from the task.
     """
     portfolio = _load(root)
-    _reject_unknown(
-        payload,
-        frozenset({"name", "objective", "domain", "allow_duplicate"}),
-        "promote")
+    _reject_unknown(payload, frozenset({"name", "objective", "domain"}),
+                    "promote")
     tasks = portfolio.task_map()
     if task_id not in tasks:
         raise model.MvpError(model.E_UNKNOWN_ID, task_id)
@@ -302,17 +319,18 @@ def promote_task(root: str | Path, task_id: str,
     if not isinstance(name, str) or not name.strip():
         raise model.MvpError(model.E_MALFORMED, "name must be a string")
     name = name.strip()
-    if payload.get("allow_duplicate") is not True:
-        duplicate = _duplicate_project(portfolio, name)
-        if duplicate is not None:
-            raise model.MvpError(
-                model.E_DUPLICATE_OBJECT,
-                "A project with the same normalized name already exists.",
-                metadata=_duplicate_metadata(
-                    obj_id="project:" + duplicate.project_id, kind="project",
-                    ref_id=duplicate.project_id, title=duplicate.name,
-                    status=duplicate.status,
-                    project_id=duplicate.project_id, project=duplicate.name))
+    # No allow_duplicate bypass: a retried promotion fails closed instead of
+    # creating a second, empty project with the same normalized name.
+    duplicate = _duplicate_project(portfolio, name)
+    if duplicate is not None:
+        raise model.MvpError(
+            model.E_DUPLICATE_OBJECT,
+            "A project with the same normalized name already exists.",
+            metadata=_duplicate_metadata(
+                obj_id="project:" + duplicate.project_id, kind="project",
+                ref_id=duplicate.project_id, title=duplicate.name,
+                status=duplicate.status,
+                project_id=duplicate.project_id, project=duplicate.name))
     parent = portfolio.project_map()[task.project_id]
     objective = _value(payload, "objective", task.description or task.title)
     if not isinstance(objective, str) or not objective.strip():
@@ -335,6 +353,7 @@ def promote_task(root: str | Path, task_id: str,
             "previous_project_id": task.project_id}
 
 
+@_serialized
 def demote_project(root: str | Path, project_id: str,
                    payload: Mapping[str, Any]) -> dict[str, Any]:
     """Move a project's tasks to another project and remove the empty one.
@@ -345,7 +364,8 @@ def demote_project(root: str | Path, project_id: str,
     project is only removed once none of its tasks reference it.
     """
     portfolio = _load(root)
-    _reject_unknown(payload, frozenset({"target_project_id"}),
+    _reject_unknown(payload,
+                    frozenset({"target_project_id", "confirm_discard"}),
                     "demote")
     projects = portfolio.project_map()
     if project_id not in projects:
@@ -357,6 +377,15 @@ def demote_project(root: str | Path, project_id: str,
             "target_project_id must differ from project_id")
     if target not in projects:
         raise model.MvpError(model.E_UNKNOWN_PROJECT, target)
+    current = projects[project_id]
+    has_metadata = (bool(current.description.strip())
+                    or current.deadline is not None
+                    or current.objective.strip() not in ("", current.name))
+    if has_metadata and payload.get("confirm_discard") is not True:
+        raise model.MvpError(
+            model.E_MALFORMED,
+            "project has metadata (objective/description/deadline); pass "
+            "confirm_discard=true to drop it on demotion")
     stamp = _updated_at(portfolio)
     moved = 0
     new_tasks: list[model.Task] = []
@@ -380,6 +409,7 @@ def demote_project(root: str | Path, project_id: str,
 # --- task mutations -----------------------------------------------------------
 
 
+@_serialized
 def create_task(root: str | Path,
                 payload: Mapping[str, Any]) -> dict[str, Any]:
     """Create one task; ``task_id`` is optional (slug generated)."""
@@ -439,6 +469,7 @@ def create_task(root: str | Path,
     return {"task_id": task_id, "project_id": project_id}
 
 
+@_serialized
 def update_task(root: str | Path, task_id: str,
                 payload: Mapping[str, Any]) -> dict[str, Any]:
     """Apply a partial, validated update to one task.
@@ -502,6 +533,7 @@ def _derive_projects(portfolio: model.Portfolio,
 # --- dependency mutations -----------------------------------------------------
 
 
+@_serialized
 def add_dependency(root: str | Path, task_id: str,
                    dependency: str) -> dict[str, Any]:
     """Add one dependency edge (validated; cycles fail closed)."""
@@ -529,6 +561,7 @@ def add_dependency(root: str | Path, task_id: str,
     return {"task_id": task_id, "dependency": dependency, "added": True}
 
 
+@_serialized
 def remove_dependency(root: str | Path, task_id: str,
                       dependency: str) -> dict[str, Any]:
     """Remove one dependency edge from a task's dependencies."""

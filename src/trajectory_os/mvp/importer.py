@@ -39,6 +39,7 @@ from trajectory_os.mvp.classification import (
     AREA,
     BLOCKER,
     DELIVERABLE,
+    GROUPING,  # noqa: F401  (re-exported for backward compatibility)
     IDEA,
     KINDS,
     NOTE_LIKE,
@@ -2655,6 +2656,12 @@ def _project_status(candidate: ImportCandidate,
     suggested = candidate.suggested_status
     if suggested in model.PROJECT_STATUSES and suggested != model.PS_COMPLETED:
         return suggested
+    # An imported idea / someday notion is Inbox content: park it explicitly
+    # instead of creating an active (or merely deferred) project.
+    if candidate.kind == IDEA:
+        return model.PS_IDEA
+    if candidate.kind == SOMEDAY:
+        return model.PS_SOMEDAY
     return model.PS_DEFERRED  # conservative: new projects start deferred
 
 

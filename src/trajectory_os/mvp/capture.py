@@ -126,6 +126,9 @@ class CaptureItem:
     project_name: str
     reason: str
     duplicate_of: str = ""
+    #: True when the shared classifier found no explicit signal; the preview
+    #: must not pretend an uncertain line is a settled task.
+    ambiguous: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -142,6 +145,7 @@ class CaptureItem:
             "project_id": self.project_id,
             "project_name": self.project_name,
             "reason": self.reason,
+            "ambiguous": self.ambiguous,
             "duplicate_of": self.duplicate_of,
         }
 
@@ -232,7 +236,8 @@ def preview(root: str | Path, text: str, *,
         "items_processed": len(items),
         "matches": counts["matched_existing"],
         "duplicates": counts["duplicates"],
-        "new_objects": counts["new_tasks"] + counts["possible_projects"],
+        "new_objects": (counts["new_tasks"] + counts["possible_projects"]
+                        + counts["possible_ideas"]),
         "cost_usd": 0.0,
         "reanalyzed_portfolio": False,
     }
@@ -358,15 +363,24 @@ def _classify(
     if project_match is not None and project_match[2] >= PROJECT_HINT_THRESHOLD:
         target_id = project_match[0]
         target_name = project_match[1]
+    if classified.ambiguous:
+        # Do not present uncertain text as an already-settled task: default
+        # to skip and surface the ambiguity for an explicit human decision.
+        action = ACT_SKIP
+        reason = ("no clear signal; confirm kind/project or rephrase before "
+                  "accepting")
+    else:
+        action = ACT_ACCEPT
+        reason = (f"new task for {target_name}" if target_id
+                  else "new task; choose a project before accepting")
     return CaptureItem(
         capture_id=capture_id, text=line, title=title,
-        category=CAT_NEW_TASK, suggested_action=ACT_ACCEPT,
+        category=CAT_NEW_TASK, suggested_action=action,
         kind="task", matched_kind="project" if target_id else "",
         matched_id=target_id, matched_title=target_name,
         match_score=project_match[2] if project_match else 0.0,
         project_id=target_id, project_name=target_name,
-        reason=(f"new task for {target_name}" if target_id
-                else "new task; choose a project before accepting"))
+        ambiguous=classified.ambiguous, reason=reason)
 
 
 # --- confirmation -------------------------------------------------------------

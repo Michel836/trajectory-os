@@ -429,9 +429,16 @@ def test_api_promote_task_then_demote_project(tmp_path: object) -> None:
                                     {"name": "Alpha effort"})
         assert status == 409
         assert conflict["error"] == model.E_DUPLICATE_OBJECT
-        status, demoted = _request(
+        # Demotion drops the promoted project's own metadata, so it requires
+        # an explicit confirmation; without it the API fails closed.
+        status, blocked = _request(
             port, "POST", f"/api/projects/{new_id}/demote",
             {"target_project_id": "p1"})
+        assert status == 409
+        assert blocked["error"] == model.E_MALFORMED
+        status, demoted = _request(
+            port, "POST", f"/api/projects/{new_id}/demote",
+            {"target_project_id": "p1", "confirm_discard": True})
         assert status == 200
         assert demoted["moved_tasks"] == 1
     portfolio = store.load_portfolio(root)

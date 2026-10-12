@@ -111,6 +111,11 @@ TASK_VERBS = (
     "relancer", "planifier", "organiser", "finaliser", "valider",
     "installer", "configurer", "revoir", "terminer", "commencer", "creer",
     "mettre", "prendre", "demander", "reserver", "payer", "signer",
+    # Common English equivalents, so a plain English action is not reported
+    # as ambiguous.
+    "book", "call", "send", "write", "review", "check", "fix", "update",
+    "prepare", "buy", "read", "plan", "organize", "finish", "start",
+    "create", "email", "schedule", "pay", "sign", "confirm", "follow",
 )
 
 #: Public kind alias used by Quick Capture (durable entity vocabulary).

@@ -28,7 +28,7 @@ from trajectory_os.mvp import (
 #: How the cockpit counts project statuses.
 PROJECT_STATUS_ORDER = (
     model.PS_ACTIVE, model.PS_WAITING, model.PS_BLOCKED,
-    model.PS_DEFERRED, model.PS_COMPLETED,
+    model.PS_DEFERRED, model.PS_COMPLETED, model.PS_IDEA, model.PS_SOMEDAY,
 )
 
 
