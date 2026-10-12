@@ -454,3 +454,53 @@ def test_api_park_project_moves_it_to_the_inbox(tmp_path: object) -> None:
     assert portfolio is not None
     assert portfolio.project_map()["p1"].status == model.PS_IDEA
     assert portfolio.project_map()["p1"].parked is True
+
+
+# --- agenda & days off over the API -------------------------------------------
+
+
+def test_api_event_create_then_delete(tmp_path: object) -> None:
+    from datetime import date
+
+    root = str(tmp_path)
+    _seed(root)
+    today = date.today().isoformat()
+    with _server(root) as port:
+        status, created = _request(port, "POST", "/api/events", {
+            "title": "Standup", "day": today,
+            "start_minutes": 540, "end_minutes": 555,
+            "recurrence": "WEEKLY"})
+        assert status == 200
+        event_id = str(created["event_id"])
+        status, views = _request(port, "GET", "/api/views")
+        assert status == 200
+        titles = [e["title"]
+                  for e in views["today_plan"]["calendar"]]  # type: ignore[index]
+        assert "Standup" in titles
+        status, _ = _request(port, "POST",
+                             f"/api/events/{event_id}/delete", {})
+        assert status == 200
+    portfolio = store.load_portfolio(root)
+    assert portfolio is not None
+    assert portfolio.calendar == ()
+
+
+def test_api_day_off_toggle(tmp_path: object) -> None:
+    from datetime import date
+
+    root = str(tmp_path)
+    _seed(root)
+    today = date.today().isoformat()
+    with _server(root) as port:
+        status, _ = _request(port, "POST", "/api/calendar/day-off",
+                             {"day": today, "off": True})
+        assert status == 200
+        status, views = _request(port, "GET", "/api/views")
+        assert status == 200
+        assert views["today_plan"]["is_working_day"] is False  # type: ignore[index]
+        status, _ = _request(port, "POST", "/api/calendar/day-off",
+                             {"day": today, "off": False})
+        assert status == 200
+    portfolio = store.load_portfolio(root)
+    assert portfolio is not None
+    assert portfolio.days_off == ()

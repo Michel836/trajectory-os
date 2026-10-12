@@ -529,6 +529,21 @@ class Dashboard:
                        payload: Mapping[str, Any]) -> dict[str, Any]:
         return mutations.demote_project(self.root, project_id, payload)
 
+    # --- calendar & days off -------------------------------------------------
+
+    def create_event(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return mutations.create_event(self.root, payload)
+
+    def update_event(self, event_id: str,
+                     payload: Mapping[str, Any]) -> dict[str, Any]:
+        return mutations.update_event(self.root, event_id, payload)
+
+    def delete_event(self, event_id: str) -> dict[str, Any]:
+        return mutations.delete_event(self.root, event_id)
+
+    def set_day_off(self, day: str, off: bool) -> dict[str, Any]:
+        return mutations.set_day_off(self.root, day, off=off)
+
 
 def _record_outcome(root: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     task_id = payload.get("task_id")
@@ -798,6 +813,18 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
             if len(parts) == 4 and parts[:2] == ["api", "enrichment"] \
                     and parts[3] == "reject":
                 return app.reject_suggestion(parts[2], payload)
+            if parts == ["api", "events"]:
+                return app.create_event(payload)
+            if len(parts) == 4 and parts[:2] == ["api", "events"] \
+                    and parts[3] == "delete":
+                return app.delete_event(parts[2])
+            if len(parts) == 3 and parts[:2] == ["api", "events"]:
+                return app.update_event(parts[2], payload)
+            if parts == ["api", "calendar", "day-off"]:
+                day = payload.get("day")
+                if not isinstance(day, str) or not day:
+                    raise model.MvpError(model.E_MALFORMED, "day required")
+                return app.set_day_off(day, bool(payload.get("off", True)))
             if parts == ["api", "projects"]:
                 return app.create_project(payload)
             if len(parts) == 4 and parts[:2] == ["api", "projects"] \

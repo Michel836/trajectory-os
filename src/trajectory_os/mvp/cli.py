@@ -172,16 +172,18 @@ def scheduler_week(portfolio: model.Portfolio,
 
 
 def _render_day(day: Any) -> str:
-    buffer_shown = (day.remaining_buffer_minutes if day.is_today
-                    else day.buffer_minutes)
-    ceiling = day.remaining_plan_capacity
-    lines = [
-        f"Today {day.day}",
-        f"capacity {day.total_capacity}m | "
-        f"calendar {day.display_calendar_minutes}m | "
-        f"buffer {buffer_shown}m | remaining {ceiling}m | "
-        f"planned {day.planned_minutes}m / {ceiling}m",
-    ]
+    lines = [f"Today {day.day}"]
+    if not day.is_working_day:
+        lines.append("day off (no plan capacity)")
+    else:
+        buffer_shown = (day.remaining_buffer_minutes if day.is_today
+                        else day.buffer_minutes)
+        ceiling = day.remaining_plan_capacity
+        lines.append(
+            f"capacity {day.total_capacity}m | "
+            f"calendar {day.display_calendar_minutes}m | "
+            f"buffer {buffer_shown}m | remaining {ceiling}m | "
+            f"planned {day.planned_minutes}m / {ceiling}m")
     for item in day.planned:
         lines.append(f"- {item.title} ({item.estimated_minutes}m)")
         lines.extend(f"    - {r}" for r in item.reasons[:3])

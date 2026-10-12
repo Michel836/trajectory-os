@@ -549,9 +549,13 @@ function fmtMin(m){if(m==null||m==='')return '—';m=Number(m);if(!m)return '0m'
   const h=Math.floor(m/60),r=m%60;return h&&r?h+'h'+(r<10?'0':'')+r+'m':
   (h?h+'h':r+'m');}
 function capacityLabel(plan){
-  // Single canonical capacity line. For today the buffer and the ceiling are
-  // the *remaining* ones, so a plan rebuilt at 15:00 never claims the whole
-  // day is still available.
+  // Single canonical capacity line. A non-working day has no plan capacity
+  // (weekend / day off), and for today the buffer and the ceiling are the
+  // *remaining* ones, so a plan rebuilt at 15:00 never claims the whole day is
+  // still available.
+  if(plan.is_working_day===false){
+    const cal=(plan.is_today?plan.remaining_calendar_minutes:plan.calendar_minutes);
+    return 'day off · calendar '+fmtMin(cal)+' · capacity 0m';}
   const isToday=!!plan.is_today;
   const buf=isToday?plan.remaining_buffer_minutes:plan.buffer_minutes;
   const remaining=plan.remaining_plan_capacity;
@@ -560,6 +564,47 @@ function capacityLabel(plan){
     fmtMin(calendar)+' · buffer '+fmtMin(buf)+' · remaining '+
     fmtMin(remaining)+' · planned '+fmtMin(plan.planned_minutes)+' / '+
     fmtMin(remaining);}
+function minToHM(m){if(m==null)return '—';const h=Math.floor(m/60),r=m%60;
+  return (h<10?'0':'')+h+':'+(r<10?'0':'')+r;}
+function hmToMin(v){const p=String(v||'').split(':');const h=parseInt(p[0],10),
+  m=parseInt(p[1],10);if(isNaN(h)||isNaN(m))return null;return h*60+m;}
+function agendaHtml(plan){
+  const events=plan.calendar||[];
+  const off=plan.is_working_day===false;
+  let h='<div class="card"><div class="bar"><strong>Agenda · '+esc(plan.day)+
+    '</strong>'+(off?' '+pill('day off','badge-DEFERRED'):'')+
+    '<span style="flex:1"></span><button class="small" onclick="toggleDayOff(\''+
+    esc(plan.day)+'\','+(off?'false':'true')+')">'+
+    (off?'Remove day off':'Mark day off')+'</button></div>';
+  h+='<table><tr><th>When</th><th>Title</th><th>Repeat</th><th></th></tr>'+
+    (events.length?events.map(function(e){return '<tr><td>'+
+      esc(minToHM(e.start_minutes))+'-'+esc(minToHM(e.end_minutes))+
+      '</td><td>'+esc(e.title)+'</td><td>'+
+      (e.recurrence==='WEEKLY'?'weekly':'once')+
+      '</td><td><button class="small" onclick="deleteEvent(\''+
+      esc(e.event_id)+'\')">Delete</button></td></tr>';}).join(''):
+      '<tr><td colspan="4" class="muted">no events</td></tr>')+
+    '</table><div class="bar"><input id="ev-title" placeholder="event title" '+
+    'style="width:30%"><input id="ev-start" type="time" value="09:00">'+
+    '<input id="ev-end" type="time" value="10:00">'+
+    '<label class="muted"><input type="checkbox" id="ev-weekly"> weekly</label>'+
+    '<button class="small primary" onclick="saveEvent(\''+esc(plan.day)+
+    '\')">Add</button></div></div>';
+  return h;}
+async function saveEvent(day){
+  const title=($('ev-title').value||'').trim();
+  if(!title){notice('event title required');return;}
+  const start=hmToMin($('ev-start').value),end=hmToMin($('ev-end').value);
+  if(start==null||end==null||end<=start){notice('invalid time range');return;}
+  try{await api('/api/events','POST',{title:title,day:day,start_minutes:start,
+    end_minutes:end,recurrence:$('ev-weekly').checked?'WEEKLY':''});
+    $('ev-title').value='';await refresh();}catch(err){notice(err.message);}}
+async function deleteEvent(id){
+  try{await api('/api/events/'+encodeURIComponent(id)+'/delete','POST',{});
+    await refresh();}catch(err){notice(err.message);}}
+async function toggleDayOff(day,off){
+  try{await api('/api/calendar/day-off','POST',{day:day,off:off==='true'});
+    await refresh();}catch(err){notice(err.message);}}
 function pill(text,cls){return '<span class="pill '+(cls||'')+'">'+
   esc(text)+'</span>';}
 function notice(msg){const el=$('notice');el.textContent=msg||'';
@@ -2855,6 +2900,7 @@ function renderToday(){
     sortSelect('today-sort',S.todaySort,ORDER_SORT_OPTIONS,'todaySortChange')+
     '<span class="muted">select tasks below to hand a deliberate set to '+
     'Super Productivity</span></div>';
+  h+=agendaHtml(plan);
   h+=handoffSection();
   h+='<h3>Recommended baseline (readiness &amp; priority)</h3>'+
     '<table><tr><th></th><th>#</th><th>Task</th><th>Project</th>'+

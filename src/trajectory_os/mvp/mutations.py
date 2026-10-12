@@ -377,6 +377,103 @@ def demote_project(root: str | Path, project_id: str,
             "moved_tasks": moved}
 
 
+# --- calendar & days off ------------------------------------------------------
+
+EVENT_EDITABLE = frozenset({
+    "title", "day", "start_minutes", "end_minutes", "all_day",
+    "recurrence",
+})
+
+
+def _event_from(payload: Mapping[str, Any],
+                event_id: str) -> model.CalendarEvent:
+    return model.CalendarEvent(
+        event_id=event_id,
+        title=_required_str(payload, "title"),
+        day=_required_str(payload, "day"),
+        start_minutes=int(payload.get("start_minutes", 0)),
+        end_minutes=int(payload.get("end_minutes", 0)),
+        all_day=bool(payload.get("all_day", False)),
+        recurrence=str(_value(payload, "recurrence", "")),
+    ).validate()
+
+
+def create_event(root: str | Path,
+                 payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Create one one-off or weekly recurring calendar event."""
+    portfolio = _load(root)
+    _reject_unknown(payload, EVENT_EDITABLE | frozenset({"event_id"}),
+                    "event")
+    title = _required_str(payload, "title")
+    day = _required_str(payload, "day")
+    existing = {e.event_id for e in portfolio.calendar}
+    event_id = payload.get("event_id")
+    if not isinstance(event_id, str) or not event_id.strip():
+        event_id = _unique_id(existing, _slug(f"{day}-{title}", "event"))
+    event = _event_from(payload, event_id)
+    new_portfolio = replace(
+        portfolio, calendar=portfolio.calendar + (event,),
+        updated_at=_updated_at(portfolio)).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"event_id": event_id, "day": day,
+            "recurrence": event.recurrence}
+
+
+def update_event(root: str | Path, event_id: str,
+                 payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Apply a partial, validated update to one calendar event."""
+    portfolio = _load(root)
+    _reject_unknown(payload, EVENT_EDITABLE, "event")
+    events = {e.event_id: e for e in portfolio.calendar}
+    if event_id not in events:
+        raise model.MvpError(model.E_UNKNOWN_ID, event_id)
+    current = events[event_id]
+    merged = {
+        "title": current.title, "day": current.day,
+        "start_minutes": current.start_minutes,
+        "end_minutes": current.end_minutes, "all_day": current.all_day,
+        "recurrence": current.recurrence,
+    }
+    merged.update({key: payload[key] for key in EVENT_EDITABLE
+                   if key in payload})
+    updated = _event_from(merged, event_id)
+    new_calendar = tuple(updated if e.event_id == event_id else e
+                         for e in portfolio.calendar)
+    new_portfolio = replace(portfolio, calendar=new_calendar,
+                            updated_at=_updated_at(portfolio)).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"event_id": event_id, "day": updated.day}
+
+
+def delete_event(root: str | Path, event_id: str) -> dict[str, Any]:
+    """Remove one calendar event (fail closed if unknown)."""
+    portfolio = _load(root)
+    if event_id not in {e.event_id for e in portfolio.calendar}:
+        raise model.MvpError(model.E_UNKNOWN_ID, event_id)
+    new_calendar = tuple(e for e in portfolio.calendar
+                         if e.event_id != event_id)
+    new_portfolio = replace(portfolio, calendar=new_calendar,
+                            updated_at=_updated_at(portfolio)).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"event_id": event_id, "deleted": True}
+
+
+def set_day_off(root: str | Path, day: str, *, off: bool) -> dict[str, Any]:
+    """Add or remove an explicit day off (zero plan capacity on that day)."""
+    portfolio = _load(root)
+    model._require_deadline(day, "day")
+    current = set(portfolio.days_off)
+    if off:
+        current.add(day)
+    else:
+        current.discard(day)
+    new_portfolio = replace(
+        portfolio, days_off=tuple(sorted(current)),
+        updated_at=_updated_at(portfolio)).validate()
+    store.save_portfolio(root, new_portfolio)
+    return {"day": day, "off": off, "days_off": list(new_portfolio.days_off)}
+
+
 # --- task mutations -----------------------------------------------------------
 
 
