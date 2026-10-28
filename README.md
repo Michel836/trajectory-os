@@ -48,6 +48,7 @@ merge/tag are still required. See `docs/development/MVP_ROADMAP.md`.
 
 User documentation:
 
+- `GUIDE_UTILISATEUR.md` — step-by-step test plan for tomorrow;
 - `docs/guides/MVP_DAILY_GUIDE.md` — daily workflow;
 - `docs/guides/MVP_OPERATIONS.md` — backups, trash, sources, IMAP, privacy;
 - `docs/adr/README.md` — architecture decision index.
@@ -418,6 +419,7 @@ GET  /api/projects/{id}/timeline
 
 ### Documentation
 
+- `GUIDE_UTILISATEUR.md` — step-by-step test plan for tomorrow;
 - `docs/guides/MVP_DAILY_GUIDE.md` — daily workflow;
 - `docs/guides/MVP_OPERATIONS.md` — backups, trash, sources, IMAP, privacy;
 - `docs/development/MVP_ROADMAP.md` — V0.0 → V0.7 status and exit criteria;

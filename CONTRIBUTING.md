@@ -40,6 +40,7 @@ those canonical process requirements.
 The personal MVP is documented separately from the operator platform:
 
 - `README.md` — overview and feature map;
+- `GUIDE_UTILISATEUR.md` — step-by-step manual test plan;
 - `docs/guides/MVP_DAILY_GUIDE.md` — daily workflow;
 - `docs/guides/MVP_OPERATIONS.md` — backups, trash, sources, IMAP, privacy;
 - `docs/development/MVP_ROADMAP.md` — V0.0 → V0.7 status and exit criteria;
