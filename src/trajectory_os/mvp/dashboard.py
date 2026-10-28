@@ -40,6 +40,7 @@ from trajectory_os.mvp import (
     proposals,
     render,
     signals,
+    sources,
     store,
     superproductivity,
     trash,
@@ -134,8 +135,9 @@ class Dashboard:
         text = payload.get("text")
         filename = payload.get("filename")
         content_b64 = payload.get("content_b64")
-        source_kind = str(payload.get("source_kind", signals.SOURCE_TEXT))
         source_ref = str(payload.get("source_ref", "manual"))
+        project_hint = str(payload.get("project_hint", ""))
+        sensitivity = str(payload.get("sensitivity", "INTERNAL"))
         if isinstance(filename, str) and isinstance(content_b64, str):
             try:
                 raw = base64.b64decode(content_b64.encode("ascii"),
@@ -143,20 +145,46 @@ class Dashboard:
             except (ValueError, binascii.Error) as exc:
                 raise model.MvpError(model.E_MALFORMED,
                                      "invalid file payload") from exc
-            text = document.extract_text(filename, raw)
-            source_kind = signals.SOURCE_FILE
-            source_ref = filename
+            lowered = filename.lower()
+            if lowered.endswith(".eml"):
+                return sources.ingest_eml_bytes(
+                    self.root, filename, raw, sensitivity=sensitivity)
+            if lowered.endswith(".mbox"):
+                result = sources.ingest_mbox_bytes(
+                    self.root, filename, raw, sensitivity=sensitivity)
+                return {
+                    "count": result["count"],
+                    "results": result["results"],
+                    "proposals": [proposal
+                                  for item in result["results"]
+                                  for proposal in item["proposals"]],
+                    "errors": result["errors"],
+                    "limitations": result["limitations"],
+                    "duplicate": False,
+                }
+            return sources.ingest_document_bytes(
+                self.root, filename, raw, project_hint=project_hint,
+                sensitivity=sensitivity)
         if not isinstance(text, str) or not text.strip():
             raise model.MvpError(model.E_MALFORMED, "text required")
-        return signals.create_signal(
-            self.root, text=text, source_kind=source_kind,
-            source_ref=source_ref,
+        return sources.ingest_text(
+            self.root, text=text, source_ref=source_ref,
             title=str(payload.get("title", "")),
-            project_hint=str(payload.get("project_hint", "")),
-            sensitivity=str(payload.get("sensitivity", "INTERNAL")))
+            project_hint=project_hint, sensitivity=sensitivity)
 
     def dismiss_signal(self, signal_id: str) -> dict[str, Any]:
         return signals.dismiss_signal(self.root, signal_id)
+
+    def set_source_rule(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        source_ref = payload.get("source_ref")
+        if not isinstance(source_ref, str) or not source_ref:
+            raise model.MvpError(model.E_MALFORMED, "source_ref required")
+        return signals.set_source_rule(
+            self.root, source_ref,
+            project_id=str(payload.get("project_id", "")),
+            mute=bool(payload.get("mute", False)),
+            sensitivity=str(payload.get("sensitivity", "INTERNAL")),
+            max_proposals=int(payload.get("max_proposals", 5)))
 
     def mute_signal_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         source_ref = payload.get("source_ref")
@@ -1011,6 +1039,8 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.backup_now()
             if parts == ["api", "backups", "restore"]:
                 return app.restore_backup(payload)
+            if parts == ["api", "sources", "rule"]:
+                return app.set_source_rule(payload)
             if parts == ["api", "signals"]:
                 return app.create_signal(payload)
             if len(parts) == 4 and parts[:2] == ["api", "signals"] \

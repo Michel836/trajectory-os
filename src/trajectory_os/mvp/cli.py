@@ -132,6 +132,21 @@ def _cmd_restore(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_imap_sync(args: argparse.Namespace) -> int:
+    from trajectory_os.mvp import imap_source
+
+    config = imap_source.ImapConfig.load(args.config)
+    result = imap_source.ingest_imap(
+        args.root, config, imap_source.ImapReadOnlyFetcher(config))
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"IMAP read-only: {result['count']} message(s) ingested, "
+              f"{len(result['skipped'])} skipped, "
+              f"{len(result['errors'])} error(s)")
+    return EXIT_OK
+
+
 def _cmd_plan(args: argparse.Namespace) -> int:
     root = args.root
     _load_or_fail(root)
@@ -561,6 +576,14 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="do not back up the current state first")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_restore)
+
+    p = sub.add_parser("imap-sync",
+                       help="opt-in read-only IMAP ingestion")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("--config", required=True,
+                   help="IMAP JSON config with an explicit sender allowlist")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_imap_sync)
 
     p = sub.add_parser("plan", help="full daily cockpit")
     add_root(p)

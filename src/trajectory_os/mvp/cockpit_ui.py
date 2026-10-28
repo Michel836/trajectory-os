@@ -1090,6 +1090,7 @@ const S = {
   views:null, cockpit:null,
   view:'today', showAdvanced:false, estimateIds:[],
   estimateSelection:{}, estimateMinutes:30, commandItems:[],
+  sourceRefs:[],
   commandIndex:0, commandTimer:null, selection:null,
   filters:{scope:'all',scope_id:null,level:'all',status:[],evidence:[]},
   search:'', activeSavedView:'',
@@ -4054,7 +4055,8 @@ function renderSignalCard(bundle){
   let h='<div class="card signal-card"><div class="bar">'+
     '<strong>'+esc(s.title)+'</strong>'+pill(s.status,'badge-'+statusClass)+
     '<span class="muted">'+esc(s.source_ref||'manuel')+' · '+
-    esc(String(s.received_at||'').replace('T',' ').slice(0,16))+'</span>'+
+    esc(String(s.received_at||'').replace('T',' ').slice(0,16))+
+    (s.thread_key?' · fil '+esc(s.thread_key):'')+'</span>'+
     '<span style="flex:1"></span>'+
     '<button class="small" onclick="muteSignalSource(\''+esc(s.signal_id)+
       '\',\''+esc(s.source_ref||'manuel')+'\')">Mettre la source en sourdine'+
@@ -4067,6 +4069,47 @@ function renderSignalCard(bundle){
   else{h+=proposals.map(function(p){return proposalCard(s.signal_id,p);})
     .join('');}
   return h+'</div>';}
+
+function renderSourcesSection(){
+  const records=(S.views&&S.views.source_index)||[];
+  const rules=(S.views&&S.views.source_rules)||{};
+  const seen={};const rows=[];
+  records.forEach(function(record){
+    const key=record.sender||record.location;
+    if(!key||seen[key])return;seen[key]=true;rows.push(record);});
+  if(!rows.length)return '';
+  S.sourceRefs=rows.map(function(record){
+    return record.sender||record.location;});
+  const projectOpts=objects().filter(function(o){return o.kind==='project';})
+    .sort(function(a,b){return a.title.localeCompare(b.title);});
+  let h='<div class="card"><h3>Sources connues ('+rows.length+')</h3>'+
+    '<table><tr><th>Source</th><th>Type</th><th>Dernière</th>'+
+    '<th>Projet par défaut</th><th>Sourdine</th><th></th></tr>';
+  rows.slice(0,30).forEach(function(record,index){
+    const key=record.sender||record.location;
+    const rule=rules[key]||{};
+    const options=projectOpts.map(function(project){
+      return '<option value="'+esc(project.project_id)+'"'+
+        (rule.project_id===project.project_id?' selected':'')+'>'+
+        esc(project.title)+'</option>';}).join('');
+    h+='<tr><td>'+esc(key)+'</td><td>'+esc(record.origin)+
+      '</td><td>'+esc(record.status)+' v'+record.version+
+      '</td><td><select id="src-project-'+index+'" class="inline">'+
+      '<option value="">(aucun)</option>'+options+'</select></td>'+
+      '<td><input type="checkbox" id="src-mute-'+index+'"'+
+      (rule.mute?' checked':'')+'></td>'+
+      '<td><button class="small primary" onclick="saveSourceRule('+index+
+      ')">Enregistrer</button></td></tr>';});
+  return h+'</table></div>';}
+async function saveSourceRule(index){
+  const ref=S.sourceRefs[index];if(!ref)return;
+  const project=$('src-project-'+index);
+  const mute=$('src-mute-'+index);
+  try{await api('/api/sources/rule','POST',{
+      source_ref:ref,project_id:project?project.value:'',
+      mute:!!(mute&&mute.checked)});
+    await refresh({keepNotice:true,notice:'Règle de source enregistrée'});
+  }catch(err){notice(err.message);}}
 function renderSignals(){
   const bundles=(S.views&&S.views.signals)||[];
   const projectOpts=objects().filter(function(o){return o.kind==='project';})
@@ -4076,11 +4119,12 @@ function renderSignals(){
   let h='<h2>Signaux entrants</h2><p class="muted">Colle un texte ou '+
     'dépose un document. Rien n’est écrit avant ton acceptation explicite.'+
     '</p>';
+  h+=renderSourcesSection();
   h+='<div class="card"><h3>Nouveau signal</h3>'+
     '<textarea id="signal-text" rows="6" placeholder="Colle un email, une '+
     'note, un compte rendu…"></textarea>'+
     '<div class="bar"><input id="signal-file" type="file" '+
-    'accept=".odt,.docx,.pdf,.md,.markdown,.txt,.text" '+
+    'accept=".odt,.docx,.pdf,.md,.markdown,.txt,.text,.eml,.mbox" '+
     'style="max-width:280px">'+
     '<input id="signal-source" placeholder="source (ex. mail notaire)" '+
     'value="manuel" style="max-width:220px">'+
@@ -4093,10 +4137,12 @@ function renderSignals(){
   $('view-root').innerHTML=h;}
 async function postSignal(body){
   try{const res=await api('/api/signals','POST',body);
+    const sources=res.count!=null?res.count:1;
+    const proposals=(res.proposals||[]).length;
     await refresh({keepNotice:true,
-      notice:res.duplicate?'Signal déjà connu · '+
-        res.proposals.length+' proposition(s)':
-        'Signal analysé · '+res.proposals.length+' proposition(s)'});
+      notice:res.duplicate?'Signal déjà connu · '+proposals+' proposition(s)':
+        'Signal analysé · '+sources+' source(s) · '+proposals+
+        ' proposition(s)'});
   }catch(err){notice(err.message);}}
 function analyzeSignal(){
   const source=($('signal-source').value||'manuel').trim()||'manuel';

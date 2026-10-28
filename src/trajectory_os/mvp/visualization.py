@@ -37,6 +37,7 @@ from trajectory_os.mvp import (
     scheduler,
     search_memory,
     signals,
+    sources,
     store,
     trash,
     triage,
@@ -208,6 +209,12 @@ def build_views(root: str | Path, *, today: date | None = None,
         "changes": changes.recent_changes(root, portfolio),
         "trash": [entry.to_dict() for entry in trash.list_trash(root)],
         "signals": signals.list_bundles(root, limit=30),
+        "source_index": [
+            {key: value for key, value in record.to_dict().items()
+             if key not in ("text", "diff")}
+            for record in sources.read_sources(root, limit=100)
+        ],
+        "source_rules": signals.load_rules(root)["source_rules"],
         "backups": list(store.list_backups(root)),
         "triage": [item.to_dict() for item in triage.suggest(portfolio)],
         "routines": [routine.to_dict() for routine in portfolio.routines],

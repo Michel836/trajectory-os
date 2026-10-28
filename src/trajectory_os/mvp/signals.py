@@ -105,6 +105,7 @@ MAX_READ_SIGNALS = 500
 DEFAULT_RULES = {
     "schema_version": 1,
     "muted_sources": [],
+    "source_rules": {},
     "max_proposals_per_signal": MAX_PROPOSALS,
     "max_signals_per_day": MAX_SIGNALS_PER_DAY,
 }
@@ -384,14 +385,52 @@ def load_rules(root: str | Path) -> dict[str, Any]:
             if isinstance(value, int) and value > 0:
                 rules[key] = min(value, 50 if key.endswith("signal")
                                  else 1000)
+        raw_rules = document.get("source_rules")
+        if isinstance(raw_rules, dict):
+            source_rules: dict[str, dict[str, Any]] = {}
+            for key, value in raw_rules.items():
+                if not isinstance(key, str) or not isinstance(value, dict):
+                    continue
+                sensitivity = str(value.get("sensitivity", "INTERNAL"))
+                if sensitivity not in SENSITIVITIES:
+                    sensitivity = "INTERNAL"
+                cap = value.get("max_proposals", MAX_PROPOSALS)
+                source_rules[key] = {
+                    "project_id": str(value.get("project_id", "")),
+                    "mute": bool(value.get("mute", False)),
+                    "sensitivity": sensitivity,
+                    "max_proposals": (int(cap)
+                                      if isinstance(cap, int) and cap > 0
+                                      else MAX_PROPOSALS),
+                }
+            rules["source_rules"] = source_rules
     return rules
 
 
 def save_rules(root: str | Path, rules: Mapping[str, Any]) -> dict[str, Any]:
+    raw_rules = rules.get("source_rules")
+    source_rules: dict[str, dict[str, Any]] = {}
+    if isinstance(raw_rules, dict):
+        for key, value in raw_rules.items():
+            if not isinstance(key, str) or not isinstance(value, dict):
+                continue
+            sensitivity = str(value.get("sensitivity", "INTERNAL"))
+            if sensitivity not in SENSITIVITIES:
+                sensitivity = "INTERNAL"
+            cap = value.get("max_proposals", MAX_PROPOSALS)
+            source_rules[key] = {
+                "project_id": str(value.get("project_id", "")),
+                "mute": bool(value.get("mute", False)),
+                "sensitivity": sensitivity,
+                "max_proposals": (int(cap)
+                                  if isinstance(cap, int) and cap > 0
+                                  else MAX_PROPOSALS),
+            }
     payload = {
         "schema_version": 1,
         "muted_sources": sorted({str(item) for item in
                                  rules.get("muted_sources", [])}),
+        "source_rules": source_rules,
         "max_proposals_per_signal": int(
             rules.get("max_proposals_per_signal", MAX_PROPOSALS)),
         "max_signals_per_day": int(
@@ -399,6 +438,28 @@ def save_rules(root: str | Path, rules: Mapping[str, Any]) -> dict[str, Any]:
     }
     intel_model.write_json(rules_path(root), payload)
     return payload
+
+
+def source_rule(root: str | Path, source_ref: str) -> dict[str, Any]:
+    """Return the explicit rule for one source (safe defaults)."""
+    rule = load_rules(root)["source_rules"].get(source_ref)
+    if not isinstance(rule, dict):
+        return {"project_id": "", "mute": False,
+                "sensitivity": "INTERNAL",
+                "max_proposals": MAX_PROPOSALS}
+    return dict(rule)
+
+
+def set_source_rule(root: str | Path, source_ref: str, *,
+                    project_id: str = "", mute: bool = False,
+                    sensitivity: str = "INTERNAL",
+                    max_proposals: int = MAX_PROPOSALS) -> dict[str, Any]:
+    rules = load_rules(root)
+    rules["source_rules"][source_ref] = {
+        "project_id": project_id, "mute": mute,
+        "sensitivity": sensitivity, "max_proposals": max_proposals,
+    }
+    return save_rules(root, rules)
 
 
 def is_source_muted(root: str | Path, source_ref: str) -> bool:
@@ -834,6 +895,11 @@ def create_signal(
         raise SignalError(model.E_MALFORMED, f"source_kind {source_kind!r}")
     if is_source_muted(root, source_ref):
         raise SignalError(model.E_MALFORMED, "source is muted")
+    rule = source_rule(root, source_ref)
+    if rule["mute"]:
+        raise SignalError(model.E_MALFORMED, "source is muted")
+    project_hint = project_hint or str(rule["project_id"])
+    sensitivity = str(rule["sensitivity"] or sensitivity)
     received = now or datetime.now(UTC)
     if received.tzinfo is None:
         received = received.replace(tzinfo=UTC)
@@ -867,7 +933,8 @@ def create_signal(
     append_signal(root, signal)
     proposals = analyze_signal(
         root, signal, today=received.date(),
-        max_proposals=int(rules["max_proposals_per_signal"]))
+        max_proposals=int(rule["max_proposals"]
+                          or rules["max_proposals_per_signal"]))
     save_proposals(root, signal_id, proposals)
     analyzed = update_signal_status(root, signal_id, STATUS_ANALYZED)
     return {
