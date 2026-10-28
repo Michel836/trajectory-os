@@ -167,6 +167,9 @@ def build_views(root: str | Path, *, today: date | None = None,
             project, project_tasks.get(project.project_id, []),
             portfolio, rank_map, readiness_map, dep_graph, prefs,
         )
+        project_objects[project.project_id]["health"] = project_health(
+            project, project_tasks.get(project.project_id, []),
+            readiness_map, today, portfolio.capacity)
 
     objects: list[dict[str, Any]] = [
         project_objects[pid] for pid in sorted(project_objects)
@@ -249,6 +252,19 @@ def build_views(root: str | Path, *, today: date | None = None,
 HEALTH_LIST_LIMIT = 50
 #: A waiting item older than this is surfaced as an attention signal.
 WAITING_ATTENTION_DAYS = 7
+#: Project-health labels (separate from the lifecycle status).
+HEALTH_ON_TRACK = "ON_TRACK"
+HEALTH_AT_RISK = "AT_RISK"
+HEALTH_STALE = "STALE"
+HEALTH_NO_NEXT_ACTION = "NO_NEXT_ACTION"
+HEALTH_OVERLOADED = "OVERLOADED"
+HEALTH_WAITING = "WAITING"
+HEALTH_BLOCKED = "BLOCKED"
+HEALTH_DONE = "DONE"
+PROJECT_HEALTH = (
+    HEALTH_ON_TRACK, HEALTH_AT_RISK, HEALTH_STALE, HEALTH_NO_NEXT_ACTION,
+    HEALTH_OVERLOADED, HEALTH_WAITING, HEALTH_BLOCKED, HEALTH_DONE,
+)
 
 
 def _health_item(kind: str, ref_id: str, title: str,
@@ -264,6 +280,47 @@ def _age_days(stamp: str, today: date) -> int | None:
     except ValueError:
         return None
     return (today - parsed.date()).days
+
+
+def project_health(
+    project: model.Project,
+    tasks: Sequence[model.Task],
+    readiness_map: Mapping[str, readiness_module.TaskReadiness],
+    today: date,
+    capacity: model.Capacity,
+) -> str:
+    """Derive a project health signal, separate from its lifecycle status."""
+    if not tasks:
+        return HEALTH_NO_NEXT_ACTION
+    open_tasks = [task for task in tasks
+                  if task.status not in model.TASK_TERMINAL_STATUSES]
+    if not open_tasks:
+        return HEALTH_DONE
+    completed = sum(1 for task in tasks if task.status == model.TS_COMPLETED)
+    progress = completed / len(tasks)
+    if project.deadline:
+        try:
+            days = (date.fromisoformat(project.deadline) - today).days
+        except ValueError:
+            days = None
+        if days is not None and (days < 0 or (days <= 7 and progress < 0.5)):
+            return HEALTH_AT_RISK
+    states = [readiness_map[task.task_id].state for task in open_tasks]
+    if states and all(state in (readiness_module.RS_BLOCKED,
+                                 readiness_module.RS_WAITING)
+                      for state in states):
+        return (HEALTH_BLOCKED
+                if any(state == readiness_module.RS_BLOCKED
+                       for state in states) else HEALTH_WAITING)
+    estimated = sum(task.effort_minutes for task in open_tasks)
+    if estimated > capacity.minutes_per_day * 5:
+        return HEALTH_OVERLOADED
+    latest = max((task.updated_at for task in tasks if task.updated_at),
+                 default="")
+    age = _age_days(latest, today)
+    if age is not None and age > 30:
+        return HEALTH_STALE
+    return HEALTH_ON_TRACK
 
 
 def _portfolio_health(
@@ -332,6 +389,26 @@ def _portfolio_health(
             "ready_tasks_without_estimate": len(ready_without_estimate),
             "blocked_projects_with_ready_task": len(blocked_with_ready),
             "waiting_over_attention_days": len(waiting_old),
+            "open_tasks": len(open_tasks),
+            "open_tasks_with_estimate": len(open_tasks)
+            - len(open_without_estimate),
+            "ready_tasks": sum(
+                1 for task in open_tasks
+                if readiness_map[task.task_id].state in ready_states),
+            "ready_tasks_with_estimate": sum(
+                1 for task in open_tasks
+                if readiness_map[task.task_id].state in ready_states
+                and task.estimated_minutes),
+            "open_tasks_with_deadline": sum(
+                1 for task in open_tasks if task.deadline),
+        },
+        "project_health": {
+            label: sum(
+                1 for project in portfolio.projects
+                if project_health(
+                    project, tasks_by_project.get(project.project_id, []),
+                    readiness_map, today, portfolio.capacity) == label)
+            for label in PROJECT_HEALTH
         },
         "deferred_projects": project_items(deferred_projects),
         "projects_without_open_task": project_items(

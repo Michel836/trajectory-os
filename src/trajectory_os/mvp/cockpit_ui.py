@@ -1013,6 +1013,9 @@ const FR = {
   'Description':'Description','Title':'Titre','day off':'jour off',
   'project':'Projet','task':'Tâche','Area/domain':'Domaine',
   'HIGH':'Élevé','MEDIUM':'Moyen','LOW':'Faible','CRITICAL':'Critique',
+  'ON_TRACK':'Dans les temps','AT_RISK':'À risque','STALE':'Stale',
+  'NO_NEXT_ACTION':'Sans prochaine action','OVERLOADED':'Surchargé',
+  'DONE':'Terminé',
   'no events':'aucun événement','Type':'Type','Area / domain':'Domaine',
   'Workstream':'Flux de travail','Work package':'Lot de travail',
   'Readiness':'Prêt','Why':'Pourquoi','Estimated':'Estimé','Actual':'Réel',
@@ -1622,6 +1625,7 @@ function cardBody(o,deep){
     h+='<div class="muted">'+badge+
       (o.project&&o.kind==='task'?esc(o.project)+' · ':'')+
       (o.status!=='COMPLETED'?esc(o.status):'DONE')+
+      (o.kind==='project'&&o.health?' · santé '+esc(t(o.health)):'')+
       (o.estimated_minutes?' · '+fmtMin(o.estimated_minutes):'')+'</div>';}
   if(deep){
     h+='<div class="muted">'+esc(o.domain)+
@@ -2469,6 +2473,7 @@ function renderInspector(){
   h+=attr('title','Title',esc(o.title));
   h+=attr('kind','Type',esc(t(o.kind)));
   h+=attr('status','Status',esc(t(o.status)));
+  if(o.kind==='project')h+=attr('health','Santé',esc(t(o.health||'')));
   h+=attr('project','Project',esc(o.project));
   h+=attr('domain','Area/domain',esc(o.domain));
   h+=attr('workstream','Workstream',esc(o.workstream||'—'));
@@ -2541,6 +2546,8 @@ function renderInspector(){
     '<button class="small" onclick="openObject(\''+o.id+'\')">Ouvrir</button>'+
     '<button class="small" onclick="openProjectForm(\''+o.project_id+
     '\')">Modifier</button>'+
+    '<button class="small" onclick="explainProject(\''+o.project_id+
+    '\')">Expliquer</button>'+
     '<button class="small" onclick="openTaskForm(\''+o.project_id+
     '\')">Ajouter une tâche</button>'+
     '<button class="small" onclick="runEnrichment(\''+o.project_id+
@@ -2698,6 +2705,7 @@ function openObjectHtml(o){
   let short='';
   short+=detailRow('Type',t(o.kind));
   short+=detailRow('Status',t(o.status));
+  if(o.kind==='project')short+=detailRow('Santé',t(o.health||''));
   short+=detailRow('Project',o.project);
   short+=detailRow('Area / domain',o.domain);
   short+=detailRow('Workstream',o.workstream);
@@ -3626,7 +3634,8 @@ function renderHealthCard(){
     '<summary><strong>Santé du portefeuille</strong> · '+
     c.deferred_projects+' projet(s) en veille · '+
     c.open_tasks_without_estimate+' tâche(s) sans estimation · '+
-    c.ready_tasks_without_estimate+' prête(s) sans estimation</summary>'+
+    c.ready_tasks_without_estimate+' prête(s) sans estimation · '+
+    c.open_tasks_with_estimate+'/'+c.open_tasks+' tâches estimées</summary>'+
     (c.blocked_projects_with_ready_task?'<p><button class="small primary" '+
       'onclick="rederiveProjects()">Recalculer les statuts projet ('+
       c.blocked_projects_with_ready_task+')</button></p>':'')+
@@ -3644,6 +3653,11 @@ function renderHealthCard(){
     '<div><h4>En attente depuis plus de '+h.waiting_attention_days+
       ' jours ('+c.waiting_over_attention_days+')</h4>'+
       healthList(h.waiting_over_attention_days)+'</div>'+
+    '<div><h4>Santé des projets</h4>'+
+      Object.keys(h.project_health||{}).filter(function(key){
+        return h.project_health[key];}).map(function(key){
+        return '<div class="muted">'+esc(t(key))+': '+h.project_health[key]+
+          '</div>';}).join('')+'</div>'+
     '</div></details>';}
 function beforeAfter(c){
   const keys=Object.keys(c.before||{});
@@ -4190,6 +4204,51 @@ async function muteSignalSource(signalId,sourceRef){
       'POST',{source_ref:sourceRef,muted:true});
     await refresh({keepNotice:true,notice:'Source mise en sourdine'});
   }catch(err){notice(err.message);}}
+
+// --- deterministic project explanation -------------------------------------
+async function explainProject(projectId){
+  try{const res=await api('/api/projects/'+encodeURIComponent(projectId)+
+      '/explain','GET');
+    renderExplain(res);
+    $('explain-overlay').classList.add('open');
+  }catch(err){notice(err.message);}}
+function closeExplain(){$('explain-overlay').classList.remove('open');}
+function renderExplain(res){
+  const el=$('explain-body');if(!el)return;
+  const project=res.project||{};
+  const progress=res.progress==null?'—':Math.round(res.progress*100)+'%';
+  let h='<h3 style="margin:0">'+esc(project.name||'')+' '+
+    pill(res.health||'','')+'</h3><p class="muted">'+
+    esc(project.objective||'')+' · '+esc(t(project.status||''))+' · '+
+    progress+' · '+res.completed_tasks+'/'+res.tasks+' tâches</p>';
+  h+='<div class="grid2">';
+  h+='<div class="card"><h4>Prochaines actions</h4>'+
+    ((res.next_actions||[]).length?res.next_actions.map(function(a){
+      return '<div><strong>'+esc(a.title)+'</strong> <span class="muted">'+
+        fmtMin(a.effort_minutes)+' · '+
+        esc((a.reasons||[]).map(reasonFr).join('; '))+'</span></div>';
+    }).join(''):'<p class="muted">aucune</p>')+'</div>';
+  h+='<div class="card"><h4>Blocages</h4>'+
+    ((res.blockers||[]).length?res.blockers.map(function(b){
+      return '<div><strong>'+esc(b.title)+'</strong> <span class="muted">'+
+        esc(t(b.state))+' · '+esc((b.reasons||[]).map(reasonFr).join('; '))+
+        '</span></div>';}).join(''):'<p class="muted">aucun</p>')+'</div>';
+  h+='<div class="card"><h4>Risques</h4>'+
+    ((res.risks||[]).length?res.risks.map(function(r){
+      return '<div class="muted">· '+esc(r)+'</div>';}).join(''):
+      '<p class="muted">aucun signal</p>')+'</div>';
+  h+='<div class="card"><h4>Changements récents</h4>'+
+    ((res.recent_changes||[]).length?res.recent_changes.map(function(c){
+      return '<div class="muted">'+esc(String(c.at||'').slice(0,16))+' · '+
+        esc(c.summary||c.title||'')+'</div>';}).join(''):
+      '<p class="muted">aucun</p>')+'</div>';
+  h+='<div class="card"><h4>Signaux</h4>'+
+    ((res.signals||[]).length?res.signals.map(function(sig){
+      return '<div class="muted">'+esc(sig.title||'')+' · '+
+        esc(sig.source_ref||'manuel')+' · '+pill(sig.status,'')+'</div>';
+    }).join(''):'<p class="muted">aucun</p>')+'</div>';
+  h+='</div>';
+  el.innerHTML=h;}
 function renderToday(){
   const plan=S.views.today_plan;
   if(!plan){$('view-root').innerHTML='<p class="muted">aucun plan</p>';return;}
@@ -5036,6 +5095,12 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "<button class='primary' id='duplicate-create-btn' "
         "onclick='createDuplicateAnyway()'>Create anyway</button>",
         "<button class='small' onclick='cancelDuplicate()'>Cancel</button>",
+        "</div></div></div>",
+        # Deterministic project explanation
+        "<div class='overlay' id='explain-overlay'><div class='modal' ",
+        "style='max-width:900px'><div id='explain-body'></div>",
+        "<div class='bar' style='justify-content:flex-end'>",
+        "<button class='primary' onclick='closeExplain()'>Fermer</button>",
         "</div></div></div>",
         # Global search / command palette
         "<div class='overlay' id='command-overlay'><div class='command-panel'>",

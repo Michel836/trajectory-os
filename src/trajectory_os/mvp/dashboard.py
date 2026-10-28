@@ -33,6 +33,7 @@ from trajectory_os.mvp import (
     import_engine,
     import_jobs,
     importer,
+    insights,
     model,
     mutations,
     outcomes,
@@ -94,6 +95,9 @@ class Dashboard:
 
     def rederive_projects(self) -> dict[str, Any]:
         return outcomes.rederive_project_statuses(self.root)
+
+    def explain_project(self, project_id: str) -> dict[str, Any]:
+        return insights.explain_project(self.root, project_id)
 
     def trash_entries(self) -> dict[str, Any]:
         return {"trash": [entry.to_dict()
@@ -906,6 +910,11 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                     return
                 if parts == ["api", "backups"]:
                     self._send_json(HTTPStatus.OK, app.backups())
+                    return
+                if len(parts) == 4 and parts[:2] == ["api", "projects"] \
+                        and parts[3] == "explain":
+                    self._send_json(HTTPStatus.OK,
+                                    app.explain_project(parts[2]))
                     return
                 if parts == ["api", "signals"]:
                     self._send_json(HTTPStatus.OK, app.signals())
