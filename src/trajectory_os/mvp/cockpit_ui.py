@@ -1001,7 +1001,9 @@ const FR = {
   'Changes':'Changements','OUTCOME':'Résultat','CREATE':'Création',
   'UPDATE':'Mise à jour','UNDO':'Annulation','IMPORT':'Import',
   'CAPTURE':'Capture','Debt':'Dette','Trash':'Corbeille',
-  'Signals':'Signaux','SIGNAL':'Signal',
+  'Signals':'Signaux','SIGNAL':'Signal','NEW':'Nouveau',
+  'ANALYZED':'Analysé','APPLIED':'Appliqué','DISMISSED':'Ignoré',
+  'MUTED':'En sourdine','DUPLICATE':'Doublon','CHANGED':'Modifié',
   'Project Review':'Revue projets','KEEP':'Continuer','DEFER':'Défer',
   'PARK_IDEA':'Idée','PARK_SOMEDAY':'Un jour','CLOSE':'Clôturer',
   'SKIP':'Passer',
@@ -4145,7 +4147,7 @@ function renderIngestionQueue(){
     counts[r.status]=(counts[r.status]||0)+1;});
   let h='<div class="card"><h3>File d’ingestion ('+records.length+
     ')</h3><p class="muted">'+Object.keys(counts).sort().map(function(k){
-      return counts[k]+' '+esc(k.toLowerCase());}).join(' · ')+'</p>'+
+      return counts[k]+' '+esc(t(k).toLowerCase());}).join(' · ')+'</p>'+
     '<table><tr><th>Titre</th><th>Type</th><th>Statut</th><th>Version</th>'+
     '<th>Reçu</th></tr>'+records.slice(0,10).map(function(r){
       return '<tr><td>'+esc(r.title||r.location)+'</td><td>'+
