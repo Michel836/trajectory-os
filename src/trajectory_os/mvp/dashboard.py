@@ -514,6 +514,19 @@ class Dashboard:
     def create_task(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         return mutations.create_task(self.root, payload)
 
+    def estimate_tasks(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        updates = payload.get("updates")
+        if not isinstance(updates, list):
+            raise model.MvpError(model.E_MALFORMED, "updates must be a list")
+        return mutations.estimate_tasks(self.root, updates)
+
+    def rename_domain(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        old = payload.get("from")
+        new = payload.get("to")
+        if not isinstance(old, str) or not isinstance(new, str):
+            raise model.MvpError(model.E_MALFORMED, "from/to required")
+        return mutations.rename_domain(self.root, old=old, new=new)
+
     def update_task(self, task_id: str,
                     payload: Mapping[str, Any]) -> dict[str, Any]:
         return mutations.update_task(self.root, task_id, payload)
@@ -913,6 +926,10 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.park_project(parts[2], payload)
             if len(parts) == 3 and parts[:2] == ["api", "projects"]:
                 return app.update_project(parts[2], payload)
+            if parts == ["api", "domains", "rename"]:
+                return app.rename_domain(payload)
+            if parts == ["api", "tasks", "estimate"]:
+                return app.estimate_tasks(payload)
             if parts == ["api", "tasks"]:
                 return app.create_task(payload)
             if len(parts) == 4 and parts[:2] == ["api", "tasks"] \

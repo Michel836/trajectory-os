@@ -13,6 +13,7 @@ task stays a human-triggered operation
 
 from __future__ import annotations
 
+import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -140,6 +141,91 @@ def calibration_for_task(portfolio: model.Portfolio,
     return None
 
 
+@dataclass(frozen=True)
+class Suggestion:
+    """A deterministic starting estimate for an unestimated task."""
+
+    scope: str
+    samples: int
+    minutes: int
+    low: int
+    high: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scope": self.scope,
+            "samples": self.samples,
+            "minutes": self.minutes,
+            "low": self.low,
+            "high": self.high,
+        }
+
+
+def _round_estimate(value: float) -> int:
+    return max(5, int(round(value / 5.0)) * 5)
+
+
+def suggestions(portfolio: model.Portfolio,
+                outcomes: Sequence[model.OutcomeRecord]
+                ) -> dict[str, dict[str, Any]]:
+    """Suggest a starting estimate for open tasks without one.
+
+    Uses the median of real completed durations, preferring the task's
+    project, then its domain, then the global portfolio. A scope with fewer
+    than :data:`MIN_SAMPLES` observations is skipped, and an absent
+    suggestion is never replaced by an invented value.
+    """
+    tasks = portfolio.task_map()
+    projects = portfolio.project_map()
+    actuals: dict[str, int] = {}
+    for record in outcomes:
+        if record.outcome == model.O_COMPLETED \
+                and record.actual_minutes is not None:
+            actuals[record.task_id] = record.actual_minutes
+    for task in portfolio.tasks:
+        if task.status == model.TS_COMPLETED \
+                and task.actual_minutes is not None:
+            actuals.setdefault(task.task_id, task.actual_minutes)
+
+    by_project: dict[str, list[int]] = {}
+    by_domain: dict[str, list[int]] = {}
+    global_values: list[int] = []
+    for task_id, minutes in actuals.items():
+        completed_task = tasks.get(task_id)
+        if completed_task is None:
+            continue
+        project = projects[completed_task.project_id]
+        by_project.setdefault(completed_task.project_id, []).append(minutes)
+        by_domain.setdefault(project.domain, []).append(minutes)
+        global_values.append(minutes)
+
+    def choose(values: list[int], scope: str) -> Suggestion | None:
+        if len(values) < MIN_SAMPLES:
+            return None
+        return Suggestion(
+            scope=scope,
+            samples=len(values),
+            minutes=_round_estimate(statistics.median(values)),
+            low=_round_estimate(min(values)),
+            high=_round_estimate(max(values)),
+        )
+
+    result: dict[str, dict[str, Any]] = {}
+    for task in portfolio.tasks:
+        if task.estimated_minutes or task.status in model.TASK_TERMINAL_STATUSES:
+            continue
+        project = projects[task.project_id]
+        suggestion = (
+            choose(by_project.get(task.project_id, []),
+                   "project:" + task.project_id)
+            or choose(by_domain.get(project.domain, []),
+                      "domain:" + project.domain)
+            or choose(global_values, "global"))
+        if suggestion is not None:
+            result[task.task_id] = suggestion.to_dict()
+    return result
+
+
 def summary(portfolio: model.Portfolio,
             outcomes: Sequence[model.OutcomeRecord]) -> dict[str, Any]:
     """The calibration payload exposed to the views layer."""
@@ -157,7 +243,9 @@ def summary(portfolio: model.Portfolio,
 __all__ = [
     "MIN_SAMPLES",
     "Calibration",
+    "Suggestion",
     "calibrate",
     "calibration_for_task",
+    "suggestions",
     "summary",
 ]

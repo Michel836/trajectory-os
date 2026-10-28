@@ -209,6 +209,7 @@ def build_views(root: str | Path, *, today: date | None = None,
         "decisions": [decision.to_dict()
                       for decision in portfolio.decisions],
         "calibration": calibration.summary(portfolio, records),
+        "estimate_suggestions": calibration.suggestions(portfolio, records),
         "ready_workflow": _ready_workflow(portfolio, readiness_map),
         "planning": planning_state.to_dict(),
         "tomorrow_view": planning.build_tomorrow_view(

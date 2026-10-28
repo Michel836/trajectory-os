@@ -21,7 +21,7 @@ from __future__ import annotations
 import functools
 import re
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -938,6 +938,102 @@ def apply_calibrated_estimate(root: str | Path,
 
 
 @_serialized
+@_serialized
+def rename_domain(root: str | Path, *, old: str, new: str) -> dict[str, Any]:
+    """Rename one domain across every project (explicit human decision)."""
+    if not isinstance(old, str) or not old.strip():
+        raise model.MvpError(model.E_MALFORMED, "old domain required")
+    if not isinstance(new, str) or not new.strip():
+        raise model.MvpError(model.E_MALFORMED, "new domain required")
+    old = old.strip()
+    new = new.strip()
+    if len(new) > model.MAX_STR_LEN:
+        raise model.MvpError(model.E_MALFORMED, "new domain is too long")
+    portfolio = _load(root)
+    changed = [p for p in portfolio.projects if p.domain == old]
+    if not changed:
+        return {"updated": 0, "from": old, "to": new}
+    stamp = _updated_at(portfolio)
+    projects = tuple(replace(project, domain=new)
+                     if project.domain == old else project
+                     for project in portfolio.projects)
+    candidate = replace(portfolio, projects=projects,
+                        updated_at=stamp).validate()
+    store.save_portfolio(root, candidate)
+    for project in changed:
+        _journal(root, kind=changes_module.KIND_UPDATE,
+                 object_kind=changes_module.OBJECT_PROJECT,
+                 object_id=project.project_id, title=project.name,
+                 summary="domaine renommé",
+                 before={"domain": old}, after={"domain": new}, at=stamp)
+    return {"updated": len(changed), "from": old, "to": new}
+
+
+@_serialized
+def estimate_tasks(root: str | Path,
+                   updates: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Apply a bounded batch of effort estimates in one atomic write.
+
+    ``updates`` is a sequence of ``{"task_id": ..., "estimated_minutes": N}``
+    where ``estimated_minutes`` is ``None`` (clear) or a positive integer.
+    Duplicate ids and unknown tasks fail closed before anything is written.
+    """
+    if isinstance(updates, (str, bytes)) or not isinstance(updates, Sequence):
+        raise model.MvpError(model.E_MALFORMED, "updates must be a list")
+    if len(updates) > 500:
+        raise model.MvpError(model.E_OVERFLOW, "too many estimates")
+    portfolio = _load(root)
+    tasks = portfolio.task_map()
+    stamp = _updated_at(portfolio)
+    seen: set[str] = set()
+    indexed = {task.task_id: index for index, task in enumerate(
+        portfolio.tasks)}
+    updated_tasks = list(portfolio.tasks)
+    changes: list[tuple[model.Task, model.Task]] = []
+    for raw in updates:
+        if not isinstance(raw, Mapping):
+            raise model.MvpError(model.E_MALFORMED, "update must be an object")
+        task_id = raw.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            raise model.MvpError(model.E_MALFORMED, "task_id required")
+        if task_id in seen:
+            raise model.MvpError(model.E_MALFORMED,
+                                 f"duplicate estimate for {task_id!r}")
+        seen.add(task_id)
+        if task_id not in tasks:
+            raise model.MvpError(model.E_UNKNOWN_ID, task_id)
+        minutes = raw.get("estimated_minutes")
+        if minutes is not None:
+            if isinstance(minutes, bool) or not isinstance(minutes, int):
+                raise model.MvpError(model.E_MALFORMED,
+                                     "estimated_minutes must be an integer")
+            if not 1 <= minutes <= 1440:
+                raise model.MvpError(model.E_MALFORMED,
+                                     "estimated_minutes out of bounds")
+        current = tasks[task_id]
+        if current.estimated_minutes == minutes:
+            continue
+        updated = replace(current, estimated_minutes=minutes,
+                          updated_at=stamp).validate()
+        updated_tasks[indexed[task_id]] = updated
+        changes.append((current, updated))
+    if not changes:
+        return {"updated": 0, "task_ids": []}
+    candidate = replace(portfolio, tasks=tuple(updated_tasks),
+                        updated_at=stamp).validate()
+    store.save_portfolio(root, candidate)
+    for before, after in changes:
+        _journal(root, kind=changes_module.KIND_UPDATE,
+                 object_kind=changes_module.OBJECT_TASK,
+                 object_id=after.task_id, title=after.title,
+                 summary="estimation mise à jour",
+                 before={"estimated_minutes": before.estimated_minutes},
+                 after={"estimated_minutes": after.estimated_minutes},
+                 at=stamp)
+    return {"updated": len(changes),
+            "task_ids": [after.task_id for _, after in changes]}
+
+
 def update_task(root: str | Path, task_id: str,
                 payload: Mapping[str, Any]) -> dict[str, Any]:
     """Apply a partial, validated update to one task.
@@ -1063,6 +1159,8 @@ __all__ = [
     "add_dependency",
     "create_project",
     "create_task",
+    "estimate_tasks",
+    "rename_domain",
     "remove_dependency",
     "update_project",
     "update_task",

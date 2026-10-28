@@ -519,7 +519,7 @@ const VIEWS = [
   ['gantt','Gantt'],['eisenhower','Eisenhower'],['impact_effort','Impact / Effort'],
   ['portfolio_map','Portfolio Map'],['treemap','Treemap'],['progress','Progress'],
   ['heatmap','Heatmap'],['goal_flow','Goal Flow'],['focus','Focus'],
-  ['changes','Changes']
+  ['changes','Changes'],['debt','Debt']
 ];
 // Four durable workspaces instead of a 20-button wall. Internal view keys are
 // unchanged (routes, preferences and tests keep working); only the visible
@@ -531,7 +531,7 @@ const WORKSPACES = [
    views:['list','kanban','wbs','graph','gantt','eisenhower',
           'impact_effort','portfolio_map','treemap']},
   {id:'review', label:'Revue',
-   views:['week','tomorrow','progress','heatmap','goal_flow','changes']}
+   views:['week','tomorrow','progress','heatmap','goal_flow','changes','debt']}
 ];
 const ADVANCED_VIEWS = {
   portfolio:['graph','gantt','eisenhower','impact_effort','portfolio_map',
@@ -555,7 +555,7 @@ const FR = {
   'SUGGESTED':'Suggéré','UNKNOWN':'Inconnu','MAIN':'Principal',
   'Changes':'Changements','OUTCOME':'Résultat','CREATE':'Création',
   'UPDATE':'Mise à jour','UNDO':'Annulation','IMPORT':'Import',
-  'CAPTURE':'Capture','new_task':'nouvelle tâche',
+  'CAPTURE':'Capture','Debt':'Dette','new_task':'nouvelle tâche',
   'possible_project':'projet possible','possible_idea':'idée possible',
   'existing_project':'projet existant','existing_task':'tâche existante',
   'duplicate':'doublon','ambiguous':'ambigu',
@@ -587,7 +587,8 @@ const KANBAN_TASK = ['TODO','IN_PROGRESS','READY','WAITING','BLOCKED','DONE','DE
 const KANBAN_PROJECT = ['ACTIVE','WAITING','BLOCKED','DEFERRED','COMPLETED','IDEA','SOMEDAY'];
 const S = {
   views:null, cockpit:null,
-  view:'today', showAdvanced:false, selection:null,
+  view:'today', showAdvanced:false, estimateIds:[],
+  estimateSelection:{}, estimateMinutes:30, selection:null,
   filters:{scope:'all',scope_id:null,level:'all',status:[],evidence:[]},
   search:'', activeSavedView:'',
   capture:null, exportSelection:{}, exportPreview:null,
@@ -1090,7 +1091,7 @@ function renderView(){
     portfolio_map:renderPortfolioMap,treemap:renderTreemap,progress:renderProgress,
     heatmap:renderHeatmap,goal_flow:renderGoalFlow,focus:renderFocus,
     inbox:renderInbox,waiting:renderWaiting,decisions:renderDecisions,
-    changes:renderChanges}[S.view]||renderList;
+    changes:renderChanges,debt:renderDebt}[S.view]||renderList;
   fn();
 }
 function card(o,extra){
@@ -1266,7 +1267,7 @@ function tableFilterControl(kind,col,base){
 function tableCell(kind,column,o){
   switch(column){
     case 'title':return '<span class="swatch" style="background:'+
-      colourOf(o)+'"></span> '+esc(o.title)+(kind==='tasks'?doneButton(o):'');
+      colourOf(o)+'"></span> '+esc(o.title)+(kind==='tasks'?doneButton(o)+estimateButton(o):'');
     case 'project':return esc(o.project);
     case 'domain':return esc(o.domain);
     case 'status':return pill(tableDisplayStatus(o.status),
@@ -3020,7 +3021,7 @@ function decisionRow(o,rank,reasons){
     '<td onclick="event.stopPropagation()"><input type="checkbox" '+
     'value="'+esc(o.ref_id)+'"'+(S.exportSelection[o.ref_id]?' checked':'')+
     ' onchange="exportPick(\''+o.ref_id+'\',this.checked)"></td>'+
-    '<td>'+(rank||'')+'</td><td>'+esc(o.title)+doneButton(o)+'</td>'+
+    '<td>'+(rank||'')+'</td><td>'+esc(o.title)+doneButton(o)+estimateButton(o)+'</td>'+
     '<td>'+esc(o.project)+'</td>'+
     '<td>'+pill(o.readiness||uiStatus(o),'badge-'+
       (o.readiness==='READY'||o.readiness==='IN_PROGRESS'?'READY':
@@ -3110,6 +3111,8 @@ function renderHealthCard(){
     (c.blocked_projects_with_ready_task?'<p><button class="small primary" '+
       'onclick="rederiveProjects()">Recalculer les statuts projet ('+
       c.blocked_projects_with_ready_task+')</button></p>':'')+
+    '<p><button class="small" onclick="setView(\'debt\')">'+
+    'Voir la dette du portefeuille</button></p>'+
     '<div class="grid2" style="margin-top:.6rem">'+
     '<div><h4>Projets en veille ('+c.deferred_projects+')</h4>'+
       healthList(h.deferred_projects)+'</div>'+
@@ -3153,6 +3156,176 @@ function renderChanges(){
         '</td></tr>';});
     h+='</table>';}
   $('view-root').innerHTML=h;}
+
+// --- effort estimation ------------------------------------------------------
+function estimateButton(o){
+  if(!o||o.kind!=='task'||o.status==='COMPLETED'||o.status==='ABANDONED')
+    return '';
+  return ' <button class="small" data-no-open title="Estimer" '+
+    'onclick="event.stopPropagation();estimateTask(\''+esc(o.ref_id)+
+    '\')">⏱</button>';}
+function openEstimateModal(ids,preselect){
+  if(!ids||!ids.length){
+    ids=objects().filter(function(o){return o.kind==='task'&&
+      !o.estimated_minutes&&o.status!=='COMPLETED'&&
+      o.status!=='ABANDONED';}).map(function(o){return o.ref_id;});}
+  S.estimateIds=ids.slice(0,200);
+  S.estimateSelection={};
+  if(preselect)S.estimateIds.forEach(function(id){
+    S.estimateSelection[id]=true;});
+  renderEstimateModal();
+  $('estimate-overlay').classList.add('open');}
+function closeEstimateModal(){$('estimate-overlay').classList.remove('open');}
+function estimateTask(id){openEstimateModal([id],true);}
+function estimateUnestimated(){openEstimateModal(null,false);}
+function estimatePick(id,checked){if(checked)S.estimateSelection[id]=true;
+  else delete S.estimateSelection[id];renderEstimateModal();}
+function estimateSelectAll(checked){S.estimateSelection={};
+  if(checked)S.estimateIds.forEach(function(id){
+    S.estimateSelection[id]=true;});renderEstimateModal();}
+function estimateSetMinutes(v){S.estimateMinutes=parseInt(v,10)||30;
+  renderEstimateModal();}
+function estimateUseSuggestion(id){
+  const s=(S.views.estimate_suggestions||{})[id];
+  if(!s)return;S.estimateMinutes=s.minutes;renderEstimateModal();}
+function estimateRow(o){
+  const selected=!!S.estimateSelection[o.ref_id];
+  const suggestion=(S.views.estimate_suggestions||{})[o.ref_id];
+  return '<tr><td><input type="checkbox" '+(selected?'checked':'')+
+    ' onchange="estimatePick(\''+esc(o.ref_id)+'\',this.checked)"></td>'+
+    '<td>'+esc(o.title)+'</td><td>'+esc(o.project||'')+'</td>'+
+    '<td>'+fmtMin(o.estimated_minutes)+'</td>'+
+    '<td class="muted">'+(suggestion?'médiane '+suggestion.minutes+'m · '+
+      suggestion.samples+' résultat(s) · '+esc(suggestion.scope):'—')+
+      (suggestion?' <button class="small" onclick="estimateUseSuggestion(\''+
+        esc(o.ref_id)+'\')">Utiliser</button>':'')+'</td></tr>';}
+function renderEstimateModal(){
+  const el=$('estimate-body');if(!el)return;
+  const ids=S.estimateIds;
+  const selected=Object.keys(S.estimateSelection).length;
+  let h='<p class="muted">'+ids.length+' tâche(s) · '+selected+
+    ' sélectionnée(s) · valeur '+S.estimateMinutes+' min</p>'+
+    '<div class="bar"><span class="muted">Minutes</span>'+
+    [15,30,45,60,90,120,180,240].map(function(m){
+      return '<button class="small '+(S.estimateMinutes===m?'active':'')+
+        '" onclick="estimateSetMinutes('+m+')">'+m+'</button>';}).join('')+
+    '<input type="number" min="1" max="1440" value="'+S.estimateMinutes+
+    '" style="width:90px" onchange="estimateSetMinutes(this.value)">'+
+    '<button class="small" onclick="estimateSelectAll(true)">'+
+    'Tout sélectionner</button>'+
+    '<button class="small" onclick="estimateSelectAll(false)">'+
+    'Tout désélectionner</button></div>';
+  if(!ids.length){h+='<p class="muted">Aucune tâche sans estimation.</p>';}
+  else{h+='<table><tr><th></th><th>Tâche</th><th>Projet</th>'+
+    '<th>Estimation</th><th>Suggestion</th></tr>'+ids.map(function(id){
+      const o=obj('task:'+id);return o?estimateRow(o):'';}).join('')+
+    '</table>';}
+  el.innerHTML=h;
+  const btn=$('estimate-apply');if(btn)btn.disabled=selected===0;}
+async function applyEstimates(){
+  const ids=Object.keys(S.estimateSelection);
+  if(!ids.length){notice('Sélectionne au moins une tâche');return;}
+  const updates=ids.map(function(id){return {task_id:id,
+    estimated_minutes:S.estimateMinutes};});
+  try{const res=await api('/api/tasks/estimate','POST',{updates:updates});
+    closeEstimateModal();
+    await refresh({keepNotice:true,
+      notice:res.updated+' estimation(s) appliquée(s)'});
+  }catch(err){notice(err.message);}}
+
+// --- portfolio debt ---------------------------------------------------------
+function debtProjectActions(p){
+  return '<button class="small primary" onclick="mutateProject(\''+
+    esc(p.ref_id)+'\',{status:\'ACTIVE\'})">Activer</button> '+
+    '<button class="small" onclick="parkProject(\''+esc(p.ref_id)+
+    '\',\'IDEA\')">Idée</button> '+
+    '<button class="small" onclick="parkProject(\''+esc(p.ref_id)+
+    '\',\'SOMEDAY\')">Un jour</button> '+
+    '<button class="small" onclick="demoteProject(\''+esc(p.ref_id)+
+    '\')">Rétrograder…</button>';}
+function debtProjectRows(items){
+  if(!items||!items.length)return '<p class="muted">aucun</p>';
+  return '<table><tr><th>Projet</th><th>Statut</th><th></th></tr>'+
+    items.slice(0,50).map(function(p){
+      return '<tr><td><a onclick="selectObject(\'project:'+esc(p.ref_id)+
+        '\')">'+esc(p.title)+'</a></td><td>'+pill(p.status||'','')+
+        '</td><td>'+debtProjectActions(p)+'</td></tr>';}).join('')+
+    '</table>';}
+function debtTaskRows(items,kind){
+  if(!items||!items.length)return '<p class="muted">aucun</p>';
+  return '<table><tr><th>Tâche</th><th>Projet</th><th></th></tr>'+
+    items.slice(0,50).map(function(t){
+      let actions='';
+      if(kind==='estimate')actions='<button class="small primary" '+
+        'onclick="estimateTask(\''+esc(t.ref_id)+'\')">Estimer</button>';
+      else if(kind==='promote')actions='<button class="small primary" '+
+        'onclick="promoteTask(\''+esc(t.ref_id)+'\')">Promouvoir</button>';
+      else if(kind==='waiting')actions='<button class="small primary" '+
+        'onclick="chaseWaiting(\''+esc(t.ref_id)+'\')">Relancer</button>';
+      return '<tr><td><a onclick="selectObject(\'task:'+esc(t.ref_id)+
+        '\')">'+esc(t.title)+'</a></td><td>'+esc(t.project||'')+
+        '</td><td>'+actions+'</td></tr>';}).join('')+'</table>';}
+function renderDebt(){
+  const health=S.views.portfolio_health||{counts:{}};
+  const triage=S.views.triage||[];
+  const longTasks=objects().filter(function(o){return o.kind==='task'&&
+    (o.estimated_minutes||0)>=240&&o.status!=='COMPLETED'&&
+    o.status!=='ABANDONED';}).map(function(o){return {
+      ref_id:o.ref_id,title:o.title,project:o.project};});
+  let h='<h2>Dette du portefeuille</h2><p class="muted">Signaux '+
+    'déterministes. Chaque action reste une décision humaine.</p>'+
+    '<div class="bar"><button class="small primary" '+
+    'onclick="estimateUnestimated()">Estimer les tâches sans estimation ('+
+    (health.counts.open_tasks_without_estimate||0)+')</button></div>';
+  h+='<h3>Projets en veille ('+(health.counts.deferred_projects||0)+
+    ')</h3>'+debtProjectRows(health.deferred_projects);
+  h+='<h3>Projets sans tâche ouverte ('+
+    (health.counts.projects_without_open_task||0)+')</h3>'+
+    debtProjectRows(health.projects_without_open_task);
+  h+='<h3>Tâches prêtes sans estimation ('+
+    (health.counts.ready_tasks_without_estimate||0)+')</h3>'+
+    debtTaskRows(health.ready_tasks_without_estimate,'estimate');
+  h+='<h3>Tâches de 4 h ou plus ('+longTasks.length+')</h3>'+
+    debtTaskRows(longTasks,'promote');
+  h+='<h3>Attentes de plus de '+(health.waiting_attention_days||7)+
+    ' jours ('+(health.counts.waiting_over_attention_days||0)+')</h3>'+
+    debtTaskRows(health.waiting_over_attention_days,'waiting');
+  if(triage.length){
+    h+='<h3>Suggestions de triage ('+triage.length+')</h3>'+
+      '<table><tr><th>Élément</th><th>Pourquoi</th><th></th></tr>'+
+      triage.map(function(x){
+        let action='';
+        if(x.action==='promote')action='<button class="small primary" '+
+          'onclick="promoteTask(\''+esc(x.ref_id)+'\')">Promouvoir</button>';
+        else if(x.action==='demote')action='<button class="small" '+
+          'onclick="demoteProject(\''+esc(x.ref_id)+'\')">Rétrograder…</button>';
+        else action='<button class="small" onclick="parkProject(\''+
+          esc(x.ref_id)+'\',\'IDEA\')">Idée</button> '+
+          '<button class="small" onclick="parkProject(\''+esc(x.ref_id)+
+          '\',\'SOMEDAY\')">Un jour</button>';
+        return '<tr><td>'+esc(x.title)+'</td><td>'+esc(x.reason)+
+          '</td><td>'+action+'</td></tr>';}).join('')+'</table>';}
+  const domainCounts={};
+  objects().filter(function(o){return o.kind==='project';}).forEach(
+    function(o){domainCounts[o.domain]=(domainCounts[o.domain]||0)+1;});
+  h+='<h3>Domaines ('+Object.keys(domainCounts).length+')</h3>'+
+    '<table><tr><th>Domaine</th><th>Projets</th><th></th></tr>'+
+    Object.keys(domainCounts).sort().map(function(d){
+      return '<tr><td>'+esc(d)+'</td><td>'+domainCounts[d]+
+        '</td><td><button class="small" onclick="renameDomain(\''+
+        esc(d)+'\')">Renommer</button></td></tr>';}).join('')+
+    '</table>';
+  $('view-root').innerHTML=h;}
+
+async function renameDomain(oldName){
+  const next=prompt('Nouveau nom pour le domaine « '+oldName+' » :',oldName);
+  if(next==null||!next.trim()||next.trim()===oldName)return;
+  try{const res=await api('/api/domains/rename','POST',
+      {from:oldName,to:next.trim()});
+    await refresh({keepNotice:true,
+      notice:res.updated+' projet(s) déplacé(s) vers « '+res.to+' »'});
+  }catch(err){notice(err.message);}}
+
 function renderToday(){
   const plan=S.views.today_plan;
   if(!plan){$('view-root').innerHTML='<p class="muted">aucun plan</p>';return;}
@@ -3213,7 +3386,7 @@ function renderWaiting(){
   else{h+='<table><tr><th>Tâche</th><th>Projet</th><th>En attente de</th>'+
     '<th>Depuis</th><th></th></tr>'+items.map(function(o){return '<tr><td><a '+
     'onclick="selectObject(\''+o.id+'\')">'+esc(o.title)+'</a>'+
-    doneButton(o)+'</td><td>'+
+    doneButton(o)+estimateButton(o)+'</td><td>'+
     esc(o.project||'')+'</td><td>'+esc((o.waiting_for||[]).join(', ')||'—')+
     '</td><td>'+esc(ageDaysText(o.updated_at))+'</td><td>'+
     '<button class="small primary" onclick="chaseWaiting(\''+o.ref_id+
@@ -3313,7 +3486,7 @@ function renderReady(){
       h+='<tr class="'+(o&&S.selection===o.id?'selected':'')+'"'+
         (o?' data-object-id="'+o.id+'" '+
           'onclick="selectObject(\''+o.id+'\')"':'')+'>'+
-        '<td>'+esc(item.title)+(o?doneButton(o):'')+'</td><td>'+esc(item.project)+'</td>'+
+        '<td>'+esc(item.title)+(o?doneButton(o)+estimateButton(o):'')+'</td><td>'+esc(item.project)+'</td>'+
         '<td>'+esc(item.urgency)+'</td><td>'+esc(item.impact)+'</td>'+
         '<td>'+fmtMin(item.effort_minutes)+'</td>'+
         '<td>'+esc(item.deadline||'—')+'</td>'+
@@ -3364,7 +3537,7 @@ function candidateRow(c){
     '</td><td>'+(c.priority_rank||'')+'</td>'+
     '<td><a data-object-id="task:'+esc(c.task_id)+'" '+
     'onclick="selectObject(\'task:'+esc(c.task_id)+'\')">'+
-    esc(c.title)+'</a>'+(o?doneButton(o):'')+'</td>'+
+    esc(c.title)+'</a>'+(o?doneButton(o)+estimateButton(o):'')+'</td>'+
     '<td>'+esc(c.project)+'</td>'+
     '<td>'+pill(c.blocked?'BLOCKED':c.readiness,'badge-'+
       (c.blocked?'BLOCKED':(c.ready?'READY':c.readiness)))+'</td>'+
@@ -3953,8 +4126,17 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "<div class='overlay' id='outcome-overlay'><div class='modal'>",
         "<div id='outcome-body'></div>",
         "<div class='bar' style='justify-content:flex-end'>",
-        "<button onclick='closeOutcomeForm()'>Cancel</button>",
-        "<button class='primary' onclick='saveOutcomeForm()'>Record</button>",
+        "<button onclick='closeOutcomeForm()'>Annuler</button>",
+        "<button class='primary' onclick='saveOutcomeForm()'>Enregistrer</button>",
+        "</div></div></div>",
+        # Effort estimation (bulk + suggestion)
+        "<div class='overlay' id='estimate-overlay'><div class='modal' "
+        "style='max-width:860px'><h3>Estimer les tâches</h3>",
+        "<div id='estimate-body'></div>",
+        "<div class='bar' style='justify-content:flex-end'>",
+        "<button onclick='closeEstimateModal()'>Annuler</button>",
+        "<button class='primary' id='estimate-apply' "
+        "onclick='applyEstimates()'>Appliquer</button>",
         "</div></div></div>",
         # End-of-day review (review today -> plan tomorrow)
         "<div class='overlay' id='review-overlay'><div class='modal' "
