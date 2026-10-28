@@ -664,6 +664,11 @@ input:focus,
   border-left:3px solid var(--accent);padding-left:.5rem;margin-top:.35rem;
   color:var(--muted);font-style:italic;font-size:.8rem;
 }
+.assistant-answer{
+  white-space:pre-wrap;line-height:1.6;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:10px;padding:.75rem;
+  margin:.55rem 0;font-size:.88rem;
+}
 /* ---------- responsive ---------- */
 @media(max-width:1100px){
   #layout{--inspector-width:360px;gap:.65rem;padding:.6rem .7rem .9rem}
@@ -4220,7 +4225,10 @@ function renderExplain(res){
   let h='<h3 style="margin:0">'+esc(project.name||'')+' '+
     pill(res.health||'','')+'</h3><p class="muted">'+
     esc(project.objective||'')+' · '+esc(t(project.status||''))+' · '+
-    progress+' · '+res.completed_tasks+'/'+res.tasks+' tâches</p>';
+    progress+' · '+res.completed_tasks+'/'+res.tasks+' tâches</p>'+
+    '<div class="bar"><button class="small primary" onclick="'+
+    'openAssistantProject(\''+esc(project.project_id||'')+'\')">'+
+    'Résumé assisté</button></div>';
   h+='<div class="grid2">';
   h+='<div class="card"><h4>Prochaines actions</h4>'+
     ((res.next_actions||[]).length?res.next_actions.map(function(a){
@@ -4249,6 +4257,33 @@ function renderExplain(res){
     }).join(''):'<p class="muted">aucun</p>')+'</div>';
   h+='</div>';
   el.innerHTML=h;}
+
+// --- bounded read-only assistant -------------------------------------------
+function closeAssistant(){$('assistant-overlay').classList.remove('open');}
+function renderAssistantAnswer(res){
+  const el=$('assistant-body');if(!el)return;
+  const citations=(res.citations||[]).map(function(id){
+    return '<span class="pill">'+esc(id)+'</span>';}).join('');
+  const unknowns=(res.unknowns||[]).map(function(item){
+    return '<li>'+esc(item)+'</li>';}).join('');
+  el.innerHTML='<p class="muted">Moteur : '+esc(res.engine||'')+
+    (res.deterministic_fallback?' · repli déterministe ('+
+      esc(res.fallback_reason||'')+')':'')+' · read-only</p>'+
+    '<div class="assistant-answer">'+esc(res.answer||'')+'</div>'+
+    '<h4>Citations</h4><div class="chips">'+(citations||
+      '<span class="muted">aucune</span>')+'</div>'+
+    (unknowns?'<h4>Inconnues</h4><ul>'+unknowns+'</ul>':'');
+  $('assistant-overlay').classList.add('open');}
+async function openAssistantProject(projectId){
+  closeExplain();
+  try{const res=await api('/api/assistant/project','POST',
+      {project_id:projectId});
+    renderAssistantAnswer(res);
+  }catch(err){notice(err.message);}}
+async function openAssistantWeekly(){
+  try{const res=await api('/api/assistant/weekly','POST',{});
+    renderAssistantAnswer(res);
+  }catch(err){notice(err.message);}}
 function renderToday(){
   const plan=S.views.today_plan;
   if(!plan){$('view-root').innerHTML='<p class="muted">aucun plan</p>';return;}
@@ -4591,6 +4626,8 @@ function renderWeek(){
     '<div class="bar"><button class="small" onclick="addWeekOutcome()">'+
     'Ajouter un résultat</button><button class="small primary" '+
     'onclick="saveWeekPlan()">Enregistrer le plan de semaine</button>'+
+    '<button class="small" onclick="openAssistantWeekly()">'+
+    'Revue assistée</button>'+
     '<span class="muted">Trier les résultats par</span>'+
     sortSelect('week-sort',S.weekSort,WEEK_SORT_OPTIONS,'weekSortChange')+
     '</div>';
@@ -5095,6 +5132,12 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "<button class='primary' id='duplicate-create-btn' "
         "onclick='createDuplicateAnyway()'>Create anyway</button>",
         "<button class='small' onclick='cancelDuplicate()'>Cancel</button>",
+        "</div></div></div>",
+        # Bounded read-only assistant
+        "<div class='overlay' id='assistant-overlay'><div class='modal' ",
+        "style='max-width:860px'><div id='assistant-body'></div>",
+        "<div class='bar' style='justify-content:flex-end'>",
+        "<button class='primary' onclick='closeAssistant()'>Fermer</button>",
         "</div></div></div>",
         # Deterministic project explanation
         "<div class='overlay' id='explain-overlay'><div class='modal' ",

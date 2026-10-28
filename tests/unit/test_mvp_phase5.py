@@ -127,3 +127,70 @@ def test_explain_endpoint_and_ui() -> None:
     for marker in ("explainProject", "renderExplain", "explain-overlay",
                    "closeExplain"):
         assert marker in js, marker
+
+
+def test_assistant_deterministic_and_grounded_local(tmp_path: object) -> None:
+    from trajectory_os.mvp import assistant
+
+    root = str(tmp_path)
+    store.save_portfolio(root, _portfolio(
+        model.Project(project_id="p", name="P", objective="o",
+                      deadline="2026-01-12"),
+        (model.Task(task_id="t", project_id="p", title="T"),)))
+    request = assistant.AssistantRequest(
+        kind=assistant.KIND_PROJECT, project_id="p")
+    deterministic = assistant.run_assistant(
+        root, request, backend=assistant.DeterministicBackend(),
+        today=date(2026, 1, 10))
+    assert deterministic["engine"] == assistant.ENGINE_DETERMINISTIC
+    assert "P" in deterministic["answer"]
+    assert deterministic["citations"]
+
+    class FakeLlm:
+        def complete_json(self, system, user, schema):
+            return {"answer": "Résumé local", "citations": ["project"],
+                    "unknowns": []}
+
+    local = assistant.run_assistant(
+        root, request, backend=assistant.LocalLlmBackend(FakeLlm()),
+        today=date(2026, 1, 10))
+    assert local["engine"] == assistant.ENGINE_LOCAL
+    assert local["answer"] == "Résumé local"
+    assert local["citations"] == ["project"]
+
+    class InvalidLlm:
+        def complete_json(self, system, user, schema):
+            return {"answer": "Hallucination", "citations": ["missing"],
+                    "unknowns": []}
+
+    fallback = assistant.run_assistant(
+        root, request, backend=assistant.LocalLlmBackend(InvalidLlm()),
+        today=date(2026, 1, 10))
+    assert fallback["deterministic_fallback"] is True
+    assert fallback["engine"] == assistant.ENGINE_DETERMINISTIC
+
+
+def test_assistant_weekly_and_endpoints(tmp_path: object) -> None:
+    from test_mvp_dashboard_api import _request, _server
+
+    from trajectory_os.mvp import assistant, cockpit_ui
+
+    root = str(tmp_path)
+    store.save_portfolio(root, _portfolio(
+        model.Project(project_id="p", name="P", objective="o"),
+        (model.Task(task_id="t", project_id="p", title="T"),)))
+    weekly = assistant.run_assistant(
+        root, assistant.AssistantRequest(kind=assistant.KIND_WEEKLY))
+    assert "Revue hebdomadaire" in weekly["answer"]
+    with _server(root) as port:
+        status, result = _request(port, "POST", "/api/assistant/weekly", {})
+        assert status == 200
+        assert "answer" in result
+        status, result = _request(port, "POST", "/api/assistant/project", {
+            "project_id": "p"})
+        assert status == 200
+        assert "answer" in result
+    js = cockpit_ui.PAGE_JS
+    for marker in ("openAssistantProject", "openAssistantWeekly",
+                   "assistant-overlay", "renderAssistantAnswer"):
+        assert marker in js, marker

@@ -25,6 +25,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from trajectory_os.mvp import (
+    assistant,
     capture,
     changes,
     document,
@@ -98,6 +99,23 @@ class Dashboard:
 
     def explain_project(self, project_id: str) -> dict[str, Any]:
         return insights.explain_project(self.root, project_id)
+
+    def assistant_project(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        project_id = payload.get("project_id")
+        if not isinstance(project_id, str) or not project_id:
+            raise model.MvpError(model.E_MALFORMED, "project_id required")
+        return assistant.run_assistant(
+            self.root,
+            assistant.AssistantRequest(
+                kind=assistant.KIND_PROJECT, project_id=project_id,
+                question=str(payload.get("question", ""))))
+
+    def assistant_weekly(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return assistant.run_assistant(
+            self.root,
+            assistant.AssistantRequest(
+                kind=assistant.KIND_WEEKLY,
+                question=str(payload.get("question", ""))))
 
     def trash_entries(self) -> dict[str, Any]:
         return {"trash": [entry.to_dict()
@@ -1048,6 +1066,10 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.backup_now()
             if parts == ["api", "backups", "restore"]:
                 return app.restore_backup(payload)
+            if parts == ["api", "assistant", "project"]:
+                return app.assistant_project(payload)
+            if parts == ["api", "assistant", "weekly"]:
+                return app.assistant_weekly(payload)
             if parts == ["api", "sources", "rule"]:
                 return app.set_source_rule(payload)
             if parts == ["api", "signals"]:
