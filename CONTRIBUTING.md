@@ -35,6 +35,36 @@ Substantial changes must follow the canonical TrajectoryOS development process:
 `CONTRIBUTING.md` is a concise contributor guide; it does not replace or weaken
 those canonical process requirements.
 
+## MVP documentation
+
+The personal MVP is documented separately from the operator platform:
+
+- `README.md` — overview and feature map;
+- `docs/guides/MVP_DAILY_GUIDE.md` — daily workflow;
+- `docs/guides/MVP_OPERATIONS.md` — backups, trash, sources, IMAP, privacy;
+- `docs/development/MVP_ROADMAP.md` — V0.0 → V0.7 status and exit criteria;
+- `docs/adr/README.md` — ADR index;
+- `CHANGELOG.md` — release-level summary.
+
+Key MVP modules:
+
+| Module | Responsibility |
+|---|---|
+| `mvp/model.py` | validated portfolio domain model |
+| `mvp/mutations.py` | validated, atomic writes |
+| `mvp/outcomes.py` | execution outcomes and replanning |
+| `mvp/changes.py` | append-only change journal and undo |
+| `mvp/store.py` | atomic store, backups, write lock |
+| `mvp/trash.py` | soft delete and restore |
+| `mvp/signals.py` | inbound signals and deterministic proposals |
+| `mvp/proposals.py` | human review/application of proposals |
+| `mvp/sources.py` | `.eml`/`.mbox`/document ingestion, versions, diff |
+| `mvp/imap_source.py` | opt-in read-only IMAP adapter |
+| `mvp/project_review.py` | guided project review |
+| `mvp/insights.py` | deterministic project explanation |
+| `mvp/assistant.py` | bounded read-only assistant |
+| `mvp/search.py` | global deterministic search |
+
 ## Engineering philosophy
 
 Before adding a framework, database, agent, service or dependency, demonstrate

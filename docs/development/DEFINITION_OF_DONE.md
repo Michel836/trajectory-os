@@ -36,6 +36,11 @@ A change is **Done** only when every applicable item below is satisfied.
 
 - [ ] Public behavior or user-facing commands are documented when relevant.
 - [ ] Architecture documentation is updated when architecture changes.
+- [ ] `docs/guides/MVP_DAILY_GUIDE.md` and `docs/guides/MVP_OPERATIONS.md` are
+      updated when the daily workflow, data layout, sources, backups or privacy
+      behavior change.
+- [ ] `docs/development/MVP_ROADMAP.md` and `CHANGELOG.md` reflect the current
+      maturity level when a phase is completed.
 - [ ] README claims remain aligned with what is actually implemented.
 - [ ] Experimental, planned, and research-only capabilities are not presented as implemented.
 
