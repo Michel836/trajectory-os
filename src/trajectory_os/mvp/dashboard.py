@@ -37,7 +37,9 @@ from trajectory_os.mvp import (
     mutations,
     outcomes,
     planning,
+    proposals,
     render,
+    signals,
     store,
     superproductivity,
     trash,
@@ -122,6 +124,60 @@ class Dashboard:
 
     def search(self, query: str, limit: int = 30) -> dict[str, Any]:
         return search_module.search(self.root, query, limit=limit)
+
+    # --- inbound signals / proposals ---------------------------------------
+
+    def signals(self) -> dict[str, Any]:
+        return {"signals": signals.list_bundles(self.root)}
+
+    def create_signal(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        text = payload.get("text")
+        filename = payload.get("filename")
+        content_b64 = payload.get("content_b64")
+        source_kind = str(payload.get("source_kind", signals.SOURCE_TEXT))
+        source_ref = str(payload.get("source_ref", "manual"))
+        if isinstance(filename, str) and isinstance(content_b64, str):
+            try:
+                raw = base64.b64decode(content_b64.encode("ascii"),
+                                       validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise model.MvpError(model.E_MALFORMED,
+                                     "invalid file payload") from exc
+            text = document.extract_text(filename, raw)
+            source_kind = signals.SOURCE_FILE
+            source_ref = filename
+        if not isinstance(text, str) or not text.strip():
+            raise model.MvpError(model.E_MALFORMED, "text required")
+        return signals.create_signal(
+            self.root, text=text, source_kind=source_kind,
+            source_ref=source_ref,
+            title=str(payload.get("title", "")),
+            project_hint=str(payload.get("project_hint", "")),
+            sensitivity=str(payload.get("sensitivity", "INTERNAL")))
+
+    def dismiss_signal(self, signal_id: str) -> dict[str, Any]:
+        return signals.dismiss_signal(self.root, signal_id)
+
+    def mute_signal_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        source_ref = payload.get("source_ref")
+        if not isinstance(source_ref, str) or not source_ref:
+            raise model.MvpError(model.E_MALFORMED, "source_ref required")
+        return signals.mute_source(
+            self.root, source_ref, muted=bool(payload.get("muted", True)))
+
+    def accept_proposal(self, signal_id: str,
+                        proposal_id: str) -> dict[str, Any]:
+        return proposals.apply_proposal(self.root, signal_id, proposal_id)
+
+    def reject_proposal(self, signal_id: str, proposal_id: str,
+                        payload: Mapping[str, Any]) -> dict[str, Any]:
+        return proposals.reject_proposal(
+            self.root, signal_id, proposal_id,
+            reason=str(payload.get("reason", "")))
+
+    def defer_proposal(self, signal_id: str,
+                       proposal_id: str) -> dict[str, Any]:
+        return proposals.defer_proposal(self.root, signal_id, proposal_id)
 
     def backup_now(self) -> dict[str, Any]:
         return store.backup_portfolio(self.root, reason="ui")
@@ -823,6 +879,9 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 if parts == ["api", "backups"]:
                     self._send_json(HTTPStatus.OK, app.backups())
                     return
+                if parts == ["api", "signals"]:
+                    self._send_json(HTTPStatus.OK, app.signals())
+                    return
                 if parts == ["api", "search"]:
                     query = parse_qs(urlparse(self.path).query)
                     self._send_json(
@@ -888,7 +947,9 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return
             parts = self._path_parts()
             maximum = (MAX_IMPORT_BODY_BYTES
-                       if parts[:2] == ["api", "import"] else MAX_BODY_BYTES)
+                       if parts[:2] in (["api", "import"],
+                                        ["api", "signals"])
+                       else MAX_BODY_BYTES)
             payload = self._read_json(maximum)
             if payload is None:
                 return
@@ -950,6 +1011,22 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.backup_now()
             if parts == ["api", "backups", "restore"]:
                 return app.restore_backup(payload)
+            if parts == ["api", "signals"]:
+                return app.create_signal(payload)
+            if len(parts) == 4 and parts[:2] == ["api", "signals"] \
+                    and parts[3] == "dismiss":
+                return app.dismiss_signal(parts[2])
+            if len(parts) == 4 and parts[:2] == ["api", "signals"] \
+                    and parts[3] == "mute":
+                return app.mute_signal_source(payload)
+            if len(parts) == 6 and parts[:2] == ["api", "signals"] \
+                    and parts[3] == "proposals":
+                if parts[5] == "accept":
+                    return app.accept_proposal(parts[2], parts[4])
+                if parts[5] == "reject":
+                    return app.reject_proposal(parts[2], parts[4], payload)
+                if parts[5] == "defer":
+                    return app.defer_proposal(parts[2], parts[4])
             if parts == ["api", "enrichment"]:
                 return app.run_enrichment(payload)
             if len(parts) == 4 and parts[:2] == ["api", "enrichment"] \

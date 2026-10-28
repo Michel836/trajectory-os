@@ -649,6 +649,21 @@ input:focus,
   color:var(--muted);font-size:.7rem;margin-top:.55rem;text-align:right;
 }
 .command-empty{color:var(--muted);padding:1.2rem;text-align:center}
+.signal-card{border-left:4px solid var(--accent)}
+.signal-text{white-space:pre-wrap;margin:.45rem 0 .55rem;line-height:1.55}
+.proposal{
+  border:1px solid var(--line);border-radius:10px;padding:.55rem .65rem;
+  margin:.45rem 0;background:var(--surface-2);
+}
+.proposal .proposal-after{
+  font-family:var(--mono);font-size:.78rem;background:var(--surface-3);
+  border-radius:6px;padding:.25rem .4rem;margin:.35rem 0;
+  word-break:break-word;
+}
+.proposal .quote{
+  border-left:3px solid var(--accent);padding-left:.5rem;margin-top:.35rem;
+  color:var(--muted);font-style:italic;font-size:.8rem;
+}
 /* ---------- responsive ---------- */
 @media(max-width:1100px){
   #layout{--inspector-width:360px;gap:.65rem;padding:.6rem .7rem .9rem}
@@ -941,14 +956,16 @@ const VIEWS = [
   ['gantt','Gantt'],['eisenhower','Eisenhower'],['impact_effort','Impact / Effort'],
   ['portfolio_map','Portfolio Map'],['treemap','Treemap'],['progress','Progress'],
   ['heatmap','Heatmap'],['goal_flow','Goal Flow'],['focus','Focus'],
-  ['changes','Changes'],['debt','Debt'],['trash','Trash']
+  ['changes','Changes'],['debt','Debt'],['trash','Trash'],
+  ['signals','Signals']
 ];
 // Four durable workspaces instead of a 20-button wall. Internal view keys are
 // unchanged (routes, preferences and tests keep working); only the visible
 // structure and labels change. All views remain reachable in <= 2 clicks.
 const WORKSPACES = [
   {id:'today', label:'Aujourd’hui', views:['today','focus','ready']},
-  {id:'entry', label:'Entrée', views:['inbox','waiting','decisions']},
+  {id:'entry', label:'Entrée',
+   views:['signals','inbox','waiting','decisions']},
   {id:'portfolio', label:'Portefeuille',
    views:['list','kanban','wbs','graph','gantt','eisenhower',
           'impact_effort','portfolio_map','treemap']},
@@ -979,6 +996,13 @@ const FR = {
   'Changes':'Changements','OUTCOME':'Résultat','CREATE':'Création',
   'UPDATE':'Mise à jour','UNDO':'Annulation','IMPORT':'Import',
   'CAPTURE':'Capture','Debt':'Dette','Trash':'Corbeille',
+  'Signals':'Signaux','SIGNAL':'Signal',
+  'CREATE_TASK':'Créer une tâche','CREATE_PROJECT':'Créer un projet',
+  'UPDATE_TASK':'Mettre à jour la tâche',
+  'UPDATE_PROJECT':'Mettre à jour le projet','SET_DEADLINE':'Échéance',
+  'SET_STATUS':'Statut','SET_EFFORT':'Estimation',
+  'RESOLVE_WAITING':'Lever l’attente','ADD_BLOCKER':'Ajouter un blocage',
+  'RECORD_OUTCOME':'Enregistrer un résultat',
   'DELETE':'Suppression','RESTORE':'Restauration','new_task':'nouvelle tâche',
   'possible_project':'projet possible','possible_idea':'idée possible',
   'existing_project':'projet existant','existing_task':'tâche existante',
@@ -1579,7 +1603,8 @@ function renderView(){
     portfolio_map:renderPortfolioMap,treemap:renderTreemap,progress:renderProgress,
     heatmap:renderHeatmap,goal_flow:renderGoalFlow,focus:renderFocus,
     inbox:renderInbox,waiting:renderWaiting,decisions:renderDecisions,
-    changes:renderChanges,debt:renderDebt,trash:renderTrash}[S.view]||renderList;
+    changes:renderChanges,debt:renderDebt,trash:renderTrash,
+    signals:renderSignals}[S.view]||renderList;
   fn();
 }
 function card(o,extra){
@@ -3904,6 +3929,7 @@ function makeSearchRun(kind,refId){
     if(kind==='task')selectObject('task:'+refId);
     else if(kind==='project')selectObject('project:'+refId);
     else if(kind==='change')setView('changes');
+    else if(kind==='signal')setView('signals');
   };}
 var COMMANDS=[
   {kind:'action',label:'Capture rapide',hint:'texte, fichier, note',
@@ -3979,6 +4005,145 @@ function commandKey(e){
 function runCommandIndex(index){
   const item=S.commandItems[index];if(!item)return;
   if(typeof item.run==='function')item.run();else closeCommandPalette();}
+
+// --- inbound signals --------------------------------------------------------
+function proposalTargetLabel(p){
+  if(p.target_kind==='task'){const o=obj('task:'+p.target_id);
+    return o?o.title:p.title;}
+  if(p.target_kind==='project'){const o=obj('project:'+p.target_id);
+    return o?o.title:p.title;}
+  return p.title;}
+function proposalAfterLabel(p){
+  const a=p.after||{};
+  if(p.op==='CREATE_TASK')return (a.title||'')+' · '+
+    (obj('project:'+(a.project_id||''))||{}).title;
+  if(p.op==='CREATE_PROJECT')return a.name||'';
+  if(p.op==='SET_DEADLINE')return a.deadline||'';
+  if(p.op==='SET_STATUS')return t(a.status||'');
+  if(p.op==='SET_EFFORT')return fmtMin(a.estimated_minutes);
+  if(p.op==='RESOLVE_WAITING')return 'attente levée';
+  if(p.op==='RECORD_OUTCOME')return t(a.outcome||'');
+  return beforeAfter(p);
+}
+function proposalCard(signalId,p){
+  const pending=p.state==='PENDING';
+  const actions=pending?
+    '<button class="small primary" onclick="acceptProposal(\''+
+      esc(signalId)+'\',\''+esc(p.proposal_id)+'\')">Accepter</button> '+
+    '<button class="small" onclick="rejectProposal(\''+esc(signalId)+
+      '\',\''+esc(p.proposal_id)+'\')">Rejeter</button> '+
+    '<button class="small" onclick="deferProposal(\''+esc(signalId)+
+      '\',\''+esc(p.proposal_id)+'\')">Plus tard</button>':
+    pill(p.state,'badge-'+(p.state==='ACCEPTED'?'COMPLETED':
+      p.state==='REJECTED'?'BLOCKED':'DEFERRED'));
+  return '<div class="proposal">'+
+    '<div class="bar"><strong>'+esc(t(p.op))+'</strong>'+
+    pill('confiance '+Math.round((p.confidence||0)*100)+' %','')+
+    '<span class="muted">'+esc(proposalTargetLabel(p))+'</span>'+
+    '<span style="flex:1"></span>'+actions+'</div>'+
+    '<div class="muted">'+esc(p.rationale||'')+'</div>'+
+    '<div class="proposal-after">'+esc(proposalAfterLabel(p))+'</div>'+
+    (p.evidence_quote?'<div class="quote">« '+esc(p.evidence_quote)+
+      ' »</div>':'')+'</div>';}
+function renderSignalCard(bundle){
+  const s=bundle.signal;
+  const proposals=bundle.proposals||[];
+  const statusClass=s.status==='APPLIED'?'COMPLETED':
+    s.status==='DISMISSED'?'DEFERRED':
+    s.status==='ANALYZED'?'IN_PROGRESS':'TODO';
+  let h='<div class="card signal-card"><div class="bar">'+
+    '<strong>'+esc(s.title)+'</strong>'+pill(s.status,'badge-'+statusClass)+
+    '<span class="muted">'+esc(s.source_ref||'manuel')+' · '+
+    esc(String(s.received_at||'').replace('T',' ').slice(0,16))+'</span>'+
+    '<span style="flex:1"></span>'+
+    '<button class="small" onclick="muteSignalSource(\''+esc(s.signal_id)+
+      '\',\''+esc(s.source_ref||'manuel')+'\')">Mettre la source en sourdine'+
+    '</button> '+
+    '<button class="small" onclick="dismissSignal(\''+esc(s.signal_id)+
+      '\')">Ignorer le signal</button></div>'+
+    '<div class="muted signal-text">'+esc(String(s.text||'').slice(0,500))+
+    '</div>';
+  if(!proposals.length){h+='<p class="muted">Aucune proposition.</p>';}
+  else{h+=proposals.map(function(p){return proposalCard(s.signal_id,p);})
+    .join('');}
+  return h+'</div>';}
+function renderSignals(){
+  const bundles=(S.views&&S.views.signals)||[];
+  const projectOpts=objects().filter(function(o){return o.kind==='project';})
+    .sort(function(a,b){return a.title.localeCompare(b.title);}).map(
+      function(p){return '<option value="'+esc(p.project_id)+'">'+
+        esc(p.title)+'</option>';}).join('');
+  let h='<h2>Signaux entrants</h2><p class="muted">Colle un texte ou '+
+    'dépose un document. Rien n’est écrit avant ton acceptation explicite.'+
+    '</p>';
+  h+='<div class="card"><h3>Nouveau signal</h3>'+
+    '<textarea id="signal-text" rows="6" placeholder="Colle un email, une '+
+    'note, un compte rendu…"></textarea>'+
+    '<div class="bar"><input id="signal-file" type="file" '+
+    'accept=".odt,.docx,.pdf,.md,.markdown,.txt,.text" '+
+    'style="max-width:280px">'+
+    '<input id="signal-source" placeholder="source (ex. mail notaire)" '+
+    'value="manuel" style="max-width:220px">'+
+    '<select id="signal-project" class="inline">'+
+    '<option value="">(aucun projet)</option>'+projectOpts+'</select>'+
+    '<button class="small primary" onclick="analyzeSignal()">Analyser'+
+    '</button></div></div>';
+  if(!bundles.length){h+='<p class="muted">Aucun signal pour l’instant.</p>';}
+  else{h+=bundles.map(renderSignalCard).join('');}
+  $('view-root').innerHTML=h;}
+async function postSignal(body){
+  try{const res=await api('/api/signals','POST',body);
+    await refresh({keepNotice:true,
+      notice:res.duplicate?'Signal déjà connu · '+
+        res.proposals.length+' proposition(s)':
+        'Signal analysé · '+res.proposals.length+' proposition(s)'});
+  }catch(err){notice(err.message);}}
+function analyzeSignal(){
+  const source=($('signal-source').value||'manuel').trim()||'manuel';
+  const project=$('signal-project').value||'';
+  const file=$('signal-file').files[0];
+  if(file){
+    const reader=new FileReader();
+    reader.onload=function(){
+      const data=String(reader.result||'');
+      const comma=data.indexOf(',');
+      postSignal({filename:file.name,
+        content_b64:comma>=0?data.slice(comma+1):'',
+        source_ref:source,project_hint:project});
+    };
+    reader.readAsDataURL(file);
+    return;
+  }
+  const text=$('signal-text').value;
+  if(!text.trim()){notice('Colle un texte ou dépose un fichier');return;}
+  postSignal({text:text,source_ref:source,project_hint:project});
+}
+async function acceptProposal(signalId,proposalId){
+  try{await api('/api/signals/'+encodeURIComponent(signalId)+
+      '/proposals/'+encodeURIComponent(proposalId)+'/accept','POST',{});
+    await refresh({keepNotice:true,notice:'Proposition acceptée'});
+  }catch(err){notice(err.message);}}
+async function rejectProposal(signalId,proposalId){
+  try{await api('/api/signals/'+encodeURIComponent(signalId)+
+      '/proposals/'+encodeURIComponent(proposalId)+'/reject','POST',{});
+    await refresh({keepNotice:true,notice:'Proposition rejetée'});
+  }catch(err){notice(err.message);}}
+async function deferProposal(signalId,proposalId){
+  try{await api('/api/signals/'+encodeURIComponent(signalId)+
+      '/proposals/'+encodeURIComponent(proposalId)+'/defer','POST',{});
+    await refresh({keepNotice:true,notice:'Proposition reportée'});
+  }catch(err){notice(err.message);}}
+async function dismissSignal(signalId){
+  try{await api('/api/signals/'+encodeURIComponent(signalId)+'/dismiss',
+      'POST',{});
+    await refresh({keepNotice:true,notice:'Signal ignoré'});
+  }catch(err){notice(err.message);}}
+async function muteSignalSource(signalId,sourceRef){
+  if(!confirm('Mettre la source « '+sourceRef+' » en sourdine ?'))return;
+  try{await api('/api/signals/'+encodeURIComponent(signalId)+'/mute',
+      'POST',{source_ref:sourceRef,muted:true});
+    await refresh({keepNotice:true,notice:'Source mise en sourdine'});
+  }catch(err){notice(err.message);}}
 function renderToday(){
   const plan=S.views.today_plan;
   if(!plan){$('view-root').innerHTML='<p class="muted">aucun plan</p>';return;}

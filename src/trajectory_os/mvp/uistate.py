@@ -47,7 +47,7 @@ VIEWS = (
     "today", "inbox", "waiting", "decisions", "ready", "tomorrow", "week",
     "list", "kanban", "wbs", "graph", "gantt", "eisenhower",
     "impact_effort", "portfolio_map", "treemap", "progress", "heatmap",
-    "goal_flow", "changes", "debt", "trash",
+    "goal_flow", "changes", "debt", "trash", "signals",
 )
 
 #: Named personal highlight colours (rendered as an overlay, never as status).

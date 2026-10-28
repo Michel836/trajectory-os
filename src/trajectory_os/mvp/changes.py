@@ -42,9 +42,10 @@ KIND_IMPORT = "IMPORT"
 KIND_CAPTURE = "CAPTURE"
 KIND_DELETE = "DELETE"
 KIND_RESTORE = "RESTORE"
+KIND_SIGNAL = "SIGNAL"
 KINDS = frozenset({
     KIND_OUTCOME, KIND_CREATE, KIND_UPDATE, KIND_UNDO, KIND_IMPORT,
-    KIND_CAPTURE, KIND_DELETE, KIND_RESTORE,
+    KIND_CAPTURE, KIND_DELETE, KIND_RESTORE, KIND_SIGNAL,
 })
 
 #: Object kinds (closed set).
@@ -456,8 +457,8 @@ def recent_changes(
 __all__ = [
     "CHANGES_NAME", "CHANGE_SCHEMA_VERSION", "ChangeError", "ChangeRecord",
     "KINDS", "KIND_CAPTURE", "KIND_CREATE", "KIND_DELETE", "KIND_IMPORT",
-    "KIND_OUTCOME", "KIND_RESTORE", "KIND_UNDO", "KIND_UPDATE", "MAX_READ",
-    "OBJECT_BATCH", "OBJECT_KINDS",
+    "KIND_OUTCOME", "KIND_RESTORE", "KIND_SIGNAL", "KIND_UNDO",
+    "KIND_UPDATE", "MAX_READ", "OBJECT_BATCH", "OBJECT_KINDS",
     "OBJECT_PROJECT", "OBJECT_TASK", "RECENT_LIMIT", "append_change",
     "changes_path", "last_undoable", "read_changes", "recent_changes",
     "undone_change_ids",

@@ -22,7 +22,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from trajectory_os.mvp import changes, classification, model, search_memory, store
+from trajectory_os.mvp import (
+    changes,
+    classification,
+    model,
+    search_memory,
+    signals,
+    store,
+)
 
 MAX_QUERY_CHARS = 200
 MAX_LIMIT = 100
@@ -102,6 +109,18 @@ def search(root: str | Path, query: str, *,
                 "project": project.name, "status": task.status,
                 "score": score, "reason": reason,
                 "hint": f"{project.name} · {task.status}",
+            })
+
+    for signal in signals.read_signals(root, limit=100):
+        score, reason = _title_score(signal.title, normalized)
+        if not score and _contains(signal.text, normalized):
+            score, reason = 10, "signal"
+        if score:
+            results.append({
+                "kind": "signal", "ref_id": signal.signal_id,
+                "title": signal.title, "status": signal.status,
+                "score": score, "reason": reason,
+                "hint": f"{signal.source_ref} · {signal.status}",
             })
 
     for record in changes.read_changes(root, limit=MAX_CHANGES):
