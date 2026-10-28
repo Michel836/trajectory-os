@@ -621,6 +621,34 @@ input:focus,
 .agenda-form input[type=time]{min-width:7.4rem}
 .agenda-check{display:flex;align-items:center;gap:.3rem;margin:0;white-space:nowrap}
 .agenda-check input{width:auto}
+.command-panel{
+  width:min(760px,100%);margin-top:8vh;padding:.85rem;background:var(--surface);
+  border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow-lg);
+  animation:popIn .16s ease-out;
+}
+#command-input{
+  width:100%;font-size:1.02rem;padding:.7rem .85rem;border-radius:10px;
+  border:1px solid var(--line-strong);background:var(--surface-2);
+}
+.command-results{margin-top:.55rem;max-height:55vh;overflow:auto}
+.command-item{
+  display:flex;align-items:center;gap:.65rem;padding:.55rem .7rem;
+  border-radius:9px;cursor:pointer;border:1px solid transparent;
+}
+.command-item:hover,.command-item.active{
+  background:var(--accent-soft);
+  border-color:color-mix(in srgb,var(--accent) 25%,transparent);
+}
+.command-item .cmd-kind{
+  font-size:.65rem;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--muted);min-width:4.6rem;
+}
+.command-item .cmd-label{flex:1;font-weight:650}
+.command-item .cmd-hint{color:var(--muted);font-size:.76rem}
+.command-help{
+  color:var(--muted);font-size:.7rem;margin-top:.55rem;text-align:right;
+}
+.command-empty{color:var(--muted);padding:1.2rem;text-align:center}
 /* ---------- responsive ---------- */
 @media(max-width:1100px){
   #layout{--inspector-width:360px;gap:.65rem;padding:.6rem .7rem .9rem}
@@ -913,7 +941,7 @@ const VIEWS = [
   ['gantt','Gantt'],['eisenhower','Eisenhower'],['impact_effort','Impact / Effort'],
   ['portfolio_map','Portfolio Map'],['treemap','Treemap'],['progress','Progress'],
   ['heatmap','Heatmap'],['goal_flow','Goal Flow'],['focus','Focus'],
-  ['changes','Changes'],['debt','Debt']
+  ['changes','Changes'],['debt','Debt'],['trash','Trash']
 ];
 // Four durable workspaces instead of a 20-button wall. Internal view keys are
 // unchanged (routes, preferences and tests keep working); only the visible
@@ -925,7 +953,8 @@ const WORKSPACES = [
    views:['list','kanban','wbs','graph','gantt','eisenhower',
           'impact_effort','portfolio_map','treemap']},
   {id:'review', label:'Revue',
-   views:['week','tomorrow','progress','heatmap','goal_flow','changes','debt']}
+   views:['week','tomorrow','progress','heatmap','goal_flow','changes',
+          'debt','trash']}
 ];
 const ADVANCED_VIEWS = {
   portfolio:['graph','gantt','eisenhower','impact_effort','portfolio_map',
@@ -949,7 +978,8 @@ const FR = {
   'SUGGESTED':'Suggéré','UNKNOWN':'Inconnu','MAIN':'Principal',
   'Changes':'Changements','OUTCOME':'Résultat','CREATE':'Création',
   'UPDATE':'Mise à jour','UNDO':'Annulation','IMPORT':'Import',
-  'CAPTURE':'Capture','Debt':'Dette','new_task':'nouvelle tâche',
+  'CAPTURE':'Capture','Debt':'Dette','Trash':'Corbeille',
+  'DELETE':'Suppression','RESTORE':'Restauration','new_task':'nouvelle tâche',
   'possible_project':'projet possible','possible_idea':'idée possible',
   'existing_project':'projet existant','existing_task':'tâche existante',
   'duplicate':'doublon','ambiguous':'ambigu',
@@ -1035,7 +1065,8 @@ const KANBAN_PROJECT = ['ACTIVE','WAITING','BLOCKED','DEFERRED','COMPLETED','IDE
 const S = {
   views:null, cockpit:null,
   view:'today', showAdvanced:false, estimateIds:[],
-  estimateSelection:{}, estimateMinutes:30, selection:null,
+  estimateSelection:{}, estimateMinutes:30, commandItems:[],
+  commandIndex:0, commandTimer:null, selection:null,
   filters:{scope:'all',scope_id:null,level:'all',status:[],evidence:[]},
   search:'', activeSavedView:'',
   capture:null, exportSelection:{}, exportPreview:null,
@@ -1310,8 +1341,11 @@ function captureShortcutAllowed(tag,contentEditable,ctrl,meta,key,overlayOpen){
     const t=e.target||{};
     if(captureShortcutAllowed(t.tagName,t.isContentEditable,e.ctrlKey,
         e.metaKey,e.key,!!document.querySelector('.overlay.open'))){
-      e.preventDefault();openCapture();return;}
+      e.preventDefault();openCommandPalette();return;}
     if(e.key!=='Escape')return;
+    const commandOverlay=$('command-overlay');
+    if(commandOverlay&&commandOverlay.classList.contains('open')){
+      e.preventDefault();closeCommandPalette();return;}
     const duplicateOverlay=$('duplicate-overlay');
     if(duplicateOverlay&&duplicateOverlay.classList.contains('open')){
       e.preventDefault();cancelDuplicate();return;}
@@ -1545,7 +1579,7 @@ function renderView(){
     portfolio_map:renderPortfolioMap,treemap:renderTreemap,progress:renderProgress,
     heatmap:renderHeatmap,goal_flow:renderGoalFlow,focus:renderFocus,
     inbox:renderInbox,waiting:renderWaiting,decisions:renderDecisions,
-    changes:renderChanges,debt:renderDebt}[S.view]||renderList;
+    changes:renderChanges,debt:renderDebt,trash:renderTrash}[S.view]||renderList;
   fn();
 }
 function card(o,extra){
@@ -2463,7 +2497,9 @@ function renderInspector(){
     '<button class="small" onclick="mutateTask(\''+o.ref_id+
     '\',{status:\'TODO\'})">Réactiver</button>'+
     '<button class="small" onclick="openObject(\''+o.id+'\')">Ouvrir</button>'+
-    '<button class="small" onclick="openTask(\''+o.ref_id+'\')">Modifier</button>';}
+    '<button class="small" onclick="openTask(\''+o.ref_id+'\')">Modifier</button>'+
+    '<button class="small danger" onclick="trashObject(\'task\',\''+
+    o.ref_id+'\')">Corbeille</button>';}
   else{h+='<button class="small primary" onclick="mutateProject(\''+
     o.project_id+'\',{status:\'COMPLETED\'})">Terminer</button>'+
     '<button class="small" onclick="parkProject(\''+o.project_id+
@@ -2747,7 +2783,8 @@ async function completeOutcome(id){
       'POST',{outcome:'COMPLETED'});
     await refresh({keepNotice:true,
       notice:'Terminé · projet '+t(res.project_status),
-      actions:[{label:'Annuler',onclick:"undoOutcome('"+id+"')"}]});
+      actions:res.change_id?[{label:'Annuler',onclick:
+        "undoChange('"+res.change_id+"')"}]:[]});
   }catch(err){notice(err.message);}}
 async function rederiveProjects(){
   if(!confirm('Recalculer les statuts des projets à partir de leurs tâches ?'))
@@ -2768,7 +2805,8 @@ async function recordOutcome(id,outcome){const o=obj('task:'+id);
   try{const res=await api('/api/tasks/'+encodeURIComponent(id)+'/outcome',
     'POST',{outcome:outcome});
     await refresh({keepNotice:true,notice:t(outcome)+' enregistré',
-      actions:[{label:'Annuler',onclick:"undoOutcome('"+id+"')"}]});
+      actions:res.change_id?[{label:'Annuler',onclick:
+        "undoChange('"+res.change_id+"')"}]:[]});
   }catch(err){notice(err.message);}}
 async function reloadViewsData(){
   try{const res=await api('/api/views');S.views=res;}
@@ -3600,9 +3638,9 @@ function renderChanges(){
     items.forEach(function(c){
       const linked=(c.object_kind==='task'||c.object_kind==='project');
       const id=c.object_kind+':'+c.object_id;
-      const undo=(c.undoable&&c.kind!=='UNDO'&&c.object_kind==='task')?
-        '<button class="small" onclick="undoOutcome(\''+
-        esc(c.object_id)+'\')">Annuler</button>':'';
+      const undo=(c.undoable&&c.kind!=='UNDO')?
+        '<button class="small" onclick="undoChange(\''+
+        esc(c.change_id)+'\')">Annuler</button>':'';
       h+='<tr><td>'+esc(String(c.at||'').replace('T',' ').slice(0,16))+
         '</td><td>'+pill(c.kind,'')+'</td><td>'+
         (linked?'<a onclick="selectObject(\''+esc(id)+'\')">'+
@@ -3781,6 +3819,166 @@ async function renameDomain(oldName){
       notice:res.updated+' projet(s) déplacé(s) vers « '+res.to+' »'});
   }catch(err){notice(err.message);}}
 
+
+// --- backups & trash --------------------------------------------------------
+async function backupNow(){
+  try{const res=await api('/api/backups','POST',{});
+    await refresh({keepNotice:true,
+      notice:'Sauvegarde créée : '+res.name});
+  }catch(err){notice(err.message);}}
+async function restoreBackup(name){
+  if(!confirm('Restaurer la sauvegarde « '+name+' » ? '+
+    'L’état courant sera sauvegardé avant.'))return;
+  try{const res=await api('/api/backups/restore','POST',{name:name});
+    await refresh({keepNotice:true,
+      notice:'Sauvegarde restaurée : '+res.restored});
+  }catch(err){notice(err.message);}}
+async function restoreTrash(id){
+  try{const res=await api('/api/trash/'+encodeURIComponent(id)+'/restore',
+      'POST',{});
+    await refresh({keepNotice:true,
+      notice:'Restauré : '+res.restored});
+  }catch(err){notice(err.message);}}
+async function purgeTrash(id){
+  if(!confirm('Supprimer définitivement cet élément de la corbeille ?'))
+    return;
+  try{await api('/api/trash/'+encodeURIComponent(id)+'/purge','POST',{});
+    await refresh({keepNotice:true,notice:'Élément supprimé définitivement'});
+  }catch(err){notice(err.message);}}
+async function trashObject(kind,id,cascade){
+  const message=kind==='project'?
+    'Mettre ce projet et toutes ses tâches à la corbeille ?':
+    'Mettre cette tâche à la corbeille ?';
+  if(!confirm(message))return;
+  try{await api('/api/trash','POST',
+      {kind:kind,ref_id:id,cascade:!!cascade});
+    await refresh({keepNotice:true,notice:'Élément mis à la corbeille'});
+  }catch(err){notice(err.message);}}
+async function undoChange(changeId){
+  if(!changeId){notice('Aucun changement annulable');return;}
+  if(!confirm('Annuler ce changement ?'))return;
+  try{await api('/api/changes/'+encodeURIComponent(changeId)+'/undo',
+      'POST',{});
+    await refresh({keepNotice:true,notice:'Changement annulé'});
+  }catch(err){notice(err.message);}}
+function renderTrash(){
+  const entries=(S.views&&S.views.trash)||[];
+  const backups=(S.views&&S.views.backups)||[];
+  let h='<h2>Corbeille et sauvegardes</h2><p class="muted">Les éléments '+
+    'supprimés restent restaurables ; les sauvegardes permettent de revenir '+
+    'à un état antérieur.</p>';
+  h+='<h3>Sauvegardes ('+backups.length+')</h3>'+
+    '<div class="bar"><button class="small primary" onclick="backupNow()">'+
+    'Sauvegarder maintenant</button></div>';
+  if(!backups.length){h+='<p class="muted">Aucune sauvegarde.</p>';}
+  else{
+    h+='<table><tr><th>Fichier</th><th>Taille</th><th>Date</th><th></th>'+
+      '</tr>'+backups.slice(0,20).map(function(b){
+        const size=Math.max(1,Math.round((b.size||0)/1024));
+        return '<tr><td>'+esc(b.name)+'</td><td>'+size+' Ko</td><td>'+
+          esc(String(b.modified_at||'').replace('T',' ').slice(0,16))+
+          '</td><td><button class="small" onclick="restoreBackup(\''+
+          esc(b.name)+'\')">Restaurer</button></td></tr>';}).join('')+
+      '</table>';
+  }
+  h+='<h3>Corbeille ('+entries.length+')</h3>';
+  if(!entries.length){h+='<p class="muted">La corbeille est vide.</p>';}
+  else{
+    h+='<table><tr><th>Élément</th><th>Type</th><th>Supprimé</th><th></th>'+
+      '</tr>'+entries.map(function(e){
+        return '<tr><td>'+esc(e.title||e.object_id)+'</td><td>'+
+          pill(e.kind,'')+'</td><td>'+
+          esc(String(e.deleted_at||'').replace('T',' ').slice(0,16))+
+          '</td><td><button class="small primary" onclick="restoreTrash(\''+
+          esc(e.trash_id)+'\')">Restaurer</button> '+
+          '<button class="small danger" onclick="purgeTrash(\''+
+          esc(e.trash_id)+'\')">Supprimer définitivement</button></td></tr>';
+      }).join('')+'</table>';
+  }
+  $('view-root').innerHTML=h;}
+
+// --- global search / command palette ---------------------------------------
+function makeSearchRun(kind,refId){
+  return function(){
+    closeCommandPalette();
+    if(kind==='task')selectObject('task:'+refId);
+    else if(kind==='project')selectObject('project:'+refId);
+    else if(kind==='change')setView('changes');
+  };}
+var COMMANDS=[
+  {kind:'action',label:'Capture rapide',hint:'texte, fichier, note',
+   run:function(){closeCommandPalette();openCapture();}},
+  {kind:'action',label:'Nouvelle tâche',hint:'créer une action',
+   run:function(){closeCommandPalette();openTaskForm(null);}},
+  {kind:'action',label:'Nouveau projet',hint:'créer un résultat',
+   run:function(){closeCommandPalette();openProjectForm(null);}},
+  {kind:'action',label:'Importer un document',hint:'ODT, DOCX, PDF, MD, TXT',
+   run:function(){closeCommandPalette();openImport();}},
+  {kind:'action',label:'Aujourd’hui',hint:'plan du jour',
+   run:function(){closeCommandPalette();setView('today');}},
+  {kind:'action',label:'Portefeuille',hint:'liste, kanban, WBS',
+   run:function(){closeCommandPalette();setView('list');}},
+  {kind:'action',label:'Dette du portefeuille',hint:'trier et assainir',
+   run:function(){closeCommandPalette();setView('debt');}},
+  {kind:'action',label:'Changements',hint:'journal et annulations',
+   run:function(){closeCommandPalette();setView('changes');}},
+  {kind:'action',label:'Corbeille et sauvegardes',hint:'restaurer',
+   run:function(){closeCommandPalette();setView('trash');}},
+  {kind:'action',label:'Estimer les tâches sans estimation',
+   hint:'estimation en masse',
+   run:function(){closeCommandPalette();estimateUnestimated();}},
+  {kind:'action',label:'Sauvegarder maintenant',hint:'backup versionné',
+   run:function(){closeCommandPalette();backupNow();}},
+  {kind:'action',label:'Bilan de fin de journée',hint:'revoir et reporter',
+   run:function(){closeCommandPalette();openReview();}}
+];
+function openCommandPalette(){
+  S.commandIndex=0;S.commandItems=COMMANDS;
+  $('command-input').value='';
+  renderCommandResults(COMMANDS);
+  $('command-overlay').classList.add('open');
+  setTimeout(function(){const el=$('command-input');if(el)el.focus();},20);}
+function closeCommandPalette(){$('command-overlay').classList.remove('open');}
+function renderCommandResults(items){
+  S.commandItems=items;
+  if(S.commandIndex>=items.length)S.commandIndex=0;
+  const el=$('command-results');if(!el)return;
+  if(!items.length){el.innerHTML='<div class="command-empty">Aucun résultat</div>';
+    return;}
+  el.innerHTML=items.map(function(item,index){
+    return '<div class="command-item '+(index===S.commandIndex?'active':'')+
+      '" onclick="runCommandIndex('+index+')">'+
+      '<span class="cmd-kind">'+esc(item.kind||'')+'</span>'+
+      '<span class="cmd-label">'+esc(item.label||'')+'</span>'+
+      '<span class="cmd-hint">'+esc(item.hint||'')+'</span></div>';}).join('');}
+function commandInput(value){
+  const query=String(value||'').trim();
+  if(S.commandTimer)clearTimeout(S.commandTimer);
+  if(!query){renderCommandResults(COMMANDS);return;}
+  S.commandTimer=setTimeout(function(){
+    api('/api/search?q='+encodeURIComponent(query)+'&limit=20').then(
+      function(res){
+        const results=(res.results||[]).map(function(r){
+          return {kind:r.kind,label:r.title,hint:r.hint||r.reason||'',
+            run:makeSearchRun(r.kind,r.ref_id)};});
+        const actions=COMMANDS.filter(function(c){
+          return String(c.label).toLowerCase().indexOf(query.toLowerCase())
+            >=0;});
+        renderCommandResults(results.concat(actions));
+      }).catch(function(err){notice(err.message);});
+  },160);}
+function commandKey(e){
+  if(e.key==='ArrowDown'){e.preventDefault();
+    if(S.commandIndex<S.commandItems.length-1)S.commandIndex++;
+    renderCommandResults(S.commandItems);}
+  else if(e.key==='ArrowUp'){e.preventDefault();
+    if(S.commandIndex>0)S.commandIndex--;
+    renderCommandResults(S.commandItems);}
+  else if(e.key==='Enter'){e.preventDefault();runCommandIndex(S.commandIndex);}
+  else if(e.key==='Escape'){e.preventDefault();closeCommandPalette();}}
+function runCommandIndex(index){
+  const item=S.commandItems[index];if(!item)return;
+  if(typeof item.run==='function')item.run();else closeCommandPalette();}
 function renderToday(){
   const plan=S.views.today_plan;
   if(!plan){$('view-root').innerHTML='<p class="muted">aucun plan</p>';return;}
@@ -4472,7 +4670,8 @@ async function boot(){
   initObjectOpen();
   applyInspectorLayout();
   loadEngineCatalog();
-  await refresh();}
+  await refresh();
+  if(window.location.hash==='#command')openCommandPalette();}
 window.addEventListener('DOMContentLoaded',boot);
 """
 
@@ -4491,6 +4690,7 @@ def render_page(cockpit: engine.Cockpit) -> str:
         _escape(cockpit.today), " · généré ", _escape(cockpit.generated_at),
         "</span>",
         "<div class='toolbar'>",
+        "<button class='small' onclick='openCommandPalette()'>Rechercher</button>",
         "<button class='small' onclick='openProjectForm(null)'>Nouveau projet</button>",
         "<button class='small' onclick='openTaskForm(null)'>Nouvelle tâche</button>",
         "<button class='small' onclick='openImport()'>Importer un document</button>",
@@ -4626,6 +4826,14 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "onclick='createDuplicateAnyway()'>Create anyway</button>",
         "<button class='small' onclick='cancelDuplicate()'>Cancel</button>",
         "</div></div></div>",
+        # Global search / command palette
+        "<div class='overlay' id='command-overlay'><div class='command-panel'>",
+        "<input id='command-input' placeholder='Rechercher ou lancer une action…' ",
+        "autocomplete='off' oninput='commandInput(this.value)' ",
+        "onkeydown='commandKey(event)'>",
+        "<div id='command-results' class='command-results'></div>",
+        "<div class='command-help'>↑ ↓ naviguer · Entrée ouvrir · Échap fermer</div>",
+        "</div></div>",
         "<script>", PAGE_JS, "</script>",
         "</body></html>",
     ]

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import json
 import os
 from collections.abc import Callable, Mapping
@@ -39,8 +40,12 @@ from trajectory_os.mvp import (
     render,
     store,
     superproductivity,
+    trash,
     uistate,
     visualization,
+)
+from trajectory_os.mvp import (
+    search as search_module,
 )
 
 MAX_BODY_BYTES = 64 * 1024
@@ -60,6 +65,10 @@ class Dashboard:
         self.token = token
         self.llm = llm
         self.jobs = import_jobs.ImportJobManager(root, llm=llm)
+        # Best-effort daily safety net: a missing/corrupt portfolio or a
+        # read-only root must never prevent the cockpit from opening.
+        with contextlib.suppress(OSError, model.MvpError):
+            store.maybe_daily_backup(root)
 
     def cockpit(self) -> engine.Cockpit:
         return engine.build_cockpit(self.root, persist=False)
@@ -82,6 +91,46 @@ class Dashboard:
 
     def rederive_projects(self) -> dict[str, Any]:
         return outcomes.rederive_project_statuses(self.root)
+
+    def trash_entries(self) -> dict[str, Any]:
+        return {"trash": [entry.to_dict()
+                          for entry in trash.list_trash(self.root)]}
+
+    def trash_object(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        kind = payload.get("kind")
+        ref_id = payload.get("ref_id")
+        if kind not in ("task", "project"):
+            raise model.MvpError(model.E_MALFORMED, "kind must be task/project")
+        if not isinstance(ref_id, str) or not ref_id:
+            raise model.MvpError(model.E_MALFORMED, "ref_id required")
+        cascade = bool(payload.get("cascade", False))
+        if kind == "task":
+            return trash.trash_task(self.root, ref_id)
+        return trash.trash_project(self.root, ref_id, cascade=cascade)
+
+    def restore_trash(self, trash_id: str) -> dict[str, Any]:
+        return trash.restore_trash(self.root, trash_id)
+
+    def purge_trash(self, trash_id: str) -> dict[str, Any]:
+        return trash.purge_trash(self.root, trash_id)
+
+    def undo_change(self, change_id: str) -> dict[str, Any]:
+        return changes.undo_change(self.root, change_id)
+
+    def backups(self) -> dict[str, Any]:
+        return {"backups": list(store.list_backups(self.root))}
+
+    def search(self, query: str, limit: int = 30) -> dict[str, Any]:
+        return search_module.search(self.root, query, limit=limit)
+
+    def backup_now(self) -> dict[str, Any]:
+        return store.backup_portfolio(self.root, reason="ui")
+
+    def restore_backup(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        name = payload.get("name")
+        if name is not None and not isinstance(name, str):
+            raise model.MvpError(model.E_MALFORMED, "name must be a string")
+        return store.restore_portfolio(self.root, name=name or "")
 
     # --- visual execution layer ----------------------------------------------
 
@@ -768,6 +817,20 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                         HTTPStatus.OK,
                         {"status": "OK", **app.changes(limit, since)})
                     return
+                if parts == ["api", "trash"]:
+                    self._send_json(HTTPStatus.OK, app.trash_entries())
+                    return
+                if parts == ["api", "backups"]:
+                    self._send_json(HTTPStatus.OK, app.backups())
+                    return
+                if parts == ["api", "search"]:
+                    query = parse_qs(urlparse(self.path).query)
+                    self._send_json(
+                        HTTPStatus.OK,
+                        app.search(query.get("q", [""])[0],
+                                   self._query_int("limit")
+                                   if "limit" in query else 30))
+                    return
                 if parts == ["api", "preferences"]:
                     self._send_json(
                         HTTPStatus.OK,
@@ -872,6 +935,21 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.confirm_import(payload)
             if parts == ["api", "import", "confirm"]:
                 return app.confirm_import(payload)
+            if len(parts) == 4 and parts[:2] == ["api", "changes"] \
+                    and parts[3] == "undo":
+                return app.undo_change(parts[2])
+            if parts == ["api", "trash"]:
+                return app.trash_object(payload)
+            if len(parts) == 4 and parts[:2] == ["api", "trash"] \
+                    and parts[3] == "restore":
+                return app.restore_trash(parts[2])
+            if len(parts) == 4 and parts[:2] == ["api", "trash"] \
+                    and parts[3] == "purge":
+                return app.purge_trash(parts[2])
+            if parts == ["api", "backups"]:
+                return app.backup_now()
+            if parts == ["api", "backups", "restore"]:
+                return app.restore_backup(payload)
             if parts == ["api", "enrichment"]:
                 return app.run_enrichment(payload)
             if len(parts) == 4 and parts[:2] == ["api", "enrichment"] \

@@ -51,7 +51,10 @@ _MUTATION_LOCK = threading.RLock()
 def _serialized[F: Callable[..., Any]](func: F) -> F:
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        with _MUTATION_LOCK:
+        root = args[0] if args else kwargs.get("root")
+        if root is None:
+            raise model.MvpError(model.E_MALFORMED, "root required")
+        with _MUTATION_LOCK, store.portfolio_lock(root):
             return func(*args, **kwargs)
     return cast(F, wrapper)
 
@@ -196,7 +199,7 @@ def _journal(root: str | Path, *, kind: str, object_kind: str,
              object_id: str, title: str, summary: str,
              before: Mapping[str, Any] | None = None,
              after: Mapping[str, Any] | None = None,
-             source: str = "human", undoable: bool = False,
+             source: str = "human", undoable: bool = True,
              at: str = "") -> None:
     """Best-effort change journaling after a canonical write.
 
@@ -959,6 +962,7 @@ def rename_domain(root: str | Path, *, old: str, new: str) -> dict[str, Any]:
                      for project in portfolio.projects)
     candidate = replace(portfolio, projects=projects,
                         updated_at=stamp).validate()
+    store.backup_portfolio(root, reason="bulk-domain-rename")
     store.save_portfolio(root, candidate)
     for project in changed:
         _journal(root, kind=changes_module.KIND_UPDATE,
@@ -1021,6 +1025,7 @@ def estimate_tasks(root: str | Path,
         return {"updated": 0, "task_ids": []}
     candidate = replace(portfolio, tasks=tuple(updated_tasks),
                         updated_at=stamp).validate()
+    store.backup_portfolio(root, reason="bulk-estimate")
     store.save_portfolio(root, candidate)
     for before, after in changes:
         _journal(root, kind=changes_module.KIND_UPDATE,

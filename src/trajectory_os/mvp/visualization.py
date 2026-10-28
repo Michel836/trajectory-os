@@ -37,6 +37,7 @@ from trajectory_os.mvp import (
     scheduler,
     search_memory,
     store,
+    trash,
     triage,
     uistate,
 )
@@ -204,6 +205,8 @@ def build_views(root: str | Path, *, today: date | None = None,
         "portfolio_health": _portfolio_health(
             portfolio, readiness_map, today),
         "changes": changes.recent_changes(root, portfolio),
+        "trash": [entry.to_dict() for entry in trash.list_trash(root)],
+        "backups": list(store.list_backups(root)),
         "triage": [item.to_dict() for item in triage.suggest(portfolio)],
         "routines": [routine.to_dict() for routine in portfolio.routines],
         "decisions": [decision.to_dict()

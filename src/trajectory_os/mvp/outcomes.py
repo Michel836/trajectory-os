@@ -100,7 +100,7 @@ def derive_project_status(
     return replace(project, status=status)
 
 
-def rederive_project_statuses(root: str | Path) -> dict[str, Any]:
+def _rederive_project_statuses_locked(root: str | Path) -> dict[str, Any]:
     """Recompute every project status from its current task readiness.
 
     This is an explicit human-triggered repair for a portfolio whose stored
@@ -128,6 +128,7 @@ def rederive_project_statuses(root: str | Path) -> dict[str, Any]:
         return {"changed": 0, "projects": []}
     new_portfolio = replace(portfolio, projects=tuple(projects),
                             updated_at=stamp).validate()
+    store.backup_portfolio(root, reason="rederive-statuses")
     store.save_portfolio(root, new_portfolio)
     for entry in changed:
         try:
@@ -145,9 +146,9 @@ def rederive_project_statuses(root: str | Path) -> dict[str, Any]:
     return {"changed": len(changed), "projects": changed}
 
 
-def record_and_save(root: str | Path, *, task_id: str, outcome: str,
-                    actual_minutes: int | None = None, note: str = "",
-                    recorded_at: str = "") -> dict[str, Any]:
+def _record_and_save_locked(root: str | Path, *, task_id: str, outcome: str,
+                           actual_minutes: int | None = None, note: str = "",
+                           recorded_at: str = "") -> dict[str, Any]:
     """Record one outcome, persist portfolio + ledger, return a summary."""
     portfolio = store.load_portfolio(root)
     if portfolio is None:
@@ -193,8 +194,8 @@ def record_and_save(root: str | Path, *, task_id: str, outcome: str,
     }
 
 
-def undo_last(root: str | Path, *, task_id: str,
-              recorded_at: str = "") -> dict[str, Any]:
+def _undo_last_locked(root: str | Path, *, task_id: str,
+                      recorded_at: str = "") -> dict[str, Any]:
     """Undo the most recent outcome for one task.
 
     Undoing is a *new* durable decision: the outcome ledger is never rewritten
@@ -263,6 +264,31 @@ def undo_last(root: str | Path, *, task_id: str,
         "change_id": undo_id,
         "journal_warning": journal_warning,
     }
+
+
+def rederive_project_statuses(root: str | Path) -> dict[str, Any]:
+    """Recompute project statuses under the portfolio write lock."""
+    with store.portfolio_lock(root):
+        return _rederive_project_statuses_locked(root)
+
+
+def record_and_save(root: str | Path, *, task_id: str, outcome: str,
+                    actual_minutes: int | None = None, note: str = "",
+                    recorded_at: str = "") -> dict[str, Any]:
+    """Record an outcome under the portfolio write lock."""
+    with store.portfolio_lock(root):
+        return _record_and_save_locked(
+            root, task_id=task_id, outcome=outcome,
+            actual_minutes=actual_minutes, note=note,
+            recorded_at=recorded_at)
+
+
+def undo_last(root: str | Path, *, task_id: str,
+              recorded_at: str = "") -> dict[str, Any]:
+    """Undo the last outcome under the portfolio write lock."""
+    with store.portfolio_lock(root):
+        return _undo_last_locked(
+            root, task_id=task_id, recorded_at=recorded_at)
 
 
 @dataclass(frozen=True)

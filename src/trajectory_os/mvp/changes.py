@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -40,9 +40,11 @@ KIND_UPDATE = "UPDATE"
 KIND_UNDO = "UNDO"
 KIND_IMPORT = "IMPORT"
 KIND_CAPTURE = "CAPTURE"
+KIND_DELETE = "DELETE"
+KIND_RESTORE = "RESTORE"
 KINDS = frozenset({
     KIND_OUTCOME, KIND_CREATE, KIND_UPDATE, KIND_UNDO, KIND_IMPORT,
-    KIND_CAPTURE,
+    KIND_CAPTURE, KIND_DELETE, KIND_RESTORE,
 })
 
 #: Object kinds (closed set).
@@ -229,6 +231,177 @@ def last_undoable(
     return None
 
 
+def _find_change(root: str | Path, change_id: str) -> ChangeRecord:
+    for record in read_changes(root, limit=MAX_READ):
+        if record.change_id == change_id:
+            return record
+    raise ChangeError(model.E_UNKNOWN_ID, change_id)
+
+
+def _append_undo(root: str | Path, record: ChangeRecord, *,
+                 before: Mapping[str, Any], after: Mapping[str, Any],
+                 summary: str) -> ChangeRecord:
+    return append_change(
+        root, kind=KIND_UNDO, object_kind=record.object_kind,
+        object_id=record.object_id, title=record.title, summary=summary,
+        before=before, after=after, source="human", undoable=False,
+        references=record.change_id)
+
+
+def undo_change(root: str | Path, change_id: str) -> dict[str, Any]:
+    """Undo one journaled change, safely and explicitly.
+
+    Supported: outcomes, field updates, created objects, capture/import
+    batches and soft deletes. The operation is journaled as a new ``UNDO``
+    record; history is never rewritten.
+    """
+    from trajectory_os.mvp import outcomes, trash  # local: avoid cycles
+
+    record = _find_change(root, change_id)
+    if not record.undoable or record.kind in (KIND_UNDO, KIND_RESTORE):
+        raise ChangeError(model.E_MALFORMED,
+                          f"change {change_id!r} is not undoable")
+    if change_id in undone_change_ids(root):
+        raise ChangeError(model.E_MALFORMED,
+                          f"change {change_id!r} is already undone")
+
+    if record.kind == KIND_DELETE:
+        restored_entry = trash.restore_trash(root, record.references)
+        _append_undo(root, record, before={"trashed": record.object_id},
+                     after=restored_entry, summary="suppression annulée")
+        return {"undone": change_id, "kind": record.kind,
+                "restored": record.object_id}
+
+    if record.kind in (KIND_CAPTURE, KIND_IMPORT):
+        created_tasks = [str(value) for value in
+                         record.after.get("created_task_ids", [])]
+        created_projects = [str(value) for value in
+                            record.after.get("created_project_ids", [])]
+        trashed: list[str] = []
+        for task_id in created_tasks:
+            try:
+                trash.trash_task(root, task_id, reason="undo-batch")
+                trashed.append(task_id)
+            except model.MvpError:
+                continue
+        for project_id in created_projects:
+            try:
+                trash.trash_project(root, project_id, reason="undo-batch",
+                                    cascade=True)
+                trashed.append(project_id)
+            except model.MvpError:
+                continue
+        _append_undo(root, record, before={"created": list(trashed)},
+                     after={}, summary="lot annulé")
+        return {"undone": change_id, "kind": record.kind,
+                "trashed": trashed}
+
+    portfolio = store.load_portfolio(root)
+    if portfolio is None:
+        raise ChangeError(model.E_MALFORMED, "no portfolio loaded")
+    stamp = intel_model.utc_now()
+
+    if record.kind == KIND_OUTCOME:
+        if record.object_kind != OBJECT_TASK:
+            raise ChangeError(model.E_MALFORMED, "outcome target must be task")
+        outcome_task = portfolio.task_map().get(record.object_id)
+        if outcome_task is None:
+            raise ChangeError(model.E_UNKNOWN_ID, record.object_id)
+        if outcome_task.status != record.after.get("status") or \
+                outcome_task.actual_minutes != record.after.get(
+                    "actual_minutes"):
+            raise ChangeError(model.E_MALFORMED,
+                              "task changed since the recorded outcome")
+        restored_outcome = model.Task.from_dict({
+            **outcome_task.to_dict(), "status": record.before.get("status"),
+            "actual_minutes": record.before.get("actual_minutes"),
+            "updated_at": stamp})
+        outcome_tasks = tuple(
+            restored_outcome if task.task_id == outcome_task.task_id else task
+            for task in portfolio.tasks)
+        outcome_project = outcomes.derive_project_status(
+            portfolio, outcome_tasks, outcome_task.project_id)
+        outcome_projects = tuple(
+            outcome_project if project.project_id == outcome_task.project_id
+            else project for project in portfolio.projects)
+        new_portfolio = replace(
+            portfolio, tasks=outcome_tasks, projects=outcome_projects,
+            updated_at=stamp).validate()
+        store.save_portfolio(root, new_portfolio)
+        _append_undo(
+            root, record,
+            before={"status": outcome_task.status,
+                    "actual_minutes": outcome_task.actual_minutes},
+            after={"status": restored_outcome.status,
+                   "actual_minutes": restored_outcome.actual_minutes},
+            summary="résultat annulé")
+        return {"undone": change_id, "kind": record.kind,
+                "restored_status": restored_outcome.status}
+
+    if record.kind == KIND_UPDATE and record.object_kind == OBJECT_TASK:
+        update_task = portfolio.task_map().get(record.object_id)
+        if update_task is None:
+            raise ChangeError(model.E_UNKNOWN_ID, record.object_id)
+        restored_task = model.Task.from_dict({
+            **update_task.to_dict(), **record.before, "updated_at": stamp})
+        update_tasks = tuple(
+            restored_task if task.task_id == update_task.task_id else task
+            for task in portfolio.tasks)
+        update_project = outcomes.derive_project_status(
+            portfolio, update_tasks, update_task.project_id)
+        update_projects = tuple(
+            update_project if project.project_id == update_task.project_id
+            else project for project in portfolio.projects)
+        new_portfolio = replace(
+            portfolio, tasks=update_tasks, projects=update_projects,
+            updated_at=stamp).validate()
+        store.save_portfolio(root, new_portfolio)
+        _append_undo(
+            root, record,
+            before={key: getattr(update_task, key) for key in record.before},
+            after={key: getattr(restored_task, key) for key in record.before},
+            summary="modification annulée")
+        return {"undone": change_id, "kind": record.kind,
+                "restored": record.object_id}
+
+    if record.kind == KIND_UPDATE and record.object_kind == OBJECT_PROJECT:
+        source_project = portfolio.project_map().get(record.object_id)
+        if source_project is None:
+            raise ChangeError(model.E_UNKNOWN_PROJECT, record.object_id)
+        restored_project = model.Project.from_dict({
+            **source_project.to_dict(), **record.before})
+        project_updates = tuple(
+            restored_project if project.project_id == source_project.project_id
+            else project for project in portfolio.projects)
+        new_portfolio = replace(
+            portfolio, projects=project_updates,
+            updated_at=stamp).validate()
+        store.save_portfolio(root, new_portfolio)
+        _append_undo(
+            root, record,
+            before={key: getattr(source_project, key) for key in record.before},
+            after={key: getattr(restored_project, key)
+                   for key in record.before},
+            summary="modification annulée")
+        return {"undone": change_id, "kind": record.kind,
+                "restored": record.object_id}
+
+    if record.kind == KIND_CREATE:
+        if record.object_kind == OBJECT_TASK:
+            trash.trash_task(root, record.object_id, reason="undo-create")
+        elif record.object_kind == OBJECT_PROJECT:
+            trash.trash_project(root, record.object_id, reason="undo-create",
+                                cascade=True)
+        else:
+            raise ChangeError(model.E_MALFORMED, "unsupported created object")
+        _append_undo(root, record, before={"created": record.object_id},
+                     after={}, summary="création annulée")
+        return {"undone": change_id, "kind": record.kind,
+                "trashed": record.object_id}
+
+    raise ChangeError(model.E_MALFORMED, f"kind {record.kind!r} not undoable")
+
+
 def recent_changes(
     root: str | Path,
     portfolio: model.Portfolio,
@@ -282,8 +455,9 @@ def recent_changes(
 
 __all__ = [
     "CHANGES_NAME", "CHANGE_SCHEMA_VERSION", "ChangeError", "ChangeRecord",
-    "KINDS", "KIND_CAPTURE", "KIND_CREATE", "KIND_IMPORT", "KIND_OUTCOME",
-    "KIND_UNDO", "KIND_UPDATE", "MAX_READ", "OBJECT_BATCH", "OBJECT_KINDS",
+    "KINDS", "KIND_CAPTURE", "KIND_CREATE", "KIND_DELETE", "KIND_IMPORT",
+    "KIND_OUTCOME", "KIND_RESTORE", "KIND_UNDO", "KIND_UPDATE", "MAX_READ",
+    "OBJECT_BATCH", "OBJECT_KINDS",
     "OBJECT_PROJECT", "OBJECT_TASK", "RECENT_LIMIT", "append_change",
     "changes_path", "last_undoable", "read_changes", "recent_changes",
     "undone_change_ids",
