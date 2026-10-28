@@ -962,7 +962,7 @@ const VIEWS = [
   ['portfolio_map','Portfolio Map'],['treemap','Treemap'],['progress','Progress'],
   ['heatmap','Heatmap'],['goal_flow','Goal Flow'],['focus','Focus'],
   ['changes','Changes'],['debt','Debt'],['trash','Trash'],
-  ['signals','Signals']
+  ['signals','Signals'],['project_review','Project Review']
 ];
 // Four durable workspaces instead of a 20-button wall. Internal view keys are
 // unchanged (routes, preferences and tests keep working); only the visible
@@ -976,7 +976,7 @@ const WORKSPACES = [
           'impact_effort','portfolio_map','treemap']},
   {id:'review', label:'Revue',
    views:['week','tomorrow','progress','heatmap','goal_flow','changes',
-          'debt','trash']}
+          'debt','trash','project_review']}
 ];
 const ADVANCED_VIEWS = {
   portfolio:['graph','gantt','eisenhower','impact_effort','portfolio_map',
@@ -1002,6 +1002,9 @@ const FR = {
   'UPDATE':'Mise à jour','UNDO':'Annulation','IMPORT':'Import',
   'CAPTURE':'Capture','Debt':'Dette','Trash':'Corbeille',
   'Signals':'Signaux','SIGNAL':'Signal',
+  'Project Review':'Revue projets','KEEP':'Continuer','DEFER':'Défer',
+  'PARK_IDEA':'Idée','PARK_SOMEDAY':'Un jour','CLOSE':'Clôturer',
+  'SKIP':'Passer',
   'CREATE_TASK':'Créer une tâche','CREATE_PROJECT':'Créer un projet',
   'UPDATE_TASK':'Mettre à jour la tâche',
   'UPDATE_PROJECT':'Mettre à jour le projet','SET_DEADLINE':'Échéance',
@@ -1098,7 +1101,8 @@ const S = {
   views:null, cockpit:null,
   view:'today', showAdvanced:false, estimateIds:[],
   estimateSelection:{}, estimateMinutes:30, commandItems:[],
-  sourceRefs:[],
+  sourceRefs:[], projectReviewIndex:0, signalFilter:'pending',
+  updateProjectId:null,
   commandIndex:0, commandTimer:null, selection:null,
   filters:{scope:'all',scope_id:null,level:'all',status:[],evidence:[]},
   search:'', activeSavedView:'',
@@ -1613,7 +1617,8 @@ function renderView(){
     heatmap:renderHeatmap,goal_flow:renderGoalFlow,focus:renderFocus,
     inbox:renderInbox,waiting:renderWaiting,decisions:renderDecisions,
     changes:renderChanges,debt:renderDebt,trash:renderTrash,
-    signals:renderSignals}[S.view]||renderList;
+    signals:renderSignals,project_review:renderProjectReview
+    }[S.view]||renderList;
   fn();
 }
 function card(o,extra){
@@ -2553,6 +2558,8 @@ function renderInspector(){
     '\')">Modifier</button>'+
     '<button class="small" onclick="explainProject(\''+o.project_id+
     '\')">Expliquer</button>'+
+    '<button class="small" onclick="openProjectUpdate(\''+o.project_id+
+    '\')">Mettre à jour</button>'+
     '<button class="small" onclick="openTaskForm(\''+o.project_id+
     '\')">Ajouter une tâche</button>'+
     '<button class="small" onclick="runEnrichment(\''+o.project_id+
@@ -2740,6 +2747,7 @@ function openObjectHtml(o){
   long+=detailBlock('Outcomes',o.outcomes.map(function(r){
     return esc(r.outcome+' @ '+String(r.recorded_at).slice(0,10));}).
     join('<br>'));
+  long+=detailBlock('Activité',objectActivity(o));
   return '<div class="detail-head"><strong>'+esc(o.title)+'</strong>'+
     pill(o.kind,'badge-ACTIVE')+
     (o.highlight?'<span class="pill">highlight: '+esc(o.highlight)+
@@ -4129,6 +4137,31 @@ async function saveSourceRule(index){
       mute:!!(mute&&mute.checked)});
     await refresh({keepNotice:true,notice:'Règle de source enregistrée'});
   }catch(err){notice(err.message);}}
+
+function renderIngestionQueue(){
+  const records=(S.views&&S.views.source_index)||[];
+  if(!records.length)return '';
+  const counts={};records.forEach(function(r){
+    counts[r.status]=(counts[r.status]||0)+1;});
+  let h='<div class="card"><h3>File d’ingestion ('+records.length+
+    ')</h3><p class="muted">'+Object.keys(counts).sort().map(function(k){
+      return counts[k]+' '+esc(k.toLowerCase());}).join(' · ')+'</p>'+
+    '<table><tr><th>Titre</th><th>Type</th><th>Statut</th><th>Version</th>'+
+    '<th>Reçu</th></tr>'+records.slice(0,10).map(function(r){
+      return '<tr><td>'+esc(r.title||r.location)+'</td><td>'+
+        esc(r.origin)+'</td><td>'+pill(r.status,'')+'</td><td>v'+
+        r.version+'</td><td>'+esc(String(r.received_at||'').slice(0,16))+
+        '</td></tr>';}).join('')+'</table></div>';
+  return h;}
+function signalFilteredBundles(bundles){
+  if(S.signalFilter==='all')return bundles;
+  if(S.signalFilter==='pending'){
+    return bundles.filter(function(b){
+      return (b.proposals||[]).some(function(p){
+        return p.state==='PENDING';});});}
+  return bundles.filter(function(b){
+    return b.signal.status===S.signalFilter;});}
+function signalFilterChange(value){S.signalFilter=value;renderSignals();}
 function renderSignals(){
   const bundles=(S.views&&S.views.signals)||[];
   const projectOpts=objects().filter(function(o){return o.kind==='project';})
@@ -4138,6 +4171,7 @@ function renderSignals(){
   let h='<h2>Signaux entrants</h2><p class="muted">Colle un texte ou '+
     'dépose un document. Rien n’est écrit avant ton acceptation explicite.'+
     '</p>';
+  h+=renderIngestionQueue();
   h+=renderSourcesSection();
   h+='<div class="card"><h3>Nouveau signal</h3>'+
     '<textarea id="signal-text" rows="6" placeholder="Colle un email, une '+
@@ -4151,8 +4185,19 @@ function renderSignals(){
     '<option value="">(aucun projet)</option>'+projectOpts+'</select>'+
     '<button class="small primary" onclick="analyzeSignal()">Analyser'+
     '</button></div></div>';
-  if(!bundles.length){h+='<p class="muted">Aucun signal pour l’instant.</p>';}
-  else{h+=bundles.map(renderSignalCard).join('');}
+  const pendingCount=bundles.filter(function(b){
+    return (b.proposals||[]).some(function(p){return p.state==='PENDING';});
+  }).length;
+  h+='<div class="bar">'+[
+    ['pending','À traiter ('+pendingCount+')'],
+    ['APPLIED','Appliqués'],['DISMISSED','Ignorés'],['all','Tous']
+  ].map(function(item){
+    return '<button class="small '+(S.signalFilter===item[0]?'active':'')+
+      '" onclick="signalFilterChange(\''+item[0]+'\')">'+item[1]+
+      '</button>';}).join('')+'</div>';
+  const visible=signalFilteredBundles(bundles);
+  if(!visible.length){h+='<p class="muted">Aucun signal dans ce filtre.</p>';}
+  else{h+=visible.map(renderSignalCard).join('');}
   $('view-root').innerHTML=h;}
 async function postSignal(body){
   try{const res=await api('/api/signals','POST',body);
@@ -4284,6 +4329,148 @@ async function openAssistantWeekly(){
   try{const res=await api('/api/assistant/weekly','POST',{});
     renderAssistantAnswer(res);
   }catch(err){notice(err.message);}}
+
+// --- guided project review ------------------------------------------------
+function renderProjectReview(){
+  const queue=(S.views&&S.views.project_review)||{projects:[]};
+  const projects=queue.projects||[];
+  if(!projects.length){
+    $('view-root').innerHTML='<h2>Revue projets</h2>'+
+      '<p class="muted">Aucun projet à revoir.</p>';
+    return;}
+  if(S.projectReviewIndex>=projects.length)S.projectReviewIndex=0;
+  const project=projects[S.projectReviewIndex];
+  const counts=queue.counts||{};
+  let h='<h2>Revue projets</h2><p class="muted">Un projet à la fois. '+
+    'La décision porte sur le projet, jamais sur les tâches.</p>'+
+    '<div class="bar"><button class="small" onclick="projectReviewPrev()">'+
+    '← Précédent</button><strong>'+(S.projectReviewIndex+1)+' / '+
+    projects.length+'</strong><button class="small" '+
+    'onclick="projectReviewNext()">Suivant →</button>'+
+    '<span class="muted">À risque '+counts.AT_RISK+' · stale '+
+    (counts.STALE||0)+' · sans action '+(counts.NO_NEXT_ACTION||0)+
+    ' · surchargés '+(counts.OVERLOADED||0)+'</span></div>';
+  h+='<div class="card"><div class="bar"><strong>'+
+    esc(project.name)+'</strong>'+pill(project.status,'')+
+    pill(project.health,'')+'<span style="flex:1"></span>'+
+    '<span class="muted">'+esc(project.deadline?'échéance '+
+      project.deadline:'sans échéance')+'</span></div>'+
+    '<p class="muted">'+esc(project.objective||'')+'</p>'+
+    '<div class="grid3">'+
+    '<div class="card"><h4>Progression</h4><div>'+
+      (project.progress==null?'—':Math.round(project.progress*100)+'%')+
+      ' · '+project.completed+'/'+project.tasks+' tâches</div></div>'+
+    '<div class="card"><h4>Prochaine action</h4><div>'+
+      (project.next_action?esc(project.next_action):'aucune')+
+      '</div></div>'+
+    '<div class="card"><h4>Dernière activité</h4><div>'+
+      esc(project.last_activity?String(project.last_activity).slice(0,10):
+        'aucune')+'</div></div></div>'+
+    '<div class="bar">'+
+    '<button class="small primary" onclick="reviewProjectDecision(\''+
+      esc(project.project_id)+'\',\'KEEP\')">Continuer</button>'+
+    '<button class="small" onclick="reviewProjectDecision(\''+
+      esc(project.project_id)+'\',\'DEFER\')">Défer</button>'+
+    '<button class="small" onclick="reviewProjectDecision(\''+
+      esc(project.project_id)+'\',\'PARK_IDEA\')">Idée</button>'+
+    '<button class="small" onclick="reviewProjectDecision(\''+
+      esc(project.project_id)+'\',\'PARK_SOMEDAY\')">Un jour</button>'+
+    '<button class="small" onclick="reviewProjectDecision(\''+
+      esc(project.project_id)+'\',\'CLOSE\')">Clôturer</button>'+
+    '<button class="small ghost" onclick="projectReviewNext()">Passer</button>'+
+    '</div></div>';
+  $('view-root').innerHTML=h;}
+function projectReviewPrev(){
+  const queue=(S.views&&S.views.project_review)||{projects:[]};
+  const length=(queue.projects||[]).length;
+  if(!length)return;
+  S.projectReviewIndex=(S.projectReviewIndex-1+length)%length;
+  renderProjectReview();}
+function projectReviewNext(){
+  const queue=(S.views&&S.views.project_review)||{projects:[]};
+  const length=(queue.projects||[]).length;
+  if(!length)return;
+  S.projectReviewIndex=(S.projectReviewIndex+1)%length;
+  renderProjectReview();}
+async function reviewProjectDecision(projectId,decision){
+  try{await api('/api/projects/'+encodeURIComponent(projectId)+'/review',
+      'POST',{decision:decision});
+    await refresh({keepNotice:true,notice:'Décision enregistrée : '+
+      t(decision)});
+  }catch(err){notice(err.message);}}
+
+// --- project update & activity --------------------------------------------
+function objectActivity(o){
+  const items=((S.views&&S.views.changes)||[]).filter(function(change){
+    return change.object_id===o.ref_id;}).slice(0,6);
+  if(!items.length)return '';
+  return '<h4>Activité</h4>'+items.map(function(change){
+    return '<div class="muted">'+esc(String(change.at||'').slice(0,16))+
+      ' · '+esc(change.summary||change.title||'')+'</div>';}).join('');
+}
+function openProjectUpdate(projectId){
+  S.updateProjectId=projectId;
+  const project=obj('project:'+projectId)||{};
+  const states=['ON_TRACK','AT_RISK','STALE','NO_NEXT_ACTION','OVERLOADED',
+    'WAITING','BLOCKED','DONE'];
+  $('update-body').innerHTML='<h3 style="margin:0">Mettre à jour — '+
+    esc(project.title||projectId)+'</h3><p class="muted">Une note '+
+    'humaine, pas une prédiction. Elle reste dans le journal.</p>'+
+    '<label>Santé</label><select id="up-state">'+
+    states.map(function(state){return '<option value="'+state+'"'+
+      (project.health===state?' selected':'')+'>'+esc(t(state))+
+      '</option>';}).join('')+'</select>'+
+    '<label>Note d’avancement</label><textarea id="up-note" rows="3"></textarea>'+
+    '<label>Risques</label><textarea id="up-risks" rows="2"></textarea>'+
+    '<label>Décision</label><input id="up-decision" placeholder="ex. '+
+    'continuer, défer, changer de périmètre">'+
+    '<label>Prochaine étape</label><input id="up-next" placeholder="ex. relancer le notaire">';
+  $('update-overlay').classList.add('open');}
+function closeProjectUpdate(){$('update-overlay').classList.remove('open');}
+async function saveProjectUpdate(){
+  const id=S.updateProjectId;if(!id)return;
+  try{await api('/api/projects/'+encodeURIComponent(id)+'/update','POST',{
+      state:$('up-state').value,note:$('up-note').value,
+      risks:$('up-risks').value,decision:$('up-decision').value,
+      next_step:$('up-next').value});
+    closeProjectUpdate();
+    await refresh({keepNotice:true,notice:'Mise à jour enregistrée'});
+  }catch(err){notice(err.message);}}
+
+// --- keyboard shortcuts & help --------------------------------------------
+function shortcutAllowed(tag,contentEditable,overlayOpen,key,ctrl,meta,alt){
+  if(overlayOpen)return false;
+  if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||contentEditable)
+    return false;
+  if(ctrl||meta||alt)return false;
+  return ['?','n','p','c','i','t','r','d','s','/'].indexOf(
+    String(key))>=0;}
+function openHelp(){$('help-overlay').classList.add('open');}
+function closeHelp(){$('help-overlay').classList.remove('open');}
+function initKeyboardShortcuts(){
+  document.addEventListener('keydown',function(e){
+    const target=e.target||{};
+    const help=$('help-overlay');
+    if(e.key==='Escape'&&help&&help.classList.contains('open')){
+      e.preventDefault();closeHelp();return;}
+    const overlay=!!document.querySelector('.overlay.open');
+    if(!shortcutAllowed(target.tagName,target.isContentEditable,overlay,
+        e.key,e.ctrlKey,e.metaKey,e.altKey))return;
+    if(e.key==='?'){e.preventDefault();openHelp();return;}
+    if(e.key==='n'){e.preventDefault();openTaskForm(null);return;}
+    if(e.key==='p'){e.preventDefault();openProjectForm(null);return;}
+    if(e.key==='c'){e.preventDefault();openCapture();return;}
+    if(e.key==='i'){e.preventDefault();setView('signals');return;}
+    if(e.key==='t'){e.preventDefault();setView('today');return;}
+    if(e.key==='r'){e.preventDefault();boot();return;}
+    if(e.key==='/'){e.preventDefault();
+      const search=$('f-search');if(search)search.focus();return;}
+    const selected=S.selection?obj(S.selection):null;
+    if(e.key==='d'&&selected&&selected.kind==='task'){
+      e.preventDefault();completeOutcome(selected.ref_id);return;}
+    if(e.key==='s'&&selected&&selected.kind==='task'){
+      e.preventDefault();recordOutcome(selected.ref_id,'DEFERRED');return;}
+  });}
 function renderToday(){
   const plan=S.views.today_plan;
   if(!plan){$('view-root').innerHTML='<p class="muted">aucun plan</p>';return;}
@@ -4977,6 +5164,7 @@ async function boot(){
   initObjectOpen();
   applyInspectorLayout();
   loadEngineCatalog();
+  initKeyboardShortcuts();
   await refresh();
   if(window.location.hash==='#command')openCommandPalette();}
 window.addEventListener('DOMContentLoaded',boot);
@@ -5132,6 +5320,30 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "<button class='primary' id='duplicate-create-btn' "
         "onclick='createDuplicateAnyway()'>Create anyway</button>",
         "<button class='small' onclick='cancelDuplicate()'>Cancel</button>",
+        "</div></div></div>",
+        # Keyboard help
+        "<div class='overlay' id='help-overlay'><div class='modal' ",
+        "style='max-width:620px'><h3>Raccourcis clavier</h3>",
+        "<table><tr><th>Touche</th><th>Action</th></tr>",
+        "<tr><td>?</td><td>Cette aide</td></tr>",
+        "<tr><td>n</td><td>Nouvelle tâche</td></tr>",
+        "<tr><td>p</td><td>Nouveau projet</td></tr>",
+        "<tr><td>c</td><td>Capture rapide</td></tr>",
+        "<tr><td>i</td><td>Signaux entrants</td></tr>",
+        "<tr><td>t</td><td>Aujourd’hui</td></tr>",
+        "<tr><td>d</td><td>Terminer la tâche sélectionnée</td></tr>",
+        "<tr><td>s</td><td>Reporter la tâche sélectionnée</td></tr>",
+        "<tr><td>/</td><td>Recherche</td></tr>",
+        "<tr><td>Ctrl/Cmd+K</td><td>Palette de commandes</td></tr>",
+        "</table><div class='bar' style='justify-content:flex-end'>",
+        "<button class='primary' onclick='closeHelp()'>Fermer</button>",
+        "</div></div></div>",
+        # Project update
+        "<div class='overlay' id='update-overlay'><div class='modal'>",
+        "<div id='update-body'></div>",
+        "<div class='bar' style='justify-content:flex-end'>",
+        "<button onclick='closeProjectUpdate()'>Annuler</button>",
+        "<button class='primary' onclick='saveProjectUpdate()'>Enregistrer</button>",
         "</div></div></div>",
         # Bounded read-only assistant
         "<div class='overlay' id='assistant-overlay'><div class='modal' ",

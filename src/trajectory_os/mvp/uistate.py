@@ -48,6 +48,7 @@ VIEWS = (
     "list", "kanban", "wbs", "graph", "gantt", "eisenhower",
     "impact_effort", "portfolio_map", "treemap", "progress", "heatmap",
     "goal_flow", "changes", "debt", "trash", "signals",
+    "project_review",
 )
 
 #: Named personal highlight colours (rendered as an overlay, never as status).

@@ -39,6 +39,7 @@ from trajectory_os.mvp import (
     mutations,
     outcomes,
     planning,
+    project_review,
     proposals,
     render,
     signals,
@@ -99,6 +100,76 @@ class Dashboard:
 
     def explain_project(self, project_id: str) -> dict[str, Any]:
         return insights.explain_project(self.root, project_id)
+
+    def project_review_queue(self) -> dict[str, Any]:
+        return project_review.build_queue(self.root)
+
+    def review_project(self, project_id: str,
+                       payload: Mapping[str, Any]) -> dict[str, Any]:
+        decision = payload.get("decision")
+        if not isinstance(decision, str) or not decision:
+            raise model.MvpError(model.E_MALFORMED, "decision required")
+        return project_review.decide(
+            self.root, project_id, decision,
+            note=str(payload.get("note", "")))
+
+    def project_update(self, project_id: str,
+                       payload: Mapping[str, Any]) -> dict[str, Any]:
+        portfolio = self.portfolio()
+        project = portfolio.project_map().get(project_id)
+        if project is None:
+            raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+        state = str(payload.get("state", ""))
+        if state and state not in visualization.PROJECT_HEALTH:
+            raise model.MvpError(model.E_MALFORMED, "invalid project state")
+        fields = {
+            "state": state,
+            "note": str(payload.get("note", ""))[:2000],
+            "risks": str(payload.get("risks", ""))[:2000],
+            "decision": str(payload.get("decision", ""))[:500],
+            "next_step": str(payload.get("next_step", ""))[:500],
+        }
+        change = changes.append_change(
+            self.root, kind=changes.KIND_UPDATE,
+            object_kind=changes.OBJECT_PROJECT, object_id=project_id,
+            title=project.name, summary="mise à jour de projet",
+            before={}, after=fields, source="human", undoable=False)
+        return {"project_id": project_id, "update": change.to_dict()}
+
+    def project_timeline(self, project_id: str) -> dict[str, Any]:
+        portfolio = self.portfolio()
+        project = portfolio.project_map().get(project_id)
+        if project is None:
+            raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+        task_ids = {task.task_id for task in portfolio.tasks
+                    if task.project_id == project_id}
+        entries: list[dict[str, Any]] = []
+        for change in changes.read_changes(self.root, limit=200):
+            if change.object_id not in task_ids | {project_id}:
+                continue
+            entries.append({
+                "kind": "change", "at": change.at,
+                "title": change.title, "summary": change.summary,
+                "source": change.source,
+            })
+        for signal in signals.read_signals(self.root, limit=200):
+            if signal.project_hint != project_id:
+                continue
+            entries.append({
+                "kind": "signal", "at": signal.received_at,
+                "title": signal.title, "summary": signal.source_ref,
+                "source": signal.source_ref,
+            })
+        for record in store.read_outcomes(self.root):
+            if record.task_id not in task_ids:
+                continue
+            entries.append({
+                "kind": "outcome", "at": record.recorded_at,
+                "title": record.task_id, "summary": record.outcome,
+                "source": "human",
+            })
+        entries.sort(key=lambda item: str(item["at"]), reverse=True)
+        return {"project_id": project_id, "entries": entries[:100]}
 
     def assistant_project(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         project_id = payload.get("project_id")
@@ -929,6 +1000,15 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 if parts == ["api", "backups"]:
                     self._send_json(HTTPStatus.OK, app.backups())
                     return
+                if parts == ["api", "projects", "review"]:
+                    self._send_json(HTTPStatus.OK,
+                                    app.project_review_queue())
+                    return
+                if len(parts) == 4 and parts[:2] == ["api", "projects"] \
+                        and parts[3] == "timeline":
+                    self._send_json(HTTPStatus.OK,
+                                    app.project_timeline(parts[2]))
+                    return
                 if len(parts) == 4 and parts[:2] == ["api", "projects"] \
                         and parts[3] == "explain":
                     self._send_json(HTTPStatus.OK,
@@ -1130,6 +1210,12 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.delete_decision(parts[2])
             if len(parts) == 3 and parts[:2] == ["api", "decisions"]:
                 return app.update_decision(parts[2], payload)
+            if len(parts) == 4 and parts[:2] == ["api", "projects"] \
+                    and parts[3] == "review":
+                return app.review_project(parts[2], payload)
+            if len(parts) == 4 and parts[:2] == ["api", "projects"] \
+                    and parts[3] == "update":
+                return app.project_update(parts[2], payload)
             if parts == ["api", "projects", "rederive"]:
                 return app.rederive_projects()
             if parts == ["api", "projects"]:
