@@ -250,7 +250,7 @@ def test_view_sort_does_not_touch_portfolio(tmp_path: Path) -> None:
 
 def test_sort_controls_are_wired_in_all_three_views() -> None:
     assert "Sort cards by" in cockpit_ui.PAGE_JS
-    assert "Order by" in cockpit_ui.PAGE_JS
+    assert "Trier par" in cockpit_ui.PAGE_JS
     for handler in ("kanbanSortChange", "kanbanDirChange", "todaySortChange",
                     "readySortChange"):
         assert handler in cockpit_ui.PAGE_JS

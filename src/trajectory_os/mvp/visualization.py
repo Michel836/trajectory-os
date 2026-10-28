@@ -31,6 +31,7 @@ from typing import Any
 from trajectory_os.intelligence import model as intel_model
 from trajectory_os.mvp import (
     calibration,
+    changes,
     model,
     planning,
     scheduler,
@@ -200,6 +201,9 @@ def build_views(root: str | Path, *, today: date | None = None,
         "goal_flow": _build_goal_flow(portfolio, task_objects, records),
         "today_plan": day.to_dict(),
         "today_handoff": today_handoff,
+        "portfolio_health": _portfolio_health(
+            portfolio, readiness_map, today),
+        "changes": changes.recent_changes(root, portfolio),
         "triage": [item.to_dict() for item in triage.suggest(portfolio)],
         "routines": [routine.to_dict() for routine in portfolio.routines],
         "decisions": [decision.to_dict()
@@ -223,6 +227,107 @@ def build_views(root: str | Path, *, today: date | None = None,
         "semantic_colours": uistate.SEMANTIC_COLORS,
         "preferences": prefs.to_dict(),
         "wbs_levels": list(WBS_LEVELS),
+    }
+
+
+# --- portfolio hygiene (read-only attention surface) -------------------------
+
+#: Maximum number of ids exposed per health section (bounded payload).
+HEALTH_LIST_LIMIT = 50
+#: A waiting item older than this is surfaced as an attention signal.
+WAITING_ATTENTION_DAYS = 7
+
+
+def _health_item(kind: str, ref_id: str, title: str,
+                 **extra: Any) -> dict[str, Any]:
+    return {"kind": kind, "ref_id": ref_id, "title": title, **extra}
+
+
+def _age_days(stamp: str, today: date) -> int | None:
+    if not stamp:
+        return None
+    try:
+        parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (today - parsed.date()).days
+
+
+def _portfolio_health(
+    portfolio: model.Portfolio,
+    readiness_map: Mapping[str, readiness_module.TaskReadiness],
+    today: date,
+) -> dict[str, Any]:
+    """Deterministic, read-only hygiene signals for the daily cockpit.
+
+    These are attention signals, never automatic decisions: the human can
+    activate a deferred project, estimate a task or park stale work. Counts
+    are exact; lists are bounded to keep the view payload small.
+    """
+    tasks_by_project: dict[str, list[model.Task]] = defaultdict(list)
+    for task in portfolio.tasks:
+        tasks_by_project[task.project_id].append(task)
+    open_tasks = [task for task in portfolio.tasks
+                  if task.status not in model.TASK_TERMINAL_STATUSES]
+    ready_states = readiness_module.READY_STATES
+
+    deferred_projects = [project for project in portfolio.projects
+                         if project.status == model.PS_DEFERRED]
+    projects_without_open_task = [
+        project for project in portfolio.projects
+        if not any(task.status not in model.TASK_TERMINAL_STATUSES
+                   for task in tasks_by_project.get(project.project_id, ()))]
+    open_without_estimate = [task for task in open_tasks
+                             if not task.estimated_minutes]
+    ready_without_estimate = [
+        task for task in open_tasks
+        if readiness_map[task.task_id].state in ready_states
+        and not task.estimated_minutes]
+    blocked_with_ready = [
+        project for project in portfolio.projects
+        if project.status == model.PS_BLOCKED
+        and any(readiness_map[task.task_id].state in ready_states
+                for task in tasks_by_project.get(project.project_id, ()))]
+    waiting_old = [
+        task for task in open_tasks
+        if readiness_map[task.task_id].state == readiness_module.RS_WAITING
+        and (_age_days(task.updated_at, today) or 0)
+        > WAITING_ATTENTION_DAYS]
+
+    def project_items(projects: Sequence[model.Project]) -> list[dict[str, Any]]:
+        return [
+            _health_item("project", project.project_id, project.name,
+                         status=project.status)
+            for project in projects[:HEALTH_LIST_LIMIT]
+        ]
+
+    def task_items(tasks: Sequence[model.Task]) -> list[dict[str, Any]]:
+        projects = portfolio.project_map()
+        return [
+            _health_item("task", task.task_id, task.title,
+                         project=projects[task.project_id].name,
+                         status=task.status)
+            for task in tasks[:HEALTH_LIST_LIMIT]
+        ]
+
+    return {
+        "waiting_attention_days": WAITING_ATTENTION_DAYS,
+        "counts": {
+            "deferred_projects": len(deferred_projects),
+            "projects_without_open_task": len(projects_without_open_task),
+            "open_tasks_without_estimate": len(open_without_estimate),
+            "ready_tasks_without_estimate": len(ready_without_estimate),
+            "blocked_projects_with_ready_task": len(blocked_with_ready),
+            "waiting_over_attention_days": len(waiting_old),
+        },
+        "deferred_projects": project_items(deferred_projects),
+        "projects_without_open_task": project_items(
+            projects_without_open_task),
+        "open_tasks_without_estimate": task_items(open_without_estimate),
+        "ready_tasks_without_estimate": task_items(ready_without_estimate),
+        "blocked_projects_with_ready_task": project_items(
+            blocked_with_ready),
+        "waiting_over_attention_days": task_items(waiting_old),
     }
 
 

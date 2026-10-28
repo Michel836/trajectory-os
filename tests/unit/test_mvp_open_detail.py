@@ -108,7 +108,7 @@ def test_data_object_id_contract_and_inner_control_guard() -> None:
 
 def test_simple_click_and_open_use_the_same_primitive() -> None:
     # the Inspector exposes an explicit Open action calling openObject(o.id)
-    assert "'+o.id+'\\')\">Open</button>'" in cockpit_ui.PAGE_JS
+    assert '>Ouvrir</button>' in cockpit_ui.PAGE_JS
     assert "openObject(id);return;" in cockpit_ui.PAGE_JS
 
 
@@ -186,8 +186,8 @@ S.tables={projects:{sort:[],filters:{}},tasks:{sort:[],filters:{}}};
 // read-only detail: no editable control, long fields present
 const detail=openObjectHtml(T);
 assert.ok(detail.indexOf('Alpha task')>=0);
-assert.ok(detail.indexOf('Why selected')>=0);
-assert.ok(detail.indexOf('Next action')>=0);
+assert.ok(detail.indexOf('Pourquoi sélectionné')>=0);
+assert.ok(detail.indexOf('Prochaine action')>=0);
 assert.ok(detail.indexOf('<input')<0,'detail must not contain inputs');
 assert.ok(detail.indexOf('<textarea')<0,'detail must not contain textareas');
 const detailP=openObjectHtml(P);

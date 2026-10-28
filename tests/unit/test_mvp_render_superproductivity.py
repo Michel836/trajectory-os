@@ -29,9 +29,9 @@ def test_render_html_is_complete(tmp_path: object) -> None:
     html = render.render_html(_cockpit(tmp_path))
     assert html.startswith("<!doctype html>")
     assert "</html>" in html
-    assert "Today" in html
-    assert "Blocked / waiting" in html
-    assert "Projects" in html
+    assert "Aujourd’hui" in html
+    assert "Bloqué / en attente" in html
+    assert "Projets" in html
 
 
 def test_sp_document_shape(tmp_path: object) -> None:

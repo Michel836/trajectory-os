@@ -36,6 +36,9 @@ from trajectory_os.mvp import (
     outcomes,
     store,
 )
+from trajectory_os.mvp import (
+    changes as changes_module,
+)
 
 #: Serialize in-process portfolio mutations. The local cockpit server is
 #: threaded, so two read-modify-write requests could otherwise lose an update.
@@ -189,6 +192,26 @@ def _updated_at(portfolio: model.Portfolio) -> str:
     return _now()
 
 
+def _journal(root: str | Path, *, kind: str, object_kind: str,
+             object_id: str, title: str, summary: str,
+             before: Mapping[str, Any] | None = None,
+             after: Mapping[str, Any] | None = None,
+             source: str = "human", undoable: bool = False,
+             at: str = "") -> None:
+    """Best-effort change journaling after a canonical write.
+
+    A journal failure must never turn a successful, already-persisted human
+    action into an error. The portfolio remains authoritative.
+    """
+    try:
+        changes_module.append_change(
+            root, kind=kind, object_kind=object_kind, object_id=object_id,
+            title=title, summary=summary, before=before, after=after,
+            source=source, undoable=undoable, at=at)
+    except (OSError, changes_module.ChangeError):
+        return
+
+
 # --- project mutations --------------------------------------------------------
 
 
@@ -235,6 +258,11 @@ def create_project(root: str | Path,
         updated_at=_updated_at(portfolio),
     ).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_CREATE,
+             object_kind=changes_module.OBJECT_PROJECT,
+             object_id=project_id, title=name, summary="projet créé",
+             after={"name": name, "status": project.status},
+             at=new_portfolio.updated_at)
     return {"project_id": project_id, "name": name}
 
 
@@ -263,6 +291,12 @@ def update_project(root: str | Path, project_id: str,
     new_portfolio = replace(portfolio, projects=new_projects,
                             updated_at=_updated_at(portfolio)).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_PROJECT,
+             object_id=project_id, title=updated.name,
+             summary="projet mis à jour",
+             before={key: getattr(current, key) for key in changes},
+             after={key: getattr(updated, key) for key in changes})
     return {"project_id": project_id, "status": updated.status}
 
 
@@ -304,6 +338,12 @@ def park_project(root: str | Path, project_id: str,
     new_portfolio = replace(portfolio, projects=new_projects,
                             updated_at=_updated_at(portfolio)).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_PROJECT,
+             object_id=project_id, title=updated.name,
+             summary="projet parqué" if updated.parked else "projet activé",
+             before={"status": projects[project_id].status},
+             after={"status": updated.status})
     return {"project_id": project_id, "status": updated.status,
             "parked": updated.parked}
 
@@ -359,6 +399,17 @@ def promote_task(root: str | Path, task_id: str,
         portfolio, projects=portfolio.projects + (project,), tasks=new_tasks,
         updated_at=stamp).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_CREATE,
+             object_kind=changes_module.OBJECT_PROJECT,
+             object_id=project_id, title=name,
+             summary="projet créé par promotion",
+             after={"name": name, "status": project.status})
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_TASK,
+             object_id=task_id, title=task.title,
+             summary="tâche promue en projet",
+             before={"project_id": task.project_id},
+             after={"project_id": project_id})
     return {"task_id": task_id, "project_id": project_id, "name": name,
             "previous_project_id": task.project_id}
 
@@ -412,6 +463,12 @@ def demote_project(root: str | Path, project_id: str,
         portfolio, projects=new_projects, tasks=tuple(new_tasks),
         updated_at=stamp).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_PROJECT,
+             object_id=project_id, title=current.name,
+             summary=f"projet fusionné dans {target}",
+             before={"status": current.status},
+             after={"status": "REMOVED", "target_project_id": target})
     return {"project_id": project_id, "target_project_id": target,
             "moved_tasks": moved}
 
@@ -826,6 +883,11 @@ def create_task(root: str | Path,
         updated_at=stamp,
     ).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_CREATE,
+             object_kind=changes_module.OBJECT_TASK, object_id=task_id,
+             title=title, summary="tâche créée",
+             after={"title": title, "project_id": project_id,
+                    "status": task.status}, at=stamp)
     return {"task_id": task_id, "project_id": project_id}
 
 
@@ -860,6 +922,11 @@ def apply_calibrated_estimate(root: str | Path,
     new_portfolio = replace(portfolio, tasks=new_tasks,
                             updated_at=stamp).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_TASK, object_id=task_id,
+             title=task.title, summary="estimation calibrée",
+             before={"estimated_minutes": task.estimated_minutes},
+             after={"estimated_minutes": adjusted}, at=stamp)
     return {
         "task_id": task_id,
         "previous_minutes": task.estimated_minutes,
@@ -916,6 +983,12 @@ def update_task(root: str | Path, task_id: str,
                             updated_at=_updated_at(portfolio)).validate()
 
     store.save_portfolio(root, candidate)
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_TASK, object_id=task_id,
+             title=updated.title, summary="tâche mise à jour",
+             before={key: getattr(current, key) for key in changes},
+             after={key: getattr(updated, key) for key in changes},
+             at=candidate.updated_at)
     return {"task_id": task_id, "status": updated.status}
 
 

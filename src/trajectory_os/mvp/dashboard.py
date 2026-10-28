@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, urlparse
 
 from trajectory_os.mvp import (
     capture,
+    changes,
     document,
     engine,
     enrichment,
@@ -71,6 +72,16 @@ class Dashboard:
 
     def record(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         return _record_outcome(self.root, payload)
+
+    def undo_outcome(self, task_id: str) -> dict[str, Any]:
+        return outcomes.undo_last(self.root, task_id=task_id)
+
+    def changes(self, limit: int = 50, since: str = "") -> dict[str, Any]:
+        return {"changes": changes.recent_changes(
+            self.root, self.portfolio(), limit=limit, since=since)}
+
+    def rederive_projects(self) -> dict[str, Any]:
+        return outcomes.rederive_project_statuses(self.root)
 
     # --- visual execution layer ----------------------------------------------
 
@@ -735,6 +746,15 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 if parts == ["api", "review"]:
                     self._send_json(HTTPStatus.OK, app.end_of_day_review())
                     return
+                if parts == ["api", "changes"]:
+                    query = parse_qs(urlparse(self.path).query)
+                    limit = (self._query_int("limit")
+                             if "limit" in query else 50)
+                    since = query.get("since", [""])[0]
+                    self._send_json(
+                        HTTPStatus.OK,
+                        {"status": "OK", **app.changes(limit, since)})
+                    return
                 if parts == ["api", "preferences"]:
                     self._send_json(
                         HTTPStatus.OK,
@@ -881,6 +901,8 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.delete_decision(parts[2])
             if len(parts) == 3 and parts[:2] == ["api", "decisions"]:
                 return app.update_decision(parts[2], payload)
+            if parts == ["api", "projects", "rederive"]:
+                return app.rederive_projects()
             if parts == ["api", "projects"]:
                 return app.create_project(payload)
             if len(parts) == 4 and parts[:2] == ["api", "projects"] \
@@ -899,6 +921,9 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
             if len(parts) == 4 and parts[:2] == ["api", "tasks"] \
                     and parts[3] == "calibrate":
                 return app.calibrate_task(parts[2])
+            if len(parts) == 5 and parts[:2] == ["api", "tasks"] \
+                    and parts[3] == "outcome" and parts[4] == "undo":
+                return app.undo_outcome(parts[2])
             if len(parts) == 4 and parts[:2] == ["api", "tasks"] \
                     and parts[3] == "outcome":
                 outcome_payload = dict(payload)

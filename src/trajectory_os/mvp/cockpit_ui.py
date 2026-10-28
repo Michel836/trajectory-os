@@ -43,9 +43,12 @@ header button.primary{background:#0e6fd8;border-color:#0e6fd8}
 #viewbar{display:flex;flex-wrap:wrap;gap:.3rem;padding:.5rem 1rem;
 background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;
 z-index:20}
+#subviewbar{display:flex;flex-wrap:wrap;gap:.3rem;padding:.35rem 1rem;
+background:#f7f9fc;border-bottom:1px solid var(--line);position:sticky;
+top:41px;z-index:20;font-size:.85rem}
 #controls{display:flex;flex-wrap:wrap;gap:.3rem .7rem;align-items:center;
 padding:.35rem 1rem;background:#eef2f7;border-bottom:1px solid var(--line);
-position:sticky;top:41px;z-index:19;font-size:.85rem}
+position:sticky;top:78px;z-index:19;font-size:.85rem}
 #controls .ctl{display:flex;flex-wrap:nowrap;align-items:center;
 gap:.3rem;min-width:0;flex:0 1 auto}
 #controls label{color:var(--muted);font-size:.75rem;text-transform:uppercase;
@@ -60,7 +63,7 @@ border-radius:6px;background:#fff;width:auto;max-width:16rem}
 .5rem;font-size:.75rem;background:#fff;cursor:pointer}
 .chip-toggle.on{background:#0b5cad;color:#fff;border-color:#0b5cad}
 #layout{display:flex;align-items:stretch;gap:0;
-height:calc(100vh - 132px);--inspector-width:420px}
+height:calc(100vh - 169px);--inspector-width:420px}
 #view-root{flex:1 1 auto;min-width:0;overflow:auto;padding:1rem}
 #inspector{flex:0 0 auto;width:var(--inspector-width);min-width:0;
 background:#fff;border-left:1px solid var(--line);display:flex;
@@ -515,14 +518,77 @@ const VIEWS = [
   ['list','List'],['kanban','Kanban'],['wbs','WBS'],['graph','Dependency Graph'],
   ['gantt','Gantt'],['eisenhower','Eisenhower'],['impact_effort','Impact / Effort'],
   ['portfolio_map','Portfolio Map'],['treemap','Treemap'],['progress','Progress'],
-  ['heatmap','Heatmap'],['goal_flow','Goal Flow'],['focus','Focus']
+  ['heatmap','Heatmap'],['goal_flow','Goal Flow'],['focus','Focus'],
+  ['changes','Changes']
 ];
+// Four durable workspaces instead of a 20-button wall. Internal view keys are
+// unchanged (routes, preferences and tests keep working); only the visible
+// structure and labels change. All views remain reachable in <= 2 clicks.
+const WORKSPACES = [
+  {id:'today', label:'Aujourd’hui', views:['today','focus','ready']},
+  {id:'entry', label:'Entrée', views:['inbox','waiting','decisions']},
+  {id:'portfolio', label:'Portefeuille',
+   views:['list','kanban','wbs','graph','gantt','eisenhower',
+          'impact_effort','portfolio_map','treemap']},
+  {id:'review', label:'Revue',
+   views:['week','tomorrow','progress','heatmap','goal_flow','changes']}
+];
+const ADVANCED_VIEWS = {
+  portfolio:['graph','gantt','eisenhower','impact_effort','portfolio_map',
+             'treemap'],
+  review:['heatmap','goal_flow']
+};
+const FR = {
+  'Today':'Aujourd’hui','Inbox':'Entrée','Waiting':'En attente',
+  'Decisions':'Décisions','Ready':'Prêt','Tomorrow':'Demain','Week':'Semaine',
+  'List':'Liste','Kanban':'Kanban','WBS':'WBS',
+  'Dependency Graph':'Graphe de dépendances','Gantt':'Gantt',
+  'Eisenhower':'Eisenhower','Impact / Effort':'Impact / effort',
+  'Portfolio Map':'Carte du portefeuille','Treemap':'Treemap',
+  'Progress':'Progression','Heatmap':'Activité','Goal Flow':'Flux d’objectifs',
+  'Focus':'Focus','TODO':'À faire','IN_PROGRESS':'En cours','READY':'Prêt',
+  'WAITING':'En attente','BLOCKED':'Bloqué','DEFERRED':'Reporté',
+  'COMPLETED':'Terminé','ABANDONED':'Abandonné','ACTIVE':'Actif',
+  'IDEA':'Idée','SOMEDAY':'Un jour','DONE':'Terminé',
+  'PROJECT_CLOSED':'Projet fermé','PENDING':'En attente','ACCEPTED':'Accepté',
+  'REJECTED':'Rejeté','FACT':'Fait','INFERRED':'Déduit',
+  'SUGGESTED':'Suggéré','UNKNOWN':'Inconnu','MAIN':'Principal',
+  'Changes':'Changements','OUTCOME':'Résultat','CREATE':'Création',
+  'UPDATE':'Mise à jour','UNDO':'Annulation','IMPORT':'Import',
+  'CAPTURE':'Capture','new_task':'nouvelle tâche',
+  'possible_project':'projet possible','possible_idea':'idée possible',
+  'existing_project':'projet existant','existing_task':'tâche existante',
+  'duplicate':'doublon','ambiguous':'ambigu',
+  'OPTIONAL':'Optionnel','Project':'Projet','Task':'Tâche','Domain':'Domaine',
+  'Status':'Statut','Urgency':'Urgence','Impact':'Impact',
+  'Effort':'Effort','Priority':'Priorité','Deadline':'Échéance',
+  'Description':'Description','Title':'Titre','day off':'jour off',
+  'no events':'aucun événement','Type':'Type','Area / domain':'Domaine',
+  'Workstream':'Flux de travail','Work package':'Lot de travail',
+  'Readiness':'Prêt','Why':'Pourquoi','Estimated':'Estimé','Actual':'Réel',
+  'Planned vs actual':'Prévu vs réel',
+  'Estimation error':'Erreur d’estimation',
+  'Next action':'Prochaine action','Prerequisites':'Prérequis',
+  'Dependencies':'Dépendances','Suggested deps':'Dépendances suggérées',
+  'Blockers':'Blocages','Waiting for':'En attente de','Downstream':'Aval',
+  'Deliverables':'Livrables','Notes':'Notes','Outcomes':'Résultats',
+  'Provenance':'Provenance','Confidence':'Confiance',
+  'Why selected':'Pourquoi sélectionné','Notes / description':'Notes / description'
+};
+function t(value){const key=String(value==null?'':value);return FR[key]||key;}
+function viewLabel(view){for(let i=0;i<VIEWS.length;i++){
+  if(VIEWS[i][0]===view)return t(VIEWS[i][1]);}return view;}
+function workspaceOf(view){for(let i=0;i<WORKSPACES.length;i++){
+  if(WORKSPACES[i].views.indexOf(view)>=0)return WORKSPACES[i];}
+  return WORKSPACES[0];}
+function isAdvancedView(workspaceId,view){const list=ADVANCED_VIEWS[workspaceId];
+  return !!(list&&list.indexOf(view)>=0);}
 const KANBAN_TASK = ['TODO','IN_PROGRESS','READY','WAITING','BLOCKED','DONE','DEFERRED'];
 const KANBAN_PROJECT = ['ACTIVE','WAITING','BLOCKED','DEFERRED','COMPLETED','IDEA','SOMEDAY'];
 const S = {
   views:null, cockpit:null,
-  view:'list', selection:null, filters:{scope:'all',scope_id:null,level:'all',
-    status:[],evidence:[]},
+  view:'today', showAdvanced:false, selection:null,
+  filters:{scope:'all',scope_id:null,level:'all',status:[],evidence:[]},
   search:'', activeSavedView:'',
   capture:null, exportSelection:{}, exportPreview:null,
   tables:normaliseTables(null),
@@ -607,9 +673,19 @@ async function toggleDayOff(day,off){
   try{await api('/api/calendar/day-off','POST',{day:day,off:off==='true'});
     await refresh();}catch(err){notice(err.message);}}
 function pill(text,cls){return '<span class="pill '+(cls||'')+'">'+
-  esc(text)+'</span>';}
-function notice(msg){const el=$('notice');el.textContent=msg||'';
-  if(msg)setTimeout(function(){if(el.textContent===msg)el.textContent='';},7000);}
+  esc(t(text))+'</span>';}
+function doneButton(o){
+  if(!o||o.kind!=='task'||o.status==='COMPLETED'||o.status==='ABANDONED')
+    return '';
+  return ' <button class="small" data-no-open title="Marquer comme terminé" '+
+    'onclick="event.stopPropagation();completeOutcome(\''+esc(o.ref_id)+
+    '\')">✓</button>';}
+function notice(msg,actions){const el=$('notice');
+  el.innerHTML=esc(msg||'')+(actions||[]).map(function(a){
+    return ' <button class="small" onclick="'+a.onclick+'">'+
+      esc(a.label)+'</button>';}).join('');
+  if(msg)setTimeout(function(){if(el.textContent.indexOf(msg)===0)el.innerHTML='';},
+    12000);}
 async function api(path,method,body){const opts={method:method||'GET',headers:{}};
   if(body!==undefined){opts.headers['Content-Type']='application/json';
     opts.body=JSON.stringify(body);}
@@ -650,7 +726,10 @@ function persistPrefs(patch){Object.assign(S.prefs,patch);
 function applyPrefs(p){if(!p)return;S.prefs=p;
   S.filters=Object.assign({scope:'all',scope_id:null,level:'all',
     status:[],evidence:[]},p.filters||{});
-  S.view=p.view||S.view;S.tables=normaliseTables(p.tables);
+  S.view=p.view||S.view;
+  const ws=workspaceOf(S.view);
+  S.showAdvanced=isAdvancedView(ws.id,S.view);
+  S.tables=normaliseTables(p.tables);
   S.selection=p.selected||null;
   S.kanbanSort=p.kanban_sort||'default';
   S.kanbanSortDir=p.kanban_sort_direction||'default';
@@ -659,7 +738,7 @@ function applyPrefs(p){if(!p)return;S.prefs=p;
   S.tomorrowSort=p.tomorrow_sort||'planned';
   S.weekSort=p.week_sort||'manual';}
 var VIEW_SEQ=0;
-async function refresh(){
+async function refresh(opts){
   const seq=++VIEW_SEQ;
   try{
     const res=await api('/api/views');
@@ -670,7 +749,9 @@ async function refresh(){
     applyPrefs(res.preferences);
     reconcileSelection();
     initPlanningDrafts();
-    renderAll();notice('');
+    renderAll();
+    if(!opts||!opts.keepNotice)notice('');
+    if(opts&&opts.notice)notice(opts.notice,opts.actions);
   }catch(err){notice(err.message);}
 }
 // Planning drafts start empty unless a plan already exists for the exact
@@ -809,7 +890,8 @@ function reconcileTableSelection(kind){
   for(let i=0;i<visible.length;i++){
     if(visible[i].id===S.selection)return false;}
   S.selection=null;S.inspectorEdit=null;renderInspector();return true;}
-function setView(v){S.view=v;persistPrefs({view:v});renderAll();}
+function setView(v){S.view=v;S.showAdvanced=false;persistPrefs({view:v});renderAll();}
+function toggleAdvanced(){S.showAdvanced=!S.showAdvanced;renderViewBar();}
 // Presentation-only ordering controls (Kanban / Today / Ready). The chosen
 // key is persisted in ui_state.json and never reorders portfolio data.
 var KANBAN_SORT_OPTIONS=[['default','Default'],['priority','Priority'],
@@ -844,9 +926,29 @@ function selectObject(id){S.selection=id;
   persistPrefs({selected:id});renderAll();}
 function renderAll(){renderViewBar();renderControls();renderSummary();
   renderView();renderInspector();}
-function renderViewBar(){$('viewbar').innerHTML=VIEWS.map(function(v){
-  return '<button class="small '+(S.view===v[0]?'active':'')+
-  '" onclick="setView(\''+v[0]+'\')">'+esc(v[1])+'</button>';}).join('');}
+function renderViewBar(){
+  const ws=workspaceOf(S.view);
+  $('viewbar').innerHTML=WORKSPACES.map(function(w){
+    return '<button class="small '+(ws.id===w.id?'active':'')+
+      '" onclick="setView(\''+w.views[0]+'\')">'+esc(w.label)+'</button>';
+  }).join('');
+  const sub=$('subviewbar');
+  if(!sub)return;
+  const advanced=(ADVANCED_VIEWS[ws.id]||[]);
+  const showAdvanced=S.showAdvanced||advanced.indexOf(S.view)>=0;
+  let h=ws.views.filter(function(v){return advanced.indexOf(v)<0;}).map(
+    function(v){return '<button class="small '+(S.view===v?'active':'')+
+      '" onclick="setView(\''+v+'\')">'+esc(viewLabel(v))+'</button>';
+    }).join('');
+  if(advanced.length){
+    h+='<button class="small ghost" onclick="toggleAdvanced()">'+
+      (showAdvanced?'Moins ▴':'Plus ▾')+'</button>';
+    if(showAdvanced){h+='<span class="muted">Avancé :</span>'+
+      advanced.map(function(v){return '<button class="small '+
+        (S.view===v?'active':'')+'" onclick="setView(\''+v+'\')">'+
+        esc(viewLabel(v))+'</button>';}).join('');}
+  }
+  sub.innerHTML=h;}
 function chipToggle(group,value){
   const arr=S.filters[group].slice();const i=arr.indexOf(value);
   if(i<0)arr.push(value);else arr.splice(i,1);S.filters[group]=arr;
@@ -858,10 +960,10 @@ function renderControls(){
   const projects=objects().filter(function(o){return o.kind==='project';});
   const scopeOpts=domains.map(function(d){return '<option value="d:'+esc(d)+
     '"'+((S.filters.scope==='domain'&&S.filters.scope_id===d)?' selected':'')+
-    '>domain: '+esc(d)+'</option>';}).concat(projects.map(function(p){
+    '>domaine : '+esc(d)+'</option>';}).concat(projects.map(function(p){
     return '<option value="p:'+esc(p.project_id)+'"'+
     ((S.filters.scope==='project'&&S.filters.scope_id===p.project_id)?
-      ' selected':'')+'>project: '+esc(p.title)+'</option>';})).join('');
+      ' selected':'')+'>projet : '+esc(p.title)+'</option>';})).join('');
   const statusList=['ACTIVE','READY','TODO','IN_PROGRESS','WAITING','BLOCKED',
     'DEFERRED','DONE'];
   const evList=['FACT','INFERRED','SUGGESTED','UNKNOWN'];
@@ -872,40 +974,42 @@ function renderControls(){
     function(c){return '<option'+(S.prefs.color_by===c?' selected':'')+'>'+
     c+'</option>';}).join('');
   $('controls').innerHTML=
-    '<span class="ctl"><label>Scope</label>'+
+    '<span class="ctl"><label>Portée</label>'+
     '<select id="f-scope" onchange="scopeChange()">'+
-    '<option value="">All</option>'+scopeOpts+'</select></span>'+
-    '<span class="ctl"><label>Level</label>'+
+    '<option value="">Tout</option>'+scopeOpts+'</select></span>'+
+    '<span class="ctl"><label>Niveau</label>'+
     '<select id="f-level" onchange="levelChange()">'+
-    ['all','projects','tasks'].map(function(l){return '<option value="'+l+'"'+
-      (S.filters.level===l?' selected':'')+'>'+l+'</option>';}).join('')+
+    ['all','projects','tasks'].map(function(l){
+      const label={all:'Tout',projects:'Projets',tasks:'Tâches'}[l]||l;
+      return '<option value="'+l+'"'+
+        (S.filters.level===l?' selected':'')+'>'+label+'</option>';}).join('')+
     '</select></span>'+
-    '<span class="ctl"><label>Colour by</label>'+
+    '<span class="ctl"><label>Couleur par</label>'+
     '<select id="f-colour" onchange="colourChange()">'+colourOpts+
     '</select></span>'+
-    '<span class="ctl"><label>Density</label>'+
+    '<span class="ctl"><label>Densité</label>'+
     '<select id="f-density" onchange="densityChange()">'+densityOpts+
     '</select></span>'+
-    '<span class="ctl"><label>Status</label><div class="chips">'+
+    '<span class="ctl"><label>Statut</label><div class="chips">'+
     statusList.map(function(s){
       return '<span class="chip-toggle'+(S.filters.status.indexOf(s)>=0?
         ' on':'')+'" onclick="chipToggle(\'status\',\''+s+'\')">'+s+
         '</span>';}).join('')+'</div></span>'+
-    '<span class="ctl"><label>Evidence</label><div class="chips">'+
+    '<span class="ctl"><label>Preuve</label><div class="chips">'+
     evList.map(function(e){
       return '<span class="chip-toggle'+(S.filters.evidence.indexOf(e)>=0?
         ' on':'')+'" onclick="chipToggle(\'evidence\',\''+e+'\')">'+e+
         '</span>';}).join('')+'</div></span>'+
-    '<span class="ctl"><label>Search</label>'+
+    '<span class="ctl"><label>Recherche</label>'+
     '<input id="f-search" class="inline" type="search" '+
-    'placeholder="projects &amp; tasks…" value="'+esc(S.search)+'" '+
+    'placeholder="projets et tâches…" value="'+esc(S.search)+'" '+
     'style="min-width:170px" oninput="searchInput(this.value)"></span>'+
-    '<span class="ctl"><label>Saved view</label>'+
+    '<span class="ctl"><label>Vue enregistrée</label>'+
     '<select id="f-saved" onchange="savedViewChange()">'+
     savedViewOptions()+'</select>'+
-    '<button class="small" onclick="saveCurrentView()">Save</button>'+
-    '<button class="small" onclick="renameCurrentView()">Rename</button>'+
-    '<button class="small" onclick="deleteCurrentView()">Delete</button>'+
+    '<button class="small" onclick="saveCurrentView()">Enregistrer</button>'+
+    '<button class="small" onclick="renameCurrentView()">Renommer</button>'+
+    '<button class="small" onclick="deleteCurrentView()">Supprimer</button>'+
     '</span>';
 }
 function searchInput(v){S.search=v||'';reconcileSelection();renderView();
@@ -985,8 +1089,8 @@ function renderView(){
     gantt:renderGantt,eisenhower:renderEisenhower,impact_effort:renderImpactEffort,
     portfolio_map:renderPortfolioMap,treemap:renderTreemap,progress:renderProgress,
     heatmap:renderHeatmap,goal_flow:renderGoalFlow,focus:renderFocus,
-    inbox:renderInbox,waiting:renderWaiting,decisions:renderDecisions}[S.view]
-    ||renderList;
+    inbox:renderInbox,waiting:renderWaiting,decisions:renderDecisions,
+    changes:renderChanges}[S.view]||renderList;
   fn();
 }
 function card(o,extra){
@@ -1106,7 +1210,7 @@ function tableHeaderCell(kind,col){
   return '<th class="'+col.cls+(sorted?' sorted':'')+'" '+
     'onclick="tableHeaderClick(\''+kind+'\',\''+col.key+'\',event)" '+
     'title="Click to sort · Shift+click to add a secondary sort">'+
-    esc(col.label)+tableSortIndicator(kind,col.key)+'</th>';}
+    esc(t(col.label))+tableSortIndicator(kind,col.key)+'</th>';}
 function tableUnique(rows,fn){
   const seen={};const out=[];
   rows.forEach(function(o){const v=fn(o);
@@ -1162,7 +1266,7 @@ function tableFilterControl(kind,col,base){
 function tableCell(kind,column,o){
   switch(column){
     case 'title':return '<span class="swatch" style="background:'+
-      colourOf(o)+'"></span> '+esc(o.title);
+      colourOf(o)+'"></span> '+esc(o.title)+(kind==='tasks'?doneButton(o):'');
     case 'project':return esc(o.project);
     case 'domain':return esc(o.domain);
     case 'status':return pill(tableDisplayStatus(o.status),
@@ -1193,7 +1297,7 @@ function tableRowHtml(kind,cols,o){
         tableCell(kind,c.key,o)+'</td>';}).join('')+'</tr>';}
 function tableBodyHtml(kind,cols,rows){
   if(!rows.length)return '<tr><td class="grid-empty" colspan="'+
-    cols.length+'">no rows match the filters</td></tr>';
+    cols.length+'">aucune ligne ne correspond aux filtres</td></tr>';
   return rows.map(function(o){return tableRowHtml(kind,cols,o);}).join('');}
 function renderGrid(kind){
   const cols=tableColumns(kind);
@@ -1205,14 +1309,14 @@ function renderGrid(kind){
     return st.filters[k]!==''&&st.filters[k]!=null;});
   const hasSort=st.sort.length>0;
   let h='<div class="table-tools"><span class="count" id="grid-count-'+
-    kind+'">'+rows.length+' of '+base.length+' row(s)</span>'+
+    kind+'">'+rows.length+' sur '+base.length+' ligne(s)</span>'+
     '<span class="spacer"></span>'+
     '<button class="small" onclick="tableClearFilters(\''+kind+'\')"'+
-    (hasFilters?'':' disabled')+'>Clear filters</button>'+
+    (hasFilters?'':' disabled')+'>Effacer les filtres</button>'+
     '<button class="small" onclick="tableClearSort(\''+kind+'\')"'+
-    (hasSort?'':' disabled')+'>Clear sort</button>'+
+    (hasSort?'':' disabled')+'>Effacer le tri</button>'+
     '<button class="small" onclick="tableReset(\''+kind+'\)">'+
-    'Reset table</button></div>';
+    'Réinitialiser</button></div>';
   h+='<div class="grid-wrap" id="grid-'+kind+'"><table class="grid-table">'+
     '<colgroup>'+cols.map(function(c){
       return '<col style="width:'+c.width+'">';}).join('')+'</colgroup>'+
@@ -1232,16 +1336,16 @@ function renderTableBody(kind){
   const rows=tableRows(kind);
   el.innerHTML=tableBodyHtml(kind,cols,rows);
   const count=document.getElementById('grid-count-'+kind);
-  if(count)count.textContent=rows.length+' of '+
-    tableBaseRows(kind).length+' row(s)';}
+  if(count)count.textContent=rows.length+' sur '+
+    tableBaseRows(kind).length+' ligne(s)';}
 function renderList(){
-  let h='<div class="legend"><span>Colour: '+esc(S.prefs.color_by)+
+  let h='<div class="legend"><span>Couleur : '+esc(t(S.prefs.color_by))+
     '</span><span><span class="swatch" style="background:#2ca02c"></span> '+
-    'status badge</span><span>personal highlight overlay</span></div>';
+    'badge de statut</span><span>surlignage personnel</span></div>';
   if(S.filters.level!=='tasks'){
-    h+='<h2>Projects</h2>'+renderGrid('projects');}
+    h+='<h2>Projets</h2>'+renderGrid('projects');}
   if(S.filters.level!=='projects'){
-    h+='<h2>Tasks</h2>'+renderGrid('tasks');}
+    h+='<h2>Tâches</h2>'+renderGrid('tasks');}
   if(!filtered().length)h+='<p class="muted">no objects match the global '+
     'filters</p>';
   $('view-root').innerHTML=h;}
@@ -1312,7 +1416,8 @@ function renderKanban(){
       'ondragstart="dragStart(event,\''+o.id+'\')" '+
       'style="border-left:4px solid '+colourOf(o)+'" '+
       'data-object-id="'+o.id+'" '+
-      'onclick="selectObject(\''+o.id+'\')">'+cardBody(o)+'</div>';}).join('');
+      'onclick="selectObject(\''+o.id+'\')">'+cardBody(o)+
+      (mode==='tasks'?doneButton(o):'')+'</div>';}).join('');
     h+='</div>';});
   h+='</div>';$('view-root').innerHTML=h;}
 function dragStart(e,id){e.dataTransfer.setData('text/plain',id);}
@@ -1836,7 +1941,7 @@ function renderInspector(){
     if(density==='normal'&&catalog.filter(function(a){return a.key===key&&
       a.density==='detailed';}).length)return '';
     if(value==null||value===''||(Array.isArray(value)&&!value.length))return '';
-    return '<dt>'+esc(label)+'</dt><dd>'+value+'</dd>';}
+    return '<dt>'+esc(t(label))+'</dt><dd>'+value+'</dd>';}
   let h='';
   h+='<div class="card" style="border-left:5px solid '+colourOf(o)+'">'+
     '<strong>'+esc(o.title)+'</strong><div class="muted">'+
@@ -1888,46 +1993,46 @@ function renderInspector(){
   h+='</dl>';
   h+='<div class="actions">';
   if(isTask(o)){h+='<button class="small primary" onclick="completeOutcome(\''+
-    o.ref_id+'\')">Done…</button>'+
+    o.ref_id+'\')">Terminé…</button>'+
     '<button class="small" onclick="openOutcomeForm(\''+
-    o.ref_id+'\')">Record outcome…</button>'+
+    o.ref_id+'\')">Enregistrer un résultat…</button>'+
     '<button class="small" onclick="promoteTask(\''+o.ref_id+
-    '\')">Promote</button>'+
+    '\')">Promouvoir</button>'+
     '<button class="small" onclick="calibrateTask(\''+o.ref_id+
-    '\')">Calibrate…</button>'+
+    '\')">Calibrer…</button>'+
     '<button class="small" onclick="recordOutcome(\''+o.ref_id+
-    '\',\'BLOCKED\')">Block</button>'+
+    '\',\'BLOCKED\')">Bloquer</button>'+
     '<button class="small" onclick="recordOutcome(\''+o.ref_id+
-    '\',\'DEFERRED\')">Defer</button>'+
+    '\',\'DEFERRED\')">Reporter</button>'+
     '<button class="small" onclick="mutateTask(\''+o.ref_id+
-    '\',{status:\'TODO\'})">Reactivate</button>'+
-    '<button class="small" onclick="openObject(\''+o.id+'\')">Open</button>'+
-    '<button class="small" onclick="openTask(\''+o.ref_id+'\')">Edit</button>';}
+    '\',{status:\'TODO\'})">Réactiver</button>'+
+    '<button class="small" onclick="openObject(\''+o.id+'\')">Ouvrir</button>'+
+    '<button class="small" onclick="openTask(\''+o.ref_id+'\')">Modifier</button>';}
   else{h+='<button class="small primary" onclick="mutateProject(\''+
-    o.project_id+'\',{status:\'COMPLETED\'})">Complete</button>'+
+    o.project_id+'\',{status:\'COMPLETED\'})">Terminer</button>'+
     '<button class="small" onclick="parkProject(\''+o.project_id+
-    '\',\'IDEA\')">Idea</button>'+
+    '\',\'IDEA\')">Idée</button>'+
     '<button class="small" onclick="parkProject(\''+o.project_id+
-    '\',\'SOMEDAY\')">Someday</button>'+
+    '\',\'SOMEDAY\')">Un jour</button>'+
     '<button class="small" onclick="demoteProject(\''+o.project_id+
-    '\')">Demote…</button>'+
+    '\')">Rétrograder…</button>'+
     '<button class="small" onclick="mutateProject(\''+o.project_id+
-    '\',{status:\'DEFERRED\'})">Defer</button>'+
+    '\',{status:\'DEFERRED\'})">Reporter</button>'+
     '<button class="small" onclick="mutateProject(\''+o.project_id+
-    '\',{status:\'ACTIVE\'})">Reactivate</button>'+
-    '<button class="small" onclick="openObject(\''+o.id+'\')">Open</button>'+
+    '\',{status:\'ACTIVE\'})">Réactiver</button>'+
+    '<button class="small" onclick="openObject(\''+o.id+'\')">Ouvrir</button>'+
     '<button class="small" onclick="openProjectForm(\''+o.project_id+
-    '\')">Edit</button>'+
+    '\')">Modifier</button>'+
     '<button class="small" onclick="openTaskForm(\''+o.project_id+
-    '\')">Add task</button>'+
+    '\')">Ajouter une tâche</button>'+
     '<button class="small" onclick="runEnrichment(\''+o.project_id+
-    '\',\'next_actions\')">Next actions</button>'+
+    '\',\'next_actions\')">Prochaines actions</button>'+
     '<button class="small" onclick="runEnrichment(\''+o.project_id+
-    '\',\'generate_wbs\')">Generate WBS</button>'+
+    '\',\'generate_wbs\')">Générer le WBS</button>'+
     '<button class="small" onclick="runEnrichment(\''+o.project_id+
-    '\',\'suggest_dependencies\')">Suggest dependencies</button>'+
+    '\',\'suggest_dependencies\')">Suggérer des dépendances</button>'+
     '<button class="small" onclick="runEnrichment(\''+o.project_id+
-    '\',\'suggest_deliverables\')">Suggest deliverables</button>';}
+    '\',\'suggest_deliverables\')">Suggérer des livrables</button>';}
   h+='</div>';
   if(!isTask(o)){h+='<div class="bar"><span class="muted">AI engine:'+
     '</span><select class="inline" id="enr-engine-'+esc(o.project_id)+
@@ -2063,12 +2168,12 @@ function startProjectEdit(pid){
 // in S.views; it never writes anything.
 function detailRow(label,value){
   if(value==null||value==='')return '';
-  return '<dt>'+esc(label)+'</dt><dd>'+esc(value)+'</dd>';}
+  return '<dt>'+esc(t(label))+'</dt><dd>'+esc(value)+'</dd>';}
 function detailList(items){
   return (items||[]).map(function(value){return esc(value);}).join('<br>');}
 function detailBlock(title,html){
   if(!html)return '';
-  return '<section class="detail-block"><h4>'+esc(title)+'</h4>'+
+  return '<section class="detail-block"><h4>'+esc(t(title))+'</h4>'+
     '<div class="body">'+html+'</div></section>';}
 function openObjectHtml(o){
   if(!o)return '';
@@ -2180,17 +2285,35 @@ async function calibrateTask(id){try{
   notice('Calibrated '+res.previous_minutes+'m -> '+res.estimated_minutes+
     'm (x'+res.factor+', '+res.samples+' samples)');
   await refresh();}catch(err){notice(err.message);}}
-async function completeOutcome(id){const o=obj('task:'+id);
-  const hint=(o&&o.estimated_minutes)?' (estimated '+o.estimated_minutes+' min)':'';
-  const raw=prompt('Actual minutes'+hint+' - leave empty to skip:','');
-  if(raw===null)return;const body={outcome:'COMPLETED'};
-  if(raw!==''){const n=parseInt(raw,10);if(!isNaN(n))body.actual_minutes=n;}
-  try{await api('/api/tasks/'+encodeURIComponent(id)+'/outcome','POST',body);
-    await refresh();}catch(err){notice(err.message);}}
+async function completeOutcome(id){
+  try{
+    const res=await api('/api/tasks/'+encodeURIComponent(id)+'/outcome',
+      'POST',{outcome:'COMPLETED'});
+    await refresh({keepNotice:true,
+      notice:'Terminé · projet '+t(res.project_status),
+      actions:[{label:'Annuler',onclick:"undoOutcome('"+id+"')"}]});
+  }catch(err){notice(err.message);}}
+async function rederiveProjects(){
+  if(!confirm('Recalculer les statuts des projets à partir de leurs tâches ?'))
+    return;
+  try{const res=await api('/api/projects/rederive','POST',{});
+    await refresh({keepNotice:true,
+      notice:res.changed+' projet(s) recalculé(s)'});
+  }catch(err){notice(err.message);}}
+async function undoOutcome(id){
+  try{
+    const res=await api('/api/tasks/'+encodeURIComponent(id)+
+      '/outcome/undo','POST',{});
+    await refresh({keepNotice:true,
+      notice:'Annulé · statut restauré : '+t(res.restored_status)});
+  }catch(err){notice(err.message);}}
 async function recordOutcome(id,outcome){const o=obj('task:'+id);
-  if(!confirm('Record '+outcome+' for "'+(o?o.title:id)+'"?'))return;
-  try{await api('/api/tasks/'+encodeURIComponent(id)+'/outcome','POST',
-    {outcome:outcome});await refresh();}catch(err){notice(err.message);}}
+  if(!confirm('Enregistrer '+t(outcome)+' pour « '+(o?o.title:id)+' » ?'))return;
+  try{const res=await api('/api/tasks/'+encodeURIComponent(id)+'/outcome',
+    'POST',{outcome:outcome});
+    await refresh({keepNotice:true,notice:t(outcome)+' enregistré',
+      actions:[{label:'Annuler',onclick:"undoOutcome('"+id+"')"}]});
+  }catch(err){notice(err.message);}}
 async function reloadViewsData(){
   try{const res=await api('/api/views');S.views=res;}
   catch(err){notice(err.message);}}
@@ -2625,7 +2748,7 @@ function impRow(c){const matches=(importState.analysis.matches||[]).filter(
     (canMerge?'<select id="imp-merge-'+c.candidate_id+'">'+
     impProjectOptions(matches[0].matched_project_id)+'</select>':'')+
     '<button class="small" onclick="impToggleEdit(\''+c.candidate_id+
-    '\')">Edit</button>'+
+    '\')">Modifier</button>'+
     '</div></div>';}
 function impToggleEdit(cid){const el=$('imp-edit-'+cid);
   el.style.display=el.style.display==='none'?'':'none';}
@@ -2897,7 +3020,7 @@ function decisionRow(o,rank,reasons){
     '<td onclick="event.stopPropagation()"><input type="checkbox" '+
     'value="'+esc(o.ref_id)+'"'+(S.exportSelection[o.ref_id]?' checked':'')+
     ' onchange="exportPick(\''+o.ref_id+'\',this.checked)"></td>'+
-    '<td>'+(rank||'')+'</td><td>'+esc(o.title)+'</td>'+
+    '<td>'+(rank||'')+'</td><td>'+esc(o.title)+doneButton(o)+'</td>'+
     '<td>'+esc(o.project)+'</td>'+
     '<td>'+pill(o.readiness||uiStatus(o),'badge-'+
       (o.readiness==='READY'||o.readiness==='IN_PROGRESS'?'READY':
@@ -2957,165 +3080,240 @@ function handoffSection(){
     '<th>Why / blocker</th></tr>';
   rows.forEach(function(item,i){h+=handoffRow(item,i+1);});
   return h+'</table></div>';}
+function healthList(items){
+  if(!items||!items.length)return '<span class="muted">aucun</span>';
+  return '<ul>'+items.slice(0,8).map(function(x){
+    return '<li><a onclick="selectObject(\''+esc(x.kind)+':'+esc(x.ref_id)+
+      '\')">'+esc(x.title)+'</a>'+
+      (x.project?' <span class="muted">'+esc(x.project)+'</span>':'')+
+      '</li>';}).join('')+'</ul>';}
+function changeCounts(items){
+  const counts={};items.forEach(function(c){counts[c.kind]=(counts[c.kind]||0)+1;});
+  return Object.keys(counts).map(function(k){
+    return counts[k]+' '+t(k).toLowerCase();}).join(' · ');}
+function changesTodaySummary(){
+  const day=(S.views&&S.views.today)||'';
+  const items=((S.views&&S.views.changes)||[]).filter(function(c){
+    return String(c.at||'').slice(0,10)===day;});
+  if(!items.length)return '';
+  return '<p class="muted">Aujourd’hui : '+esc(changeCounts(items))+
+    ' · <a onclick="setView(\'changes\')">voir le journal</a></p>';}
+function renderHealthCard(){
+  const h=S.views&&S.views.portfolio_health;
+  if(!h||!h.counts)return '';
+  const c=h.counts;
+  return '<details class="card" style="margin:.6rem 0">'+
+    '<summary><strong>Santé du portefeuille</strong> · '+
+    c.deferred_projects+' projet(s) en veille · '+
+    c.open_tasks_without_estimate+' tâche(s) sans estimation · '+
+    c.ready_tasks_without_estimate+' prête(s) sans estimation</summary>'+
+    (c.blocked_projects_with_ready_task?'<p><button class="small primary" '+
+      'onclick="rederiveProjects()">Recalculer les statuts projet ('+
+      c.blocked_projects_with_ready_task+')</button></p>':'')+
+    '<div class="grid2" style="margin-top:.6rem">'+
+    '<div><h4>Projets en veille ('+c.deferred_projects+')</h4>'+
+      healthList(h.deferred_projects)+'</div>'+
+    '<div><h4>Projets sans tâche ouverte ('+
+      c.projects_without_open_task+')</h4>'+
+      healthList(h.projects_without_open_task)+'</div>'+
+    '<div><h4>Tâches prêtes sans estimation ('+
+      c.ready_tasks_without_estimate+')</h4>'+
+      healthList(h.ready_tasks_without_estimate)+'</div>'+
+    '<div><h4>En attente depuis plus de '+h.waiting_attention_days+
+      ' jours ('+c.waiting_over_attention_days+')</h4>'+
+      healthList(h.waiting_over_attention_days)+'</div>'+
+    '</div></details>';}
+function beforeAfter(c){
+  const keys=Object.keys(c.before||{});
+  if(!keys.length)return '—';
+  return keys.map(function(k){
+    return esc(k)+': '+esc(String(c.before[k]))+' → '+
+      esc(String((c.after||{})[k]));}).join(' · ');}
+function renderChanges(){
+  const items=(S.views&&S.views.changes)||[];
+  let h='<h2>Changements</h2><p class="muted">Journal append-only des '+
+    'décisions humaines. Rien n’est réécrit ; une annulation est un nouveau '+
+    'changement.</p>'+(items.length?'<p class="muted">'+esc(changeCounts(items))+
+    '</p>':'');
+  if(!items.length){h+='<p class="muted">Aucun changement enregistré.</p>';}
+  else{
+    h+='<table><tr><th>Quand</th><th>Type</th><th>Objet</th><th>Résumé</th>'+
+      '<th>Avant → après</th><th></th></tr>';
+    items.forEach(function(c){
+      const linked=(c.object_kind==='task'||c.object_kind==='project');
+      const id=c.object_kind+':'+c.object_id;
+      const undo=(c.undoable&&c.kind!=='UNDO'&&c.object_kind==='task')?
+        '<button class="small" onclick="undoOutcome(\''+
+        esc(c.object_id)+'\')">Annuler</button>':'';
+      h+='<tr><td>'+esc(String(c.at||'').replace('T',' ').slice(0,16))+
+        '</td><td>'+pill(c.kind,'')+'</td><td>'+
+        (linked?'<a onclick="selectObject(\''+esc(id)+'\')">'+
+          esc(c.title)+'</a>':esc(c.title))+'</td><td>'+esc(c.summary||'')+
+        '</td><td class="muted">'+beforeAfter(c)+'</td><td>'+undo+
+        '</td></tr>';});
+    h+='</table>';}
+  $('view-root').innerHTML=h;}
 function renderToday(){
   const plan=S.views.today_plan;
-  if(!plan){$('view-root').innerHTML='<p class="muted">no plan</p>';return;}
+  if(!plan){$('view-root').innerHTML='<p class="muted">aucun plan</p>';return;}
   const planned=sortViewItems(plan.planned,S.todaySort);
-  let h='<h2>Today — what to do now, and why</h2>'+
+  let h='<h2>Aujourd’hui — quoi faire maintenant, et pourquoi</h2>'+
     '<p class="muted">'+capacityLabel(plan)+'</p>'+
-    '<div class="bar"><button class="small primary" '+
-    'onclick="openExportPreview()">Preview Super Productivity export</button>'+
-    '<button class="small" onclick="setView(\'tomorrow\')">Plan tomorrow'+
+    changesTodaySummary()+renderHealthCard();
+  h+='<div class="bar"><button class="small primary" '+
+    'onclick="openExportPreview()">Aperçu export Super Productivity</button>'+
+    '<button class="small" onclick="setView(\'tomorrow\')">Planifier demain'+
     '</button>'+
-    '<button class="small" onclick="openReview()">End-of-day review</button>'+
-    '<span class="muted">Order by</span>'+
+    '<button class="small" onclick="openReview()">Bilan de fin de journée</button>'+
+    '<span class="muted">Trier par</span>'+
     sortSelect('today-sort',S.todaySort,ORDER_SORT_OPTIONS,'todaySortChange')+
-    '<span class="muted">select tasks below to hand a deliberate set to '+
-    'Super Productivity</span></div>';
+    '<span class="muted">sélectionnez des tâches ci-dessous pour un envoi '+
+    'délibéré vers Super Productivity</span></div>';
   h+=agendaHtml(plan);
   h+=handoffSection();
-  h+='<h3>Recommended baseline (readiness &amp; priority)</h3>'+
-    '<table><tr><th></th><th>#</th><th>Task</th><th>Project</th>'+
-    '<th>Readiness</th><th>Urgency</th><th>Impact</th><th>Effort</th>'+
-    '<th>Why selected</th></tr>'+
+  h+='<h3>Base recommandée (prêt et priorité)</h3>'+
+    '<table><tr><th></th><th>#</th><th>Tâche</th><th>Projet</th>'+
+    '<th>Prêt</th><th>Urgence</th><th>Impact</th><th>Effort</th>'+
+    '<th>Pourquoi</th></tr>'+
     planned.map(function(item,index){
       return decisionRow(obj('task:'+item.task_id),index+1,item.reasons);
     }).join('')+'</table>';
-  if(!planned.length){h+='<p class="muted">nothing fits in today\'s '+
-    'remaining capacity</p>';}
+  if(!planned.length){h+='<p class="muted">rien ne tient dans la capacité '+
+    'restante aujourd’hui</p>';}
   if((plan.unknown_effort||[]).length){
-    h+='<h3>Ready but effort unknown ('+plan.unknown_effort.length+')</h3>'+
-      '<p class="muted">These can be done but cannot be time-boxed; they are '+
-      'never invented onto the plan.</p><ul>'+
+    h+='<h3>Prêtes mais effort inconnu ('+plan.unknown_effort.length+')</h3>'+
+      '<p class="muted">Elles peuvent être faites mais ne peuvent pas être '+
+      'dimensionnées ; aucun effort n’est inventé.</p><ul>'+
       plan.unknown_effort.map(function(item){return '<li><a onclick="'+
         'selectObject(\'task:'+esc(item.task_id)+'\')">'+esc(item.title)+
         '</a></li>';}).join('')+'</ul>';}
   if((plan.deferred||[]).length){
-    h+='<h3>Deferred past capacity ('+plan.deferred.length+')</h3><ul>'+
+    h+='<h3>Reportées faute de capacité ('+plan.deferred.length+')</h3><ul>'+
       plan.deferred.map(function(item){return '<li><a onclick="'+
         'selectObject(\'task:'+esc(item.task_id)+'\')">'+esc(item.title)+
         '</a></li>';}).join('')+'</ul>';}
-  h+='<p><button class="small" onclick="setView(\'ready\')">See the full '+
-    'Ready / Blocked / Waiting breakdown →</button></p>';
+  h+='<p><button class="small" onclick="setView(\'ready\')">Voir le détail '+
+    'Prêt / Bloqué / En attente →</button></p>';
   $('view-root').innerHTML=h;}
 function ageDaysText(iso){if(!iso)return '—';
   const d=new Date(iso);if(isNaN(d.getTime()))return '—';
   const days=Math.floor((Date.now()-d.getTime())/86400000);
-  return days<=0?'today':(days===1?'1 day':days+' days');}
+  return days<=0?'aujourd’hui':(days===1?'1 jour':days+' jours');}
 async function chaseWaiting(id){const t=obj('task:'+id);if(!t)return;
   try{await api('/api/tasks','POST',{project_id:t.project_id,
-    title:'Chase: '+t.title,allow_duplicate:true,
+    title:'Relancer : '+t.title,allow_duplicate:true,
     description:'Follow-up on waiting item: '+(t.waiting_for||[]).join(', ')});
     notice('Follow-up created');await refresh();}catch(err){notice(err.message);}}
 function renderWaiting(){
   const items=objects().filter(function(o){return o.kind==='task'&&
     (((o.waiting_for||[]).length)||o.readiness==='WAITING');});
-  let h='<h2>Waiting &amp; follow-ups</h2><p class="muted">'+items.length+
-    ' item(s) waiting on someone or something. Age is since the last change.</p>';
-  if(!items.length){h+='<p class="muted">Nothing is waiting.</p>';}
-  else{h+='<table><tr><th>Task</th><th>Project</th><th>Waiting for</th>'+
-    '<th>Since</th><th></th></tr>'+items.map(function(o){return '<tr><td><a '+
-    'onclick="selectObject(\''+o.id+'\')">'+esc(o.title)+'</a></td><td>'+
+  let h='<h2>En attente et relances</h2><p class="muted">'+items.length+
+    ' élément(s) en attente d’une personne ou d’une chose. L’âge part du dernier changement.</p>';
+  if(!items.length){h+='<p class="muted">Rien n’est en attente.</p>';}
+  else{h+='<table><tr><th>Tâche</th><th>Projet</th><th>En attente de</th>'+
+    '<th>Depuis</th><th></th></tr>'+items.map(function(o){return '<tr><td><a '+
+    'onclick="selectObject(\''+o.id+'\')">'+esc(o.title)+'</a>'+
+    doneButton(o)+'</td><td>'+
     esc(o.project||'')+'</td><td>'+esc((o.waiting_for||[]).join(', ')||'—')+
     '</td><td>'+esc(ageDaysText(o.updated_at))+'</td><td>'+
     '<button class="small primary" onclick="chaseWaiting(\''+o.ref_id+
-    '\')">Chase</button></td></tr>';}).join('')+'</table>';}
+    '\')">Relancer</button></td></tr>';}).join('')+'</table>';}
   $('view-root').innerHTML=h;}
 async function decideDecision(id){
   const d=(S.views.decisions||[]).filter(function(x){
     return x.decision_id===id;})[0];
-  const choice=prompt('Decision'+(d?(' - '+d.title):'')+
-    ': what did you choose?','');
+  const choice=prompt('Décision'+(d?(' - '+d.title):'')+
+    ' : que choisissez-vous ?','');
   if(!choice)return;
   try{await api('/api/decisions/'+encodeURIComponent(id)+'/decide','POST',
     {choice:choice});await refresh();}catch(err){notice(err.message);}}
 function renderDecisions(){
   const items=(S.views.decisions||[]);
-  let h='<h2>Decisions</h2><p class="muted">Consequential choices and why. '+
-    'TrajectoryOS never decides on its own.</p>';
-  h+='<table><tr><th>Decision</th><th>Status</th><th>Choice</th>'+
-    '<th>Rationale</th><th></th></tr>'+(items.length?items.map(function(d){
+  let h='<h2>Décisions</h2><p class="muted">Les choix conséquents et leurs raisons. '+
+    'TrajectoryOS ne décide jamais seul.</p>';
+  h+='<table><tr><th>Décision</th><th>Statut</th><th>Choix</th>'+
+    '<th>Justification</th><th></th></tr>'+(items.length?items.map(function(d){
       const title=d.project_id?('<a onclick="selectObject(\'project:'+
         esc(d.project_id)+'\')">'+esc(d.title)+'</a>'):esc(d.title);
       const cls=d.status==='DECIDED'?'ACTIVE':(d.status==='OPEN'?
         'IN_PROGRESS':'DEFERRED');
       const action=(d.status==='OPEN'||d.status==='DEFERRED')?
         ('<button class="small primary" onclick="decideDecision(\''+
-          esc(d.decision_id)+'\')">Decide…</button>'):'';
+          esc(d.decision_id)+'\')">Décider…</button>'):'';
       return '<tr><td>'+title+'</td><td>'+pill(d.status,'badge-'+cls)+
         '</td><td>'+esc(d.choice||'—')+'</td><td>'+esc(d.rationale||'—')+
         '</td><td>'+action+'</td></tr>';}).join(''):
-      '<tr><td colspan="5" class="muted">no decisions</td></tr>')+'</table>';
+      '<tr><td colspan="5" class="muted">aucune décision</td></tr>')+'</table>';
   $('view-root').innerHTML=h;}
 function renderInbox(){
   const parked=objects().filter(function(o){return o.kind==='project'&&
     (o.status==='IDEA'||o.status==='SOMEDAY');});
-  let h='<h2>Inbox — ideas and someday notions to triage</h2>'+
-    '<p class="muted">'+parked.length+' parked project(s); excluded from '+
-    'readiness, priority and scheduling until activated.</p>';
+  let h='<h2>Entrée — idées et « un jour » à trier</h2>'+
+    '<p class="muted">'+parked.length+' projet(s) en veille ; exclus de la '+
+    'readiness, de la priorité et du planning jusqu’à activation.</p>';
   const sug=(S.views.triage||[]);
   if(sug.length){
-    h+='<h3>Suggestions ('+sug.length+')</h3><table><tr><th>Item</th>'+
-      '<th>Why</th><th></th></tr>'+sug.map(function(x){
+    h+='<h3>Suggestions ('+sug.length+')</h3><table><tr><th>Élément</th>'+
+      '<th>Pourquoi</th><th></th></tr>'+sug.map(function(x){
         const id=(x.action==='promote'?'task:':'project:')+x.ref_id;
         let action='';
         if(x.action==='promote')action='<button class="small primary" '+
-          'onclick="promoteTask(\''+x.ref_id+'\')">Promote</button>';
+          'onclick="promoteTask(\''+x.ref_id+'\')">Promouvoir</button>';
         else if(x.action==='demote')action='<button class="small" '+
-          'onclick="demoteProject(\''+x.ref_id+'\')">Demote…</button>';
+          'onclick="demoteProject(\''+x.ref_id+'\')">Rétrograder…</button>';
         else action='<button class="small" onclick="parkProject(\''+
-          x.ref_id+'\',\'IDEA\')">Idea</button> '+
+          x.ref_id+'\',\'IDEA\')">Idée</button> '+
           '<button class="small" onclick="parkProject(\''+x.ref_id+
-          '\',\'SOMEDAY\')">Someday</button>';
+          '\',\'SOMEDAY\')">Un jour</button>';
         return '<tr><td><a onclick="selectObject(\''+id+'\')">'+
           esc(x.title)+'</a></td><td>'+esc(x.reason)+'</td><td>'+action+
           '</td></tr>';}).join('')+'</table>';}
-  if(!parked.length){h+='<p class="muted">Inbox is empty.</p>';}
-  else{h+='<table><tr><th>Title</th><th>Status</th><th>Objective</th>'+
+  if(!parked.length){h+='<p class="muted">L’entrée est vide.</p>';}
+  else{h+='<table><tr><th>Titre</th><th>Statut</th><th>Objectif</th>'+
     '<th></th></tr>'+parked.map(function(o){return '<tr><td><a onclick="'+
     'selectObject(\''+o.id+'\')">'+esc(o.title)+'</a></td><td>'+
     pill(o.status,'badge-'+(o.status==='IDEA'?'IN_PROGRESS':'DEFERRED'))+
     '</td><td>'+esc(o.objective||'')+'</td><td>'+
     '<button class="small primary" onclick="mutateProject(\''+o.project_id+
-    '\',{status:\'ACTIVE\'})">Activate</button> '+
+    '\',{status:\'ACTIVE\'})">Activer</button> '+
     '<button class="small" onclick="parkProject(\''+o.project_id+
-    '\',\'SOMEDAY\')">Someday</button> '+
+    '\',\'SOMEDAY\')">Un jour</button> '+
     '<button class="small" onclick="demoteProject(\''+o.project_id+
-    '\')">Demote…</button></td></tr>';}).join('')+'</table>';}
+    '\')">Rétrograder…</button></td></tr>';}).join('')+'</table>';}
   $('view-root').innerHTML=h;}
 function renderReady(){
   const wf=S.views.ready_workflow;
-  if(!wf){$('view-root').innerHTML='<p class="muted">no readiness data</p>';
+  if(!wf){$('view-root').innerHTML='<p class="muted">aucune donnée de readiness</p>';
     return;}
-  const labels={ready:'Ready',in_progress:'In progress',blocked:'Blocked',
-    waiting:'Waiting',deferred:'Deferred',project_closed:'Project closed',
-    terminal:'Done / abandoned'};
-  let h='<h2>Ready — what can be done now</h2>'+
-    '<p class="muted">'+wf.ready_total+' ready · '+wf.counts.blocked+
-    ' blocked · '+wf.counts.waiting+' waiting · '+wf.counts.deferred+
-    ' deferred · '+wf.counts.project_closed+' in closed projects</p>'+
+  const labels={ready:'Prêt',in_progress:'En cours',blocked:'Bloqué',
+    waiting:'En attente',deferred:'Reporté',project_closed:'Projet fermé',
+    terminal:'Terminé / abandonné'};
+  let h='<h2>Prêt — ce qui peut être fait maintenant</h2>'+
+    '<p class="muted">'+wf.ready_total+' prêtes · '+wf.counts.blocked+
+    ' bloquées · '+wf.counts.waiting+' en attente · '+wf.counts.deferred+
+    ' reportées · '+wf.counts.project_closed+' dans des projets fermés</p>'+
     '<div class="bar"><button class="small primary" '+
-    'onclick="openExportPreview()">Preview Super Productivity export</button>'+
-    '<span class="muted">Order by</span>'+
+    'onclick="openExportPreview()">Aperçu export Super Productivity</button>'+
+    '<span class="muted">Trier par</span>'+
     sortSelect('ready-sort',S.readySort,ORDER_SORT_OPTIONS,'readySortChange')+
-    '<span class="muted">the export uses the tasks checked in Today, or the '+
-    'top ready tasks</span></div>';
+    '<span class="muted">l’export utilise les tâches cochées dans Aujourd’hui, '+
+    'ou les meilleures tâches prêtes</span></div>';
   wf.group_order.forEach(function(g){
     const items=sortViewItems(wf.groups[g]||[],S.readySort);
     if(!items.length)return;
     h+='<h3>'+esc(labels[g]||g)+' ('+items.length+')</h3>';
-    h+='<table><tr><th>Task</th><th>Project</th><th>Urgency</th>'+
-      '<th>Impact</th><th>Effort</th><th>Deadline</th>'+
-      '<th>Why / blocking reason</th></tr>';
+    h+='<table><tr><th>Tâche</th><th>Projet</th><th>Urgence</th>'+
+      '<th>Impact</th><th>Effort</th><th>Échéance</th>'+
+      '<th>Pourquoi / blocage</th></tr>';
     items.slice(0,300).forEach(function(item){
       const o=obj('task:'+item.task_id);
       const why=(g==='ready'||g==='in_progress')?
-        (((o&&o.priority_reasons)||[]).join('; ')||'ready') :
+        (((o&&o.priority_reasons)||[]).join('; ')||'prête') :
         (item.blocking_reason||(item.reasons||[]).join('; '));
       h+='<tr class="'+(o&&S.selection===o.id?'selected':'')+'"'+
         (o?' data-object-id="'+o.id+'" '+
           'onclick="selectObject(\''+o.id+'\')"':'')+'>'+
-        '<td>'+esc(item.title)+'</td><td>'+esc(item.project)+'</td>'+
+        '<td>'+esc(item.title)+(o?doneButton(o):'')+'</td><td>'+esc(item.project)+'</td>'+
         '<td>'+esc(item.urgency)+'</td><td>'+esc(item.impact)+'</td>'+
         '<td>'+fmtMin(item.effort_minutes)+'</td>'+
         '<td>'+esc(item.deadline||'—')+'</td>'+
@@ -3166,7 +3364,7 @@ function candidateRow(c){
     '</td><td>'+(c.priority_rank||'')+'</td>'+
     '<td><a data-object-id="task:'+esc(c.task_id)+'" '+
     'onclick="selectObject(\'task:'+esc(c.task_id)+'\')">'+
-    esc(c.title)+'</a></td>'+
+    esc(c.title)+'</a>'+(o?doneButton(o):'')+'</td>'+
     '<td>'+esc(c.project)+'</td>'+
     '<td>'+pill(c.blocked?'BLOCKED':c.readiness,'badge-'+
       (c.blocked?'BLOCKED':(c.ready?'READY':c.readiness)))+'</td>'+
@@ -3176,7 +3374,7 @@ function candidateRow(c){
     '<td class="muted">'+esc((c.why||[]).join('; '))+'</td></tr>';}
 function renderTomorrow(){
   const tv=S.views&&S.views.tomorrow_view;
-  if(!tv){$('view-root').innerHTML='<p class="muted">no tomorrow data</p>';
+  if(!tv){$('view-root').innerHTML='<p class="muted">aucune donnée pour demain</p>';
     return;}
   const d=S.tomorrowDraft;
   const byId={};(tv.candidates||[]).forEach(function(c){byId[c.task_id]=c;});
@@ -3187,10 +3385,11 @@ function renderTomorrow(){
   function summary(id){const c=byId[id]||{};
     return '<li>'+esc(c.title||id)+' <span class="muted">'+
       esc(c.project||'')+'</span></li>';}
-  let h='<h2>Plan tomorrow</h2>'+
-    '<p class="muted">Target '+esc(tv.target)+' ('+esc(tv.target_weekday)+
-    '). Choose up to '+tv.max_main+' main and '+tv.max_optional+' optional '+
-    'tasks. Nothing is scheduled silently and no clock times are required.</p>';
+  let h='<h2>Planifier demain</h2>'+
+    '<p class="muted">Cible '+esc(tv.target)+' ('+esc(tv.target_weekday)+
+    '). Choisissez jusqu’à '+tv.max_main+' tâches principales et '+
+    tv.max_optional+' optionnelles. Rien n’est planifié silencieusement et '+
+    'aucun horaire n’est requis.</p>';
   if(tv.saved_plan){
     h+='<div class="handoff"><strong>Saved plan for '+esc(tv.saved_plan.date)+
       '</strong><div>Main: '+((tv.saved_plan.main_task_ids||[]).map(function(id){
@@ -3201,21 +3400,21 @@ function renderTomorrow(){
         const c=byId[id];return '<span class="pill">'+esc(c?c.title:id)+
         '</span>';}).join(' ')+'</div>':'')+'</div>';}
   h+='<div class="bar"><button class="small primary" '+
-    'onclick="saveTomorrowPlan()">Save plan</button>'+
-    '<button class="small" onclick="openReview()">End-of-day review</button>'+
-    '<span class="muted">Selected: '+d.main.length+' main · '+
-    d.optional.length+' optional</span>'+
-    '<span class="muted">Order by</span>'+
+    'onclick="saveTomorrowPlan()">Enregistrer le plan</button>'+
+    '<button class="small" onclick="openReview()">Bilan de fin de journée</button>'+
+    '<span class="muted">Sélection : '+d.main.length+' principale(s) · '+
+    d.optional.length+' optionnelle(s)</span>'+
+    '<span class="muted">Trier par</span>'+
     sortSelect('tomorrow-sort',S.tomorrowSort,TOMORROW_SORT_OPTIONS,
       'tomorrowSortChange')+'</div>';
   if(d.main.length||d.optional.length){
-    h+='<div class="grid2"><div class="card"><h4>Main</h4><ol>'+
+    h+='<div class="grid2"><div class="card"><h4>Principales</h4><ol>'+
       d.main.map(summary).join('')+'</ol></div>'+
-      '<div class="card"><h4>Optional</h4><ul>'+
+      '<div class="card"><h4>Optionnelles</h4><ul>'+
       d.optional.map(summary).join('')+'</ul></div></div>';}
-  h+='<table><tr><th>Main</th><th>Opt</th><th>#</th><th>Task</th>'+
-    '<th>Project</th><th>Readiness</th><th>Urgency</th><th>Impact</th>'+
-    '<th>Effort</th><th>Deadline</th><th>Why suggested</th></tr>'+
+  h+='<table><tr><th>Princ.</th><th>Opt.</th><th>#</th><th>Tâche</th>'+
+    '<th>Projet</th><th>Prêt</th><th>Urgence</th><th>Impact</th>'+
+    '<th>Effort</th><th>Échéance</th><th>Pourquoi suggéré</th></tr>'+
     ordered.map(candidateRow).join('')+'</table>'+
     '<p class="muted">Candidates come from ready tasks, urgent / near-'+
     'deadline work, today\'s unfinished items and blocked/waiting context. '+
@@ -3229,7 +3428,7 @@ async function saveTomorrowPlan(){
     const res=await api('/api/planning/tomorrow','POST',
       {date:tv.target,main_task_ids:d.main,optional_task_ids:d.optional});
     S.views.planning=res.planning;S.views.tomorrow_view=res.tomorrow;
-    await refresh();notice('Tomorrow plan saved.');}
+    await refresh({keepNotice:true,notice:'Plan de demain enregistré.'});}
   catch(err){notice(err.message);}}
 
 // --- Week --------------------------------------------------------------------
@@ -3498,14 +3697,15 @@ function downloadExport(){if(!S.exportPreview)return;
 function closeExportPreview(){$('export-overlay').classList.remove('open');}
 
 // --- Quick Capture ------------------------------------------------------------
-function openCapture(){S.capture=null;
+function openCapture(){S.capture=null;S.captureApplied={};
   $('capture-text').value='';$('capture-preview').innerHTML='';
   $('capture-actions').style.display='none';
   $('capture-overlay').classList.add('open');}
 function closeCapture(){$('capture-overlay').classList.remove('open');}
 async function analyzeCapture(){
   const text=$('capture-text').value;
-  if(!text.trim()){notice('Type one or more lines first');return;}
+  if(!text.trim()){notice('Saisissez d’abord une ou plusieurs lignes');return;}
+  S.captureApplied={};
   try{const res=await api('/api/capture','POST',{text:text});S.capture=res;
     renderCapturePreview(res);}catch(err){notice(err.message);}}
 function capBadge(cat){const cls={new_task:'READY',possible_project:'IN_PROGRESS',
@@ -3517,67 +3717,95 @@ function capActionOptions(item){
   if(item.category==='existing_project')actions=['attach','skip'];
   else if(item.category==='existing_task'||item.category==='duplicate')
     actions=['skip','accept'];
-  const labels={accept:'Accept',attach:'Merge / attach',skip:'Skip'};
+  const labels={accept:'Accepter',attach:'Fusionner / rattacher',skip:'Ignorer'};
   return actions.map(function(a){return '<option value="'+a+'"'+
     (item.suggested_action===a?' selected':'')+'>'+labels[a]+'</option>';
   }).join('');}
 function capItemRow(item){
+  const applied=!!S.captureApplied[item.capture_id];
+  const dis=applied?' disabled':'';
   const projectOpts=objects().filter(function(o){return o.kind==='project';})
     .sort(function(a,b){return a.title.localeCompare(b.title);}).map(
       function(p){return '<option value="'+esc(p.project_id)+'"'+
         (p.project_id===item.project_id?' selected':'')+'>'+esc(p.title)+
         '</option>';}).join('');
-  return '<div class="card" style="margin:.4rem 0"><div>'+capBadge(item.category)+
+  return '<div class="card" style="margin:.4rem 0'+
+    (applied?';opacity:.65':'')+'"><div>'+capBadge(item.category)+
     (item.ambiguous?pill('ambiguous','badge-WAITING')+' ':'')+
+    (applied?pill('appliqué','badge-COMPLETED')+' ':'')+
     ' <input id="cap-title-'+esc(item.capture_id)+'" value="'+esc(item.title)+
-    '" style="width:62%"></div>'+
-    (item.matched_title?'<div class="muted">matched: '+esc(item.matched_title)+
-      ' (score '+(item.match_score)+')</div>':'')+
+    '" style="width:62%"'+dis+'></div>'+
+    (item.matched_title?'<div class="muted">correspond à : '+
+      esc(item.matched_title)+' (score '+(item.match_score)+')</div>':'')+
     '<div class="muted">'+esc(item.reason)+'</div>'+
-    '<div class="bar"><select id="cap-action-'+esc(item.capture_id)+'">'+
+    '<div class="bar"><select id="cap-action-'+esc(item.capture_id)+'"'+dis+'>'+
     capActionOptions(item)+'</select>'+
-    '<select id="cap-kind-'+esc(item.capture_id)+'">'+
+    '<select id="cap-kind-'+esc(item.capture_id)+'"'+dis+'>'+
     ['task','project','idea','someday'].map(function(k){return '<option value="'+k+'"'+
       (item.kind===k?' selected':'')+'>'+k+'</option>';}).join('')+'</select>'+
-    '<select id="cap-project-'+esc(item.capture_id)+'">'+
-    '<option value="">(choose project)</option>'+projectOpts+'</select>'+
+    '<select id="cap-project-'+esc(item.capture_id)+'"'+dis+'>'+
+    '<option value="">(choisir un projet)</option>'+projectOpts+'</select>'+
+    (applied?'':'<button class="small primary" onclick="'+
+      'confirmCaptureItemById(\''+esc(item.capture_id)+'\')">'+
+      'Appliquer cette ligne</button>')+
     '</div></div>';}
 function renderCapturePreview(res){
   const c=res.counts||{};const inst=res.instrumentation||{};
   let h='<div class="card" style="background:#f8fafc"><strong>'+c.items+
-    '</strong> item(s) · '+c.matched_existing+' matched existing · '+
-    c.duplicates+' duplicate(s) · '+c.new_tasks+' new task(s) · '+
-    c.possible_projects+' possible project(s) · '+c.possible_ideas+
-    ' possible idea(s)<div class="muted">'+
-    'engine '+esc(inst.engine||'')+' · model '+esc(inst.model||'')+' · '+
-    (inst.elapsed_ms||0)+'ms · cost $'+(inst.cost_usd||0)+
-    ' · preview only, nothing written</div></div>';
+    '</strong> élément(s) · '+c.matched_existing+' correspondance(s) · '+
+    c.duplicates+' doublon(s) · '+c.new_tasks+' nouvelle(s) tâche(s) · '+
+    c.possible_projects+' projet(s) possible(s) · '+c.possible_ideas+
+    ' idée(s) possible(s)<div class="muted">'+
+    'moteur '+esc(inst.engine||'')+' · modèle '+esc(inst.model||'')+' · '+
+    (inst.elapsed_ms||0)+'ms · coût $'+(inst.cost_usd||0)+
+    ' · aperçu seulement, rien n’est écrit</div></div>';
   h+=(res.items||[]).map(capItemRow).join('');
   $('capture-preview').innerHTML=h;
   $('capture-actions').style.display='';}
+function captureDecisionFor(item){
+  const action=$('cap-action-'+item.capture_id).value;
+  const title=$('cap-title-'+item.capture_id).value;
+  const kind=$('cap-kind-'+item.capture_id).value;
+  const project=$('cap-project-'+item.capture_id).value;
+  const d={capture_id:item.capture_id,action:action};
+  if(title&&title!==item.title)d.title=title;
+  if(kind!==item.kind)d.kind=kind;
+  if(project)d.project_id=project;
+  return d;
+}
+function confirmCaptureItemById(id){
+  const item=((S.capture&&S.capture.items)||[]).filter(function(x){
+    return x.capture_id===id;})[0];
+  if(item)confirmCaptureItem(item);}
+async function confirmCaptureItem(item){
+  if(S.captureApplied[item.capture_id])return;
+  try{const res=await api('/api/capture/confirm','POST',
+      {text:$('capture-text').value,decisions:[captureDecisionFor(item)]});
+    S.captureApplied[item.capture_id]=true;
+    renderCapturePreview(S.capture);
+    notice('Ligne appliquée · '+res.created_tasks+' tâche(s), '+
+      res.created_projects+' projet(s)',[]);
+    await refresh({keepNotice:true,notice:'Ligne appliquée · '+
+      res.created_tasks+' tâche(s), '+res.created_projects+' projet(s)'});
+  }catch(err){notice(err.message);}}
 async function confirmCapture(){
   if(!S.capture)return;
-  const decisions=S.capture.items.map(function(item){
-    const action=$('cap-action-'+item.capture_id).value;
-    const title=$('cap-title-'+item.capture_id).value;
-    const kind=$('cap-kind-'+item.capture_id).value;
-    const project=$('cap-project-'+item.capture_id).value;
-    const d={capture_id:item.capture_id,action:action};
-    if(title&&title!==item.title)d.title=title;
-    if(kind!==item.kind)d.kind=kind;
-    if(project)d.project_id=project;
-    return d;});
+  const decisions=S.capture.items.filter(function(item){
+    return !S.captureApplied[item.capture_id];}).map(captureDecisionFor);
+  if(!decisions.length){notice('Toutes les lignes ont déjà été appliquées');return;}
   try{const res=await api('/api/capture/confirm','POST',
     {text:$('capture-text').value,decisions:decisions});
-    notice('Capture: '+res.created_tasks+' task(s), '+
-      res.created_projects+' project(s), skipped '+res.skipped+
-      ', merged '+res.merged);
-    closeCapture();await refresh();}catch(err){notice(err.message);}}
+    notice('Capture : '+res.created_tasks+' tâche(s), '+
+      res.created_projects+' projet(s), ignorées '+res.skipped+
+      ', fusionnées '+res.merged);
+    closeCapture();await refresh({keepNotice:true,
+      notice:'Capture : '+res.created_tasks+' tâche(s), '+
+        res.created_projects+' projet(s)'});}catch(err){notice(err.message);}}
 
 // --- outcome capture (planned vs actual) --------------------------------------
 function openOutcomeForm(taskId){const o=obj('task:'+taskId);if(!o)return;
   selectObject('task:'+taskId);
-  $('outcome-body').innerHTML='<h3 style="margin:0">Record outcome — '+
+  $('outcome-body').innerHTML='<h3 style="margin:0">Enregistrer un résultat — '+
     esc(o.title)+'</h3><div class="muted">planned '+
     fmtMin(o.estimated_minutes)+(o.deadline?' · due '+esc(o.deadline):'')+
     '</div><label>Outcome</label><select id="oc-outcome">'+
@@ -3620,34 +3848,35 @@ def render_page(cockpit: engine.Cockpit) -> str:
     from trajectory_os.mvp.render import _escape
 
     parts = [
-        "<!doctype html><html lang='en'><head><meta charset='utf-8'>",
+        "<!doctype html><html lang='fr'><head><meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-        "<title>TrajectoryOS cockpit</title>",
+        "<title>TrajectoryOS — cockpit</title>",
         "<style>", PAGE_CSS, "</style></head><body>",
         "<header><h1>TrajectoryOS</h1>",
-        "<span class='sub'>visual execution &amp; decision cockpit · ",
-        _escape(cockpit.today), " · generated ", _escape(cockpit.generated_at),
+        "<span class='sub'>cockpit d’exécution et de décision · ",
+        _escape(cockpit.today), " · généré ", _escape(cockpit.generated_at),
         "</span>",
         "<div class='toolbar'>",
-        "<button class='small' onclick='openProjectForm(null)'>New Project</button>",
-        "<button class='small' onclick='openTaskForm(null)'>New Task</button>",
-        "<button class='small' onclick='openImport()'>Import document</button>",
-        "<button class='small' onclick='openCapture()'>Quick Capture</button>",
-        "<button class='small' onclick='openTomorrow()'>Plan tomorrow</button>",
+        "<button class='small' onclick='openProjectForm(null)'>Nouveau projet</button>",
+        "<button class='small' onclick='openTaskForm(null)'>Nouvelle tâche</button>",
+        "<button class='small' onclick='openImport()'>Importer un document</button>",
+        "<button class='small' onclick='openCapture()'>Capture rapide</button>",
+        "<button class='small' onclick='openTomorrow()'>Planifier demain</button>",
         "<button class='small' id='inspector-toggle' "
-        "onclick='toggleInspectorCollapsed()'>Inspector</button>",
-        "<button class='small primary' onclick='boot()'>Refresh</button>",
+        "onclick='toggleInspectorCollapsed()'>Inspecteur</button>",
+        "<button class='small primary' onclick='boot()'>Actualiser</button>",
         "</div></header>",
         "<nav id='viewbar'></nav>",
+        "<nav id='subviewbar'></nav>",
         "<div id='controls'></div>",
         "<div class='notice' id='notice'></div>",
         "<section class='card' style='margin:.6rem 1rem'>",
         "<div class='grid3'>",
-        "<div><h2>Today</h2><div id='today-summary' class='muted'>loading…</div></div>",
-        "<div><h2>Blocked / waiting</h2><div id='blocked-summary' class='muted'>"
-        "loading…</div></div>",
-        "<div><h2>Projects</h2><div id='projects-summary' class='muted'>"
-        "loading…</div></div>",
+        "<div><h2>Aujourd’hui</h2><div id='today-summary' class='muted'>chargement…</div></div>",
+        "<div><h2>Bloqué / en attente</h2><div id='blocked-summary' class='muted'>"
+        "chargement…</div></div>",
+        "<div><h2>Projets</h2><div id='projects-summary' class='muted'>"
+        "chargement…</div></div>",
         "</div></section>",
         "<div id='layout'>",
         "<main id='view-root'><p class='muted'>loading…</p></main>",
@@ -3680,7 +3909,7 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "</div></div></div>",
         # Document import
         "<div class='overlay' id='import-overlay'><div class='modal' "
-        "style='max-width:860px'><h3>Import document</h3>",
+        "style='max-width:860px'><h3>Importer un document</h3>",
         "<div id='import-picker'>",
         "<input type='file' id='import-file' accept='.odt,.docx,.pdf,.md,"
         ".markdown,.txt,.text'>",
@@ -3701,7 +3930,7 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "<button onclick='closeImport()'>Cancel</button></div></div></div>",
         # Quick Capture
         "<div class='overlay' id='capture-overlay'><div class='modal' "
-        "style='max-width:760px'><h3>Quick Capture</h3>",
+        "style='max-width:760px'><h3>Capture rapide</h3>",
         "<div class='muted'>One or many lines. Nothing is written until you "
         "confirm the preview; matching is targeted, not a full re-analysis "
         "of the portfolio.</div>",
@@ -3729,7 +3958,7 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "</div></div></div>",
         # End-of-day review (review today -> plan tomorrow)
         "<div class='overlay' id='review-overlay'><div class='modal' "
-        "style='max-width:860px'><h3>End-of-day review</h3>",
+        "style='max-width:860px'><h3>Bilan de fin de journée</h3>",
         "<div id='review-body'></div>",
         "<div class='bar' style='justify-content:flex-end'>",
         "<button onclick='closeReview()'>Cancel</button>",
@@ -3740,7 +3969,7 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "<div class='overlay' id='open-overlay'><div class='modal open-modal'>",
         "<div id='open-body'></div>",
         "<div class='bar' style='justify-content:flex-end'>",
-        "<button onclick='openEditFromDetail()'>Edit</button>",
+        "<button onclick='openEditFromDetail()'>Modifier</button>",
         "<button class='primary' onclick='closeObjectDetail()'>Close</button>",
         "</div></div></div>",
         # Manual-creation duplicate decision (DETECT -> INFORM -> DECIDE)

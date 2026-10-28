@@ -64,8 +64,8 @@ def test_get_html_and_health(tmp_path: object) -> None:
     with _server(root) as port:
         status, data = _request(port, "GET", "/")
         assert status == 200
-        assert "Today" in str(data["_raw"])
-        assert "Projects" in str(data["_raw"])
+        assert "Aujourd’hui" in str(data["_raw"])
+        assert "Projets" in str(data["_raw"])
         status, health = _request(port, "GET", "/healthz")
         assert status == 200
         assert health["status"] == "OK"
@@ -564,3 +564,49 @@ def test_api_day_off_toggle(tmp_path: object) -> None:
     portfolio = store.load_portfolio(root)
     assert portfolio is not None
     assert portfolio.days_off == ()
+
+
+def test_changes_and_undo_endpoints(tmp_path: object) -> None:
+    root = str(tmp_path)
+    _seed(root)
+    with _server(root) as port:
+        status, result = _request(port, "POST", "/api/tasks/a/outcome",
+                                  {"outcome": "COMPLETED",
+                                   "actual_minutes": 10})
+        assert status == 200
+        assert result["task_status"] == "COMPLETED"
+        status, listing = _request(port, "GET", "/api/changes?limit=10")
+        assert status == 200
+        assert any(change["kind"] == "OUTCOME"
+                   for change in listing["changes"])
+        status, undone = _request(port, "POST", "/api/tasks/a/outcome/undo",
+                                  {})
+        assert status == 200
+        assert undone["restored_status"] == "TODO"
+        status, listing = _request(port, "GET", "/api/changes?limit=10")
+        assert status == 200
+        assert any(change["kind"] == "UNDO"
+                   for change in listing["changes"])
+
+
+def test_rederive_projects_endpoint(tmp_path: object) -> None:
+    root = str(tmp_path)
+    _seed(root)
+    portfolio = store.load_portfolio(root)
+    assert portfolio is not None
+    # Make the stored project status inconsistent with its ready task.
+    updated = store.load_portfolio(root)
+    assert updated is not None
+    from dataclasses import replace
+    store.save_portfolio(root, replace(
+        updated,
+        projects=tuple(replace(p, status="BLOCKED")
+                       for p in updated.projects)))
+    with _server(root) as port:
+        status, result = _request(port, "POST", "/api/projects/rederive",
+                                  {})
+        assert status == 200
+        assert result["changed"] == 1
+        reloaded = store.load_portfolio(root)
+        assert reloaded is not None
+        assert reloaded.projects[0].status == "ACTIVE"

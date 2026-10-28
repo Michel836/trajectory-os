@@ -47,7 +47,7 @@ VIEWS = (
     "today", "inbox", "waiting", "decisions", "ready", "tomorrow", "week",
     "list", "kanban", "wbs", "graph", "gantt", "eisenhower",
     "impact_effort", "portfolio_map", "treemap", "progress", "heatmap",
-    "goal_flow",
+    "goal_flow", "changes",
 )
 
 #: Named personal highlight colours (rendered as an overlay, never as status).
@@ -215,7 +215,7 @@ class UIPreferences:
     schema_version: int = UI_SCHEMA_VERSION
     color_by: str = "domain"
     density: str = "normal"
-    view: str = "list"
+    view: str = "today"
     domain_colors: dict[str, str] = field(default_factory=dict)
     project_colors: dict[str, str] = field(default_factory=dict)
     highlights: dict[str, str] = field(default_factory=dict)
@@ -292,7 +292,7 @@ class UIPreferences:
             schema_version=int(data.get("schema_version", UI_SCHEMA_VERSION)),
             color_by=str(data.get("color_by", "domain")),
             density=str(data.get("density", "normal")),
-            view=str(data.get("view", "list")),
+            view=str(data.get("view", "today")),
             domain_colors=_clean_map(data.get("domain_colors"),
                                      allow_named=False),
             project_colors=_clean_map(data.get("project_colors"),

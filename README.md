@@ -131,6 +131,48 @@ default), an explicit `days_off` list, and calendar events with an optional
 into the next working day. The cockpit's **Today** view has an **Agenda**
 block to add, repeat or delete events and to toggle a day off. See ADR-034.
 
+### Daily usability (Phase 0)
+
+The cockpit is organised into four workspaces instead of one flat wall of
+views, and the main labels are in French:
+
+- **Aujourd’hui** — plan, agenda, health card, changes summary, focus, ready;
+- **Entrée** — Inbox, waiting items, decisions, capture and document import;
+- **Portefeuille** — list, Kanban, WBS, graph, Gantt and the advanced views
+  behind **Plus**;
+- **Revue** — week, tomorrow, progress, activity, goal flow and the
+  **Changements** journal.
+
+Every task row exposes `✓ Terminé`. Completion is recorded immediately, the
+toast survives the refresh and offers **Annuler** when the change journal
+recorded an undoable outcome. Undo restores the previous task status and
+actual minutes; the immutable outcome ledger is never rewritten.
+
+The **Santé du portefeuille** card surfaces deferred projects, projects with
+no open task, ready tasks without an estimate, waiting items older than seven
+days and stored `BLOCKED` projects that still have a ready task. The latter
+can be repaired explicitly with **Recalculer les statuts projet** (or
+`POST /api/projects/rederive`); the repair never touches task readiness or
+priorities.
+
+Changes are journaled in the bounded, append-only `changes.jsonl` sidecar.
+The **Changements** view merges that journal with outcomes recorded before the
+journal existed, so "what changed?" is useful immediately. See ADR-038.
+
+Quick Capture keeps its preview-then-confirm contract and also supports
+**Appliquer cette ligne**, so one reviewed line can be applied without
+applying the rest of the batch.
+
+A read-only dogfood report is available with:
+
+```bash
+.venv/bin/python scripts/mvp_phase0_evidence.py
+```
+
+It reports the real portfolio-health counts, then measures the explicit
+project-status repair on a temporary copy (the real portfolio is never
+modified).
+
 ### Quick Capture (daily input)
 
 ```bash
