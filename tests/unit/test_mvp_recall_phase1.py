@@ -565,3 +565,54 @@ def test_cli_aliases_and_recall(tmp_path: Path, capsys: Any) -> None:
     assert "Dossier Alpha" in out
     assert cli.main(["aliases", "--root", root, "--json"]) == 0
     assert "case-alpha" in capsys.readouterr().out
+
+
+# --- panel renderer (real JS, no browser) ------------------------------------
+
+
+def test_recall_panel_renders_a_real_payload(tmp_path: Path) -> None:
+    """Render the shipped panel function against a real resolve() payload.
+
+    `recallHtml` is the only part of the panel that turns a resolved context
+    into markup. Exercising it with node (as the other cockpit UI tests do)
+    proves the dossier, its aliases, its next action, the match reason, the
+    action buttons and the empty-state capture hint all reach the DOM string —
+    without claiming a browser interaction test.
+    """
+    import json
+    import os
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - node is optional
+        pytest.skip("node not available")
+
+    from test_mvp_duplicate_ui import _STUBS
+
+    root = str(tmp_path)
+    _seed(root, aliases=("zephyr",))
+    payload = recall.resolve(root, "zephyr")
+    assert payload["dossiers"], payload
+
+    script = tmp_path / "recall_smoke.js"
+    script.write_text(_STUBS + "\n" + cockpit_ui.PAGE_JS + "\n" + r"""
+const assert=require('assert');
+const payload = JSON.parse(process.env.RECALL_PAYLOAD);
+const html = recallHtml(payload);
+assert.ok(html.indexOf(payload.dossiers[0].title) >= 0, 'dossier title');
+assert.ok(html.indexOf('alias') >= 0, 'alias line');
+assert.ok(html.indexOf(payload.dossiers[0].next_actions[0].title) >= 0,
+  'next action');
+assert.ok(html.indexOf(payload.results[0].reason) >= 0, 'match reason');
+assert.ok((html.match(/<button/g) || []).length >= 2, 'action buttons');
+const empty = recallHtml({dossiers:[]});
+assert.ok(empty.indexOf('Capturer cette information') >= 0, 'empty state');
+console.log('RECALL_SMOKE_OK');
+""", encoding="utf-8")
+    result = subprocess.run(
+        [node, str(script)], capture_output=True, text=True, check=False,
+        env=dict(os.environ,
+                 RECALL_PAYLOAD=json.dumps(payload, ensure_ascii=False)))
+    assert result.returncode == 0, result.stderr
+    assert "RECALL_SMOKE_OK" in result.stdout
