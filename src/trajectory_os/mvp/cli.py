@@ -42,6 +42,7 @@ from trajectory_os.mvp import (
     outcomes,
     priority,
     readiness,
+    recall,
     render,
     store,
     superproductivity,
@@ -403,6 +404,70 @@ def _cmd_park(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_aliases(args: argparse.Namespace) -> int:
+    _load_or_fail(args.root)
+    if args.set is not None:
+        result = mutations.set_aliases(
+            args.root, args.project, {"aliases": args.set})
+        if args.json:
+            _print_json(result)
+        else:
+            print(f"{result['project_id']}: " +
+                  (", ".join(result["aliases"]) or "(aucun alias)"))
+        return EXIT_OK
+    portfolio = store.load_portfolio(args.root)
+    assert portfolio is not None
+    projects = portfolio.project_map()
+    if args.project:
+        project = projects.get(args.project)
+        if project is None:
+            raise model.MvpError(model.E_UNKNOWN_PROJECT, args.project)
+        payload = {"project_id": project.project_id,
+                   "aliases": list(project.aliases)}
+        if args.json:
+            _print_json(payload)
+        else:
+            print(f"{project.project_id}: " +
+                  (", ".join(project.aliases) or "(aucun alias)"))
+        return EXIT_OK
+    rows = [{"project_id": p.project_id, "aliases": list(p.aliases)}
+            for p in portfolio.projects if p.aliases]
+    if args.json:
+        _print_json({"projects": rows})
+    else:
+        for row in rows:
+            print(f"{row['project_id']}: " + ", ".join(row["aliases"]))
+        if not rows:
+            print("aucun alias déclaré")
+    return EXIT_OK
+
+
+def _cmd_recall(args: argparse.Namespace) -> int:
+    _load_or_fail(args.root)
+    payload = recall.resolve(args.root, args.query,
+                             limit_projects=args.limit)
+    if args.json:
+        _print_json(payload)
+        return EXIT_OK
+    if not payload["dossiers"]:
+        print(f"aucun dossier pour {args.query!r}")
+        return EXIT_OK
+    for dossier in payload["dossiers"]:
+        counts = dossier["counts"]
+        print(f"[{dossier['status']}] {dossier['title']}")
+        print(f"  santé {dossier['health']} · {counts['open']}/"
+              f"{counts['tasks']} ouvertes · {counts['completed']} terminées")
+        if dossier["aliases"]:
+            print("  alias : " + ", ".join(dossier["aliases"]))
+        for action in dossier["next_actions"][:3]:
+            print(f"  - {action['title']}")
+        for item in dossier["waiting"][:3]:
+            print(f"  ~ attente : {item['title']}")
+        for source in dossier["sources"][:3]:
+            print(f"  @ source : {source['title']}")
+    return EXIT_OK
+
+
 def _cmd_export_sp(args: argparse.Namespace) -> int:
     _load_or_fail(args.root)
     result = superproductivity.export_ready(
@@ -654,6 +719,22 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="explicit status (e.g. ACTIVE) to leave the Inbox")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_park)
+
+    p = sub.add_parser("aliases", help="list or set declared search aliases")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("--project", default=None)
+    p.add_argument("--set", default=None,
+                   help="comma-separated aliases (replaces the list)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_aliases)
+
+    p = sub.add_parser("recall", help="resolve a word into a resumable "
+                                        "dossier context")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("query")
+    p.add_argument("--limit", type=int, default=3)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_recall)
 
     p = sub.add_parser("export-sp", help="export ready tasks to Super "
                                           "Productivity import JSON")

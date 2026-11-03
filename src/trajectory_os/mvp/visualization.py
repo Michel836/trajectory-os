@@ -597,6 +597,7 @@ def _project_object(
         "project_id": project.project_id,
         "project": project.name,
         "domain": project.domain,
+        "aliases": list(project.aliases),
         "workstream": "",
         "work_package": "",
         "deliverable": "",

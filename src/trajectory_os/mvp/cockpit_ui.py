@@ -1125,7 +1125,8 @@ const S = {
   weekDraft:null, review:null,
   inspectorEdit:null, inspectorWidth:INSPECTOR_DEFAULT_WIDTH,
   inspectorCollapsed:false, inspectorInit:false,
-  openObject:null, objectOpenInit:false, duplicatePending:null
+  openObject:null, objectOpenInit:false, duplicatePending:null,
+  recallQuery:''
 };
 const $ = id => document.getElementById(id);
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;')
@@ -2637,7 +2638,10 @@ function projectEditHtml(id){
       esc(p.deadline||'')+'">'));
   h+=editSection('Context',
     editField('Description','<textarea id="pf-description" rows="3">'+
-      esc(p.description||'')+'</textarea>',true));
+      esc(p.description||'')+'</textarea>',true)+
+    editField('Alias de recherche (virgules)',
+      '<input id="pf-aliases" value="'+esc((p.aliases||[]).join(', '))+
+      '" placeholder="synonyme, acronyme, nom du tiers">',true));
   h+=editSection('Provenance',
     editMeta('Project id',p.ref_id)+
     editMeta('Provenance',p.provenance)+
@@ -2908,7 +2912,8 @@ function buildProjectBody(){return {
     name:$('pf-name').value,objective:$('pf-objective').value,
     status:$('pf-status').value,domain:$('pf-domain').value,
     urgency:$('pf-urgency').value,impact:$('pf-impact').value,
-    deadline:$('pf-deadline').value,description:$('pf-description').value};}
+    deadline:$('pf-deadline').value,description:$('pf-description').value,
+    aliases:$('pf-aliases').value};}
 async function saveProject(){const id=$('pf-id').value;
   const body=buildProjectBody();
   try{if(id){await api('/api/projects/'+encodeURIComponent(id),'POST',body);}
@@ -3953,15 +3958,101 @@ function renderTrash(){
   $('view-root').innerHTML=h;}
 
 // --- global search / command palette ---------------------------------------
+// Recall is the "find the dossier, resume the work" surface. The palette makes
+// the query; the recall panel resolves it into bounded, labelled context
+// (ADR-043). Both are read-only: a lookup never writes.
 function makeSearchRun(kind,refId){
   return function(){
     closeCommandPalette();
     if(kind==='task')selectObject('task:'+refId);
     else if(kind==='project')selectObject('project:'+refId);
+    else if(kind==='decision')setView('decisions');
+    else if(kind==='source'||kind==='signal')setView('signals');
     else if(kind==='change')setView('changes');
-    else if(kind==='signal')setView('signals');
+    else if(kind==='dossier')openRecall(refId);
   };}
+function openRecall(q){
+  S.recallQuery=String(q||'');
+  const input=$('recall-input');
+  if(input)input.value=S.recallQuery;
+  const overlay=$('recall-overlay');
+  if(overlay)overlay.classList.add('open');
+  if(S.recallQuery)runRecall(S.recallQuery);
+  else{const body=$('recall-body');
+    if(body)body.innerHTML='<p class="muted">Saisir un mot, un nom, un '+
+      'montant ou une référence.</p>';}}
+function closeRecall(){$('recall-overlay').classList.remove('open');}
+function recallKey(e){
+  if(e.key==='Enter'){e.preventDefault();runRecall(e.target.value);}}
+function runRecall(q){
+  const query=String(q||'').trim();
+  S.recallQuery=query;
+  const body=$('recall-body');
+  if(!body)return;
+  if(!query){body.innerHTML='<p class="muted">Saisir un mot.</p>';return;}
+  body.innerHTML='<p class="muted">Recherche…</p>';
+  api('/api/recall?q='+encodeURIComponent(query)+'&limit=3').then(
+    function(res){
+      if(S.recallQuery!==query)return;  // stale response guard
+      body.innerHTML=recallHtml(res);
+    }).catch(function(err){body.innerHTML='<p class="muted">'+esc(err.message)+
+      '</p>';});}
+function recallHitLabel(h){
+  return '<div class="cmd-kind">'+esc(t(h.kind))+'</div>'+
+    '<span class="cmd-label">'+esc(h.title)+'</span>'+
+    '<span class="cmd-hint">'+esc(h.reason||'')+'</span>';}
+function recallHtml(res){
+  const dossiers=res.dossiers||[];
+  if(!dossiers.length){
+    return '<p class="muted">Aucun dossier. '+
+      'Cette information peut être capturée sans rien modifier.</p>'+
+      '<div class="bar"><button class="small" onclick="recallCapture()">'+
+      'Capturer cette information</button></div>';}
+  let h='<p class="muted">'+dossiers.length+' dossier(s) · dérivé du '+
+    'portefeuille, non canonique</p>';
+  dossiers.forEach(function(d){
+    const counts=d.counts||{};
+    h+='<div class="card" style="margin:.5rem 0;padding:.6rem .7rem">'+
+      '<div class="bar" style="justify-content:space-between">'+
+      '<strong>'+esc(d.title)+'</strong>'+
+      '<span class="pill">'+esc(t(d.status))+' · '+esc(t(d.health||''))+
+      '</span></div>'+
+      '<div class="muted">'+esc(d.domain||'')+' · '+counts.open+'/'+
+      counts.tasks+' ouvertes · '+counts.completed+' terminées'+
+      (d.deadline?' · échéance '+esc(d.deadline):'')+'</div>'+
+      (d.aliases&&d.aliases.length?'<div class="muted">alias : '+
+        esc(d.aliases.join(', '))+'</div>':'')+
+      recallSection('Prochaines actions',d.next_actions,'title')+
+      recallSection('Bloqué',d.blocked,'title')+
+      recallSection('En attente',d.waiting,'title')+
+      recallSection('Sources',d.sources,'title')+
+      recallSection('Signaux',d.signals,'title')+
+      '<div class="bar"><button class="small" onclick="recallOpen(\''+
+      esc(d.project_id)+'\')">Ouvrir le dossier</button>'+
+      '<button class="small" onclick="recallCapture()">Ajouter une '+
+      'information</button></div></div>';});
+  const matched=(res.results||[]).slice(0,8);
+  if(matched.length){
+    h+='<div class="detail-block"><h4>Pourquoi ces résultats</h4>'+
+      '<div class="body">'; 
+    matched.forEach(function(r){h+='<div>'+recallHitLabel(r)+'</div>';});
+    h+='</div></div>';}
+  return h;}
+function recallSection(label,items,key){
+  if(!items||!items.length)return '';
+  let h='<div class="detail-block"><h4>'+esc(label)+'</h4><div class="body">';
+  items.slice(0,5).forEach(function(item){
+    const text=item&&item[key]!=null?item[key]:String(item||'');
+    h+='- '+esc(text)+(item&&item.reason?' · '+esc(item.reason):'')+
+      (item&&item.state?' · '+esc(t(item.state)):'')+'<br>';});
+  return h+'</div></div>';}
+function recallOpen(projectId){
+  closeRecall();
+  selectObject('project:'+projectId);}
+function recallCapture(){closeRecall();openCapture();}
 var COMMANDS=[
+  {kind:'action',label:'Contexte d’un dossier',hint:'retrouver et reprendre',
+   run:function(){closeCommandPalette();openRecall('');}},
   {kind:'action',label:'Capture rapide',hint:'texte, fichier, note',
    run:function(){closeCommandPalette();openCapture();}},
   {kind:'action',label:'Nouvelle tâche',hint:'créer une action',
@@ -4014,9 +4105,14 @@ function commandInput(value){
   S.commandTimer=setTimeout(function(){
     api('/api/search?q='+encodeURIComponent(query)+'&limit=20').then(
       function(res){
-        const results=(res.results||[]).map(function(r){
-          return {kind:r.kind,label:r.title,hint:r.hint||r.reason||'',
-            run:makeSearchRun(r.kind,r.ref_id)};});
+        const results=(res.dossiers||[]).slice(0,3).map(function(d){
+          return {kind:'dossier',label:d.title,
+            hint:'contexte · '+d.reason,
+            run:makeSearchRun('dossier',query)};});
+        (res.results||[]).forEach(function(r){
+          results.push({kind:r.kind,label:r.title,
+            hint:r.hint||r.reason||'',
+            run:makeSearchRun(r.kind,r.ref_id)});});
         const actions=COMMANDS.filter(function(c){
           return String(c.label).toLowerCase().indexOf(query.toLowerCase())
             >=0;});
@@ -4181,7 +4277,7 @@ function renderSignals(){
     '<div class="bar"><input id="signal-file" type="file" '+
     'accept=".odt,.docx,.pdf,.md,.markdown,.txt,.text,.eml,.mbox" '+
     'style="max-width:280px">'+
-    '<input id="signal-source" placeholder="source (ex. mail notaire)" '+
+    '<input id="signal-source" placeholder="source (ex. mail greffe)" '+
     'value="manuel" style="max-width:220px">'+
     '<select id="signal-project" class="inline">'+
     '<option value="">(aucun projet)</option>'+projectOpts+'</select>'+
@@ -4426,7 +4522,7 @@ function openProjectUpdate(projectId){
     '<label>Risques</label><textarea id="up-risks" rows="2"></textarea>'+
     '<label>Décision</label><input id="up-decision" placeholder="ex. '+
     'continuer, défer, changer de périmètre">'+
-    '<label>Prochaine étape</label><input id="up-next" placeholder="ex. relancer le notaire">';
+    '<label>Prochaine étape</label><input id="up-next" placeholder="ex. relancer le greffe">';
   $('update-overlay').classList.add('open');}
 function closeProjectUpdate(){$('update-overlay').classList.remove('open');}
 async function saveProjectUpdate(){
@@ -4467,6 +4563,7 @@ function initKeyboardShortcuts(){
     if(e.key==='r'){e.preventDefault();boot();return;}
     if(e.key==='/'){e.preventDefault();
       const search=$('f-search');if(search)search.focus();return;}
+    if(e.key==='g'){e.preventDefault();openRecall('');return;}
     const selected=S.selection?obj(S.selection):null;
     if(e.key==='d'&&selected&&selected.kind==='task'){
       e.preventDefault();completeOutcome(selected.ref_id);return;}
@@ -5336,6 +5433,7 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "<tr><td>d</td><td>Terminer la tâche sélectionnée</td></tr>",
         "<tr><td>s</td><td>Reporter la tâche sélectionnée</td></tr>",
         "<tr><td>/</td><td>Recherche</td></tr>",
+        "<tr><td>g</td><td>Contexte d’un dossier</td></tr>",
         "<tr><td>Ctrl/Cmd+K</td><td>Palette de commandes</td></tr>",
         "</table><div class='bar' style='justify-content:flex-end'>",
         "<button class='primary' onclick='closeHelp()'>Fermer</button>",
@@ -5358,6 +5456,17 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "style='max-width:900px'><div id='explain-body'></div>",
         "<div class='bar' style='justify-content:flex-end'>",
         "<button class='primary' onclick='closeExplain()'>Fermer</button>",
+        "</div></div></div>",
+        # Context Recall: a word -> the dossier and its resumable context
+        "<div class='overlay' id='recall-overlay'><div class='modal' ",
+        "style='max-width:920px'><h3>Contexte du dossier</h3>",
+        "<input id='recall-input' class='inline' style='width:100%' ",
+        "placeholder='un mot, un nom, un montant, une référence…' "
+        "autocomplete='off' ",
+        "onkeydown='recallKey(event)'>",
+        "<div id='recall-body'></div>",
+        "<div class='bar' style='justify-content:flex-end'>",
+        "<button onclick='closeRecall()'>Fermer</button>",
         "</div></div></div>",
         # Global search / command palette
         "<div class='overlay' id='command-overlay'><div class='command-panel'>",

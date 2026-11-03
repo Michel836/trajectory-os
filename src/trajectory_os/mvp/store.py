@@ -125,12 +125,60 @@ def backups_dir(root: str | Path) -> Path:
 
 
 def save_portfolio(root: str | Path, portfolio: model.Portfolio) -> str:
-    """Atomically persist a validated portfolio; return the written path."""
+    """Atomically persist a validated portfolio; return the written path.
+
+    If the document currently on disk is a *legacy* schema version (v1), a
+    ``pre-migration`` backup is taken **before** the first v2 write, so the
+    in-memory upgrade is always reversible. The backup is bounded by the usual
+    retention policy and never blocks the write if it fails (a read-only root
+    keeps the previous behaviour of failing on the write itself).
+    """
     portfolio.validate()
     path = default_portfolio_path(root)
     with portfolio_lock(root):
+        _backup_legacy_document(root, path)
         intel_model.write_json(path, portfolio.to_dict())
     return str(path)
+
+
+def portfolio_schema_version(root: str | Path) -> int | None:
+    """Return the schema version currently stored on disk (``None`` if absent)."""
+    document = intel_model.read_json(default_portfolio_path(root))
+    if document is None:
+        return None
+    version = document.get("schema_version")
+    return version if isinstance(version, int) else None
+
+
+def _backup_legacy_document(root: str | Path, path: Path) -> None:
+    """Take a single ``pre-migration`` backup of a legacy document."""
+    if not path.is_file():
+        return
+    document = intel_model.read_json(path)
+    if document is None:
+        return
+    version = document.get("schema_version")
+    if version not in model.LEGACY_SCHEMA_VERSIONS:
+        return
+    if _has_migration_backup(root, version):
+        return
+    try:
+        backup_portfolio(root, reason=f"pre-migration-v{version}")
+    except (OSError, model.MvpError):
+        # Never prevent the validated write; the daily backup remains.
+        return
+
+
+def _has_migration_backup(root: str | Path, version: int) -> bool:
+    folder = backups_dir(root)
+    if not folder.is_dir():
+        return False
+    suffix = f"-pre-migration-v{version}.json"
+    try:
+        return any(path.name.endswith(suffix)
+                   for path in folder.glob("portfolio-*.json"))
+    except OSError:
+        return False
 
 
 def load_portfolio(root: str | Path) -> model.Portfolio | None:
@@ -343,6 +391,7 @@ __all__ = [
     "outcome_ledger_path",
     "plans_dir",
     "portfolio_lock",
+    "portfolio_schema_version",
     "read_outcomes",
     "restore_portfolio",
     "save_plan",

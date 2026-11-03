@@ -31,10 +31,22 @@ from datetime import date
 from typing import Any, NoReturn
 
 #: Schema version of every durable MVP document.
-SCHEMA_VERSION = 1
+#:
+#: v2 adds ``Project.aliases`` (a bounded list of user-declared search
+#: synonyms). The change is purely additive: a v1 document loads and is
+#: upgraded in memory, and the first write persists v2. A v1-on-disk file is
+#: backed up before that write (see ``store.save_portfolio``).
+SCHEMA_VERSION = 2
+
+#: Legacy schema versions still accepted on read (upgraded, never rewritten
+#: silently: the upgrade only materialises on the next explicit write).
+LEGACY_SCHEMA_VERSIONS = (1,)
+
+#: Every schema version this build can read.
+READABLE_SCHEMA_VERSIONS = (1, SCHEMA_VERSION)
 
 #: Human/machine MVP version string (additive).
-MVP_VERSION = "mvp.1"
+MVP_VERSION = "mvp.2"
 
 # --- bounded limits -----------------------------------------------------------
 #
@@ -49,6 +61,9 @@ MAX_TASKS = 2048
 MAX_RESOURCES = 64
 MAX_EVENTS = 256
 MAX_DAYS_OFF = 366
+#: Declared search synonyms per project (bounded, fail closed).
+MAX_ALIASES = 12
+MAX_ALIAS_LEN = 64
 MAX_ROUTINES = 256
 MAX_DECISIONS = 512
 MAX_OPTIONS = 16
@@ -251,6 +266,20 @@ def _require_enum(value: object, field: str, allowed: frozenset[str]) -> str:
     return text
 
 
+def fold_text(value: str) -> str:
+    """Fold text for identity/search comparison.
+
+    Delegates to the single shared normalizer (ADR-033): alias identity, query
+    matching and the capture classifier must never disagree about what counts
+    as the same word. Imported lazily so the durable model never takes an
+    import-time dependency on the classification module (``mvp/__init__``
+    imports this module).
+    """
+    from trajectory_os.mvp.classification import normalize_text
+
+    return normalize_text(value)
+
+
 def _require_deadline(value: object, field: str) -> str | None:
     if value is None:
         return None
@@ -274,6 +303,35 @@ def _require_str_list(value: object, field: str, *, maximum: int) -> tuple[str, 
     if len(value) > maximum:
         _fail(E_OVERFLOW, f"{field} has too many entries")
     return tuple(_require_id(item, field) for item in value)
+
+
+def _require_alias_list(value: object) -> tuple[str, ...]:
+    """Validate project aliases: bounded, distinct after normalization.
+
+    An alias is free text (``Zephyr``, ``ALPHA``, ``nom du tiers``), not an
+    id, so it is never slug-constrained. Duplicates are rejected after the
+    shared case/accent folding so ``Zephyr`` and ``zephyr`` cannot both exist.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        _fail(E_MALFORMED, "aliases must be a list of strings")
+    if len(value) > MAX_ALIASES:
+        _fail(E_OVERFLOW, f"too many aliases (max {MAX_ALIASES})")
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = _require_str(item, "alias", maximum=MAX_ALIAS_LEN)
+        assert text is not None
+        alias = text.strip()
+        folded = fold_text(alias)
+        if not folded:
+            _fail(E_MALFORMED, "alias must contain a letter or digit")
+        if folded in seen:
+            _fail(E_MALFORMED, f"duplicate alias {alias!r}")
+        seen.add(folded)
+        out.append(alias)
+    return tuple(out)
 
 
 def _require_text_list(value: object, field: str, *, maximum: int) -> tuple[str, ...]:
@@ -411,6 +469,10 @@ class Project:
     impact: str = I_MEDIUM
     deadline: str | None = None
     description: str = ""
+    #: User-declared search synonyms (``zephyr`` -> CASE ALPHA). Declared, never
+    #: inferred: an alias is an explicit human statement of identity, so it is
+    #: safe to treat as an exact match in recall (ADR-042).
+    aliases: tuple[str, ...] = ()
 
     def validate(self) -> Project:
         _require_id(self.project_id, "project_id")
@@ -424,6 +486,7 @@ class Project:
         if self.description:
             _require_str(self.description, "description",
                          maximum=MAX_TEXT_LEN)
+        _require_alias_list(self.aliases)
         return self
 
     @property
@@ -446,6 +509,7 @@ class Project:
             "impact": self.impact,
             "deadline": self.deadline,
             "description": self.description,
+            "aliases": list(self.aliases),
         }
 
     @staticmethod
@@ -460,6 +524,7 @@ class Project:
             impact=str(data.get("impact", I_MEDIUM)),
             deadline=_require_deadline(data.get("deadline"), "deadline"),
             description=str(data.get("description", "")),
+            aliases=_require_alias_list(data.get("aliases")),
         ).validate()
 
 
@@ -984,9 +1049,11 @@ class Portfolio:
     @staticmethod
     def from_dict(data: Mapping[str, Any]) -> Portfolio:
         version = data.get("schema_version")
-        if version != SCHEMA_VERSION:
+        if version not in READABLE_SCHEMA_VERSIONS:
             _fail(E_UNSUPPORTED_VERSION,
                   f"schema_version={version!r}")
+        # v1 -> v2 is additive (aliases default to ()), so reading a legacy
+        # document is an in-memory upgrade; nothing is persisted here.
         raw_projects = data.get("projects") or []
         raw_tasks = data.get("tasks") or []
         raw_routines = data.get("routines") or []
@@ -1000,7 +1067,7 @@ class Portfolio:
         capacity_data: Mapping[str, Any] = (
             raw_capacity if isinstance(raw_capacity, Mapping) else {})
         return Portfolio(
-            schema_version=int(version),
+            schema_version=SCHEMA_VERSION,
             name=str(data.get("name", "personal-portfolio")),
             projects=tuple(Project.from_dict(item)
                            for item in raw_projects

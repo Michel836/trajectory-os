@@ -51,6 +51,9 @@ from trajectory_os.mvp import (
     visualization,
 )
 from trajectory_os.mvp import (
+    recall as recall_module,
+)
+from trajectory_os.mvp import (
     search as search_module,
 )
 
@@ -218,6 +221,15 @@ class Dashboard:
 
     def search(self, query: str, limit: int = 30) -> dict[str, Any]:
         return search_module.search(self.root, query, limit=limit)
+
+    def recall(self, query: str, limit: int = 3) -> dict[str, Any]:
+        """Resolve a word into a resumable dossier context (read-only)."""
+        return recall_module.resolve(self.root, query, limit_projects=limit)
+
+    def set_aliases(self, project_id: str,
+                    payload: Mapping[str, Any]) -> dict[str, Any]:
+        return mutations.set_aliases(self.root, project_id,
+                                     {"aliases": payload.get("aliases")})
 
     # --- inbound signals / proposals ---------------------------------------
 
@@ -1025,6 +1037,14 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                                    self._query_int("limit")
                                    if "limit" in query else 30))
                     return
+                if parts == ["api", "recall"]:
+                    query = parse_qs(urlparse(self.path).query)
+                    self._send_json(
+                        HTTPStatus.OK,
+                        app.recall(query.get("q", [""])[0],
+                                   self._query_int("limit")
+                                   if "limit" in query else 3))
+                    return
                 if parts == ["api", "preferences"]:
                     self._send_json(
                         HTTPStatus.OK,
@@ -1226,6 +1246,9 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
             if len(parts) == 4 and parts[:2] == ["api", "projects"] \
                     and parts[3] == "park":
                 return app.park_project(parts[2], payload)
+            if len(parts) == 4 and parts[:2] == ["api", "projects"] \
+                    and parts[3] == "aliases":
+                return app.set_aliases(parts[2], payload)
             if len(parts) == 3 and parts[:2] == ["api", "projects"]:
                 return app.update_project(parts[2], payload)
             if parts == ["api", "domains", "rename"]:
