@@ -4057,8 +4057,22 @@ function recallSection(label,items,key){
       (item&&item.state?' · '+esc(t(item.state)):'')+'<br>';});
   return h+'</div></div>';}
 function recallOpen(projectId){
+  const id = 'project:' + projectId;
   closeRecall();
-  selectObject('project:'+projectId);}
+  // "Ouvrir le dossier" must produce a visible result. The Inspector is
+  // hidden when the pane is collapsed, and a project is not part of every view
+  // (Today lists tasks, not projects), so selecting alone changes nothing on
+  // screen. Switch to the listing view, drop the view filter that could hide
+  // the row, un-collapse the Inspector, then select and confirm.
+  S.search = '';
+  S.view = 'list';
+  S.showAdvanced = false;
+  ensureInspectorOpen();
+  selectObject(id);
+  persistPrefs({view: 'list'});
+  const o = obj(id);
+  notice('Dossier ouvert : ' + ((o && o.title) || projectId));
+}
 function recallCapture(){closeRecall();openCapture();}
 var COMMANDS=[
   {kind:'action',label:'Contexte d’un dossier',hint:'retrouver et reprendre',

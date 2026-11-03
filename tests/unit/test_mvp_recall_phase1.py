@@ -672,3 +672,76 @@ def test_view_filter_offers_global_recall_on_enter(tmp_path: Path) -> None:
     assert 'id="f-search"' in html
     assert 'onkeydown="searchKey(event)"' in html
     assert "Entrée : chercher partout" in html
+
+
+# --- "open the dossier" must produce a visible result ------------------------
+
+
+def test_open_dossier_from_the_panel_switches_view_and_shows_it(
+        tmp_path: Path) -> None:
+    """Regression: the panel button selected the project but nothing appeared.
+
+    Reported from real use. Two mechanisms made the click invisible: a project
+    belongs to no "Today" row, and the Inspector is hidden while the pane is
+    collapsed. The click did persist `selected`, so the action was registered
+    but unobservable — the worst outcome. This test drives the shipped
+    `recallOpen` with a real `build_views` payload and the real default
+    preferences, then asserts the view changes, the Inspector holds the
+    dossier, feedback is given and the selection survives reconciliation.
+    """
+    import json
+    import os
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - node is optional
+        pytest.skip("node not available")
+
+    from test_mvp_duplicate_ui import _STUBS
+
+    from trajectory_os.mvp import uistate, visualization
+
+    root = str(tmp_path)
+    _seed(root, aliases=("zephyr",))
+    views = visualization.build_views(root)
+    prefs = uistate.default_preferences().to_dict()
+    views_path = tmp_path / "views.json"
+    prefs_path = tmp_path / "prefs.json"
+    views_path.write_text(json.dumps(views), encoding="utf-8")
+    prefs_path.write_text(json.dumps(prefs), encoding="utf-8")
+
+    script = tmp_path / "open_dossier.js"
+    script.write_text(_STUBS + "\n" + cockpit_ui.PAGE_JS + "\n" + r"""
+const assert = require('assert');
+const fs = require('fs');
+S.views = JSON.parse(fs.readFileSync(process.env.VIEWS, 'utf8'));
+S.prefs = JSON.parse(fs.readFileSync(process.env.PREFS, 'utf8'));
+S.view = 'today';
+S.search = 'zephyr';
+S.inspectorCollapsed = true;          // the pane was collapsed by the user
+const insp = $('inspector-body');
+assert.strictEqual(insp.innerHTML.length, 0, 'precondition: nothing rendered');
+
+recallOpen('case-alpha');
+
+assert.strictEqual(S.view, 'list', 'a project belongs to the listing view');
+assert.strictEqual(S.search, '', 'the view filter that could hide it is cleared');
+assert.strictEqual(S.selection, 'project:case-alpha');
+assert.ok(insp.innerHTML.length > 500, 'the Inspector rendered the dossier');
+assert.ok(insp.innerHTML.indexOf('Dossier Alpha') >= 0, 'dossier title shown');
+assert.strictEqual(insp.innerHTML.indexOf('Select a project or task'), -1,
+  'not the empty placeholder');
+assert.ok($('notice').innerHTML.indexOf('Dossier ouvert') >= 0, 'feedback');
+assert.strictEqual($('recall-overlay').classList.contains('open'), false,
+  'the panel closed');
+reconcileSelection();
+assert.strictEqual(S.selection, 'project:case-alpha',
+  'the selection survives the view reconciliation');
+console.log('OPEN_DOSSIER_OK');
+""", encoding="utf-8")
+    result = subprocess.run(
+        [node, str(script)], capture_output=True, text=True, check=False,
+        env=dict(os.environ, VIEWS=str(views_path), PREFS=str(prefs_path)))
+    assert result.returncode == 0, result.stderr
+    assert "OPEN_DOSSIER_OK" in result.stdout
