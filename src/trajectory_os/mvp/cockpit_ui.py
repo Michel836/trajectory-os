@@ -888,17 +888,18 @@ function normaliseTables(value){
         if(raw==null||raw==='')return;
         out[k].filters[key]=String(raw);});}});
   return out;}
-// Presentation-only global search: pure, deterministic token matching over
-// the fields a human would search, plus the server-derived import vocabulary
-// (`o.search_text`, from persisted import artifacts). Case- and accent-
-// insensitive. Combined with (never replacing) the global
+// Presentation-only view filter: pure, deterministic token matching over the
+// fields a human would search, plus the server-derived import vocabulary
+// (`o.search_text`, from persisted import artifacts) and the project's
+// declared aliases (`o.aliases`, ADR-042) — a declared synonym must filter its
+// dossier in here too, not only in the global palette. Case- and
+// accent-insensitive. Combined with (never replacing) the global
 // scope/level/status/evidence filters. No business rule here.
 //
-// LIMITATION (V1, deliberate): search only sees the objects that already pass
-// the active filters, so it answers "is it in the current view?" rather than
-// the eventual "does Trajectory know this?" question used for search-before-
-// capture. Widening this to a filter-independent lookup is a next step, not a
-// silent change here.
+// LIMITATION (deliberate): this filter only sees the objects that already pass
+// the active filters and the active view, so it answers "is it in the current
+// view?" rather than "does Trajectory know this?". Pressing Enter in the field
+// hands the text to the global recall panel, which answers the second one.
 function searchFold(value){return String(value==null?'':value)
   .normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();}
 function searchTermsOf(value){return searchFold(value)
@@ -908,7 +909,7 @@ function searchMatches(o,terms){
   if(!o)return false;
   var hay=searchFold([o.title,o.project,o.domain,o.workstream,o.deliverable,
     o.description,o.objective,o.next_action,o.status,o.evidence,o.ref_id,
-    o.search_text]
+    o.search_text,(o.aliases||[]).join(' ')]
     .map(function(v){return v==null?'':String(v);}).join(' '));
   return terms.every(function(t){return hay.indexOf(t)>=0;});}
 // --- inspector workspace helpers (pure; no DOM) ------------------------------
@@ -1531,8 +1532,11 @@ function renderControls(){
         esc(t(e))+'</span>';}).join('')+'</div></span>'+
     '<span class="ctl"><label>Recherche</label>'+
     '<input id="f-search" class="inline" type="search" '+
-    'placeholder="projets et tâches…" value="'+esc(S.search)+'" '+
-    'style="min-width:170px" oninput="searchInput(this.value)"></span>'+
+    'placeholder="filtrer la vue… (Entrée : chercher partout)" '+
+    'title="Filtre la vue courante. Entrée : chercher dans tous les dossiers" '+
+    'value="'+esc(S.search)+'" '+
+    'style="min-width:170px" oninput="searchInput(this.value)" '+
+    'onkeydown="searchKey(event)"></span>'+
     '<span class="ctl"><label>Vue enregistrée</label>'+
     '<select id="f-saved" onchange="savedViewChange()">'+
     savedViewOptions()+'</select>'+
@@ -1543,6 +1547,12 @@ function renderControls(){
 }
 function searchInput(v){S.search=v||'';reconcileSelection();renderView();
   renderInspector();}
+// Enter in the view filter hands the text to global recall: the same gesture
+// answers both questions ("is it in this view?" and "which dossier is it?").
+function searchKey(e){
+  if(e.key!=='Enter')return;
+  e.preventDefault();
+  openRecall(String(e.target.value||'').trim());}
 function savedViewOptions(){
   const views=(S.prefs&&S.prefs.saved_views)||{};
   return '<option value="">—</option>'+Object.keys(views).sort().map(

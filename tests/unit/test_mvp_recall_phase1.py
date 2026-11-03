@@ -616,3 +616,59 @@ console.log('RECALL_SMOKE_OK');
                  RECALL_PAYLOAD=json.dumps(payload, ensure_ascii=False)))
     assert result.returncode == 0, result.stderr
     assert "RECALL_SMOKE_OK" in result.stdout
+
+
+# --- the visible view filter must not hide a declared alias ------------------
+
+
+def test_view_filter_matches_a_declared_alias(tmp_path: Path) -> None:
+    """Regression: the visible search field did not see `o.aliases`.
+
+    Typing a declared synonym in the view filter returned nothing even though
+    the dossier carried it, because the client-side haystack was built from a
+    fixed field list that omitted aliases.
+    """
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - node is optional
+        pytest.skip("node not available")
+
+    script = tmp_path / "view_filter.js"
+    script.write_text(cockpit_ui.TABLE_JS_HELPERS + "\n" + r"""
+const assert=require('assert');
+const o={title:'Dossier Alpha',project:'Dossier Alpha',domain:'finance',
+  workstream:'',deliverable:'',description:'',objective:'régulariser',
+  next_action:'',status:'WAITING',evidence:'FACT',ref_id:'case-alpha',
+  search_text:'',aliases:['zephyr','ALPHA']};
+assert.strictEqual(searchMatches(o,searchTermsOf('zephyr')),true);
+assert.strictEqual(searchMatches(o,searchTermsOf('ZEPHYR')),true);
+assert.strictEqual(searchMatches(o,searchTermsOf('Alpha')),true);
+assert.strictEqual(searchMatches(o,searchTermsOf('absent')),false);
+// an object without aliases keeps working
+const bare={title:'T',ref_id:'t'};
+assert.strictEqual(searchMatches(bare,searchTermsOf('t')),true);
+assert.strictEqual(searchMatches(bare,searchTermsOf('zephyr')),false);
+console.log('FILTER_OK');
+""", encoding="utf-8")
+    result = subprocess.run([node, str(script)], capture_output=True,
+                            text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "FILTER_OK" in result.stdout
+
+
+def test_view_filter_offers_global_recall_on_enter(tmp_path: Path) -> None:
+    """The visible field must hand its text to recall instead of dead-ending."""
+    from trajectory_os.mvp import engine
+
+    js = cockpit_ui.PAGE_JS
+    assert "function searchKey(e)" in js
+    assert "openRecall(String(e.target.value||'').trim())" in js
+
+    root = str(tmp_path)
+    _seed(root, aliases=("zephyr",))
+    html = cockpit_ui.render_page(engine.build_cockpit(root))
+    assert 'id="f-search"' in html
+    assert 'onkeydown="searchKey(event)"' in html
+    assert "Entrée : chercher partout" in html
