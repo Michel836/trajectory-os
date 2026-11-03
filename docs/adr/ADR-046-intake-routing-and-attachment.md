@@ -47,6 +47,42 @@ Après correction :
 
 ## Decision
 
+### 0. Une mention n'est pas une identité (correction après usage réel)
+
+Deuxième mesure, sur une **lettre réelle** adressée à un service social : le
+routeur a présélectionné le dossier `taxe-fonciere…` parce que la lettre
+mentionnait, au **cinquième paragraphe**, le règlement d'une taxe foncière
+(score 7,33 ; deuxième candidat 3,56). Le sujet réel de la lettre était
+ailleurs, et aucun dossier n'existait pour lui.
+
+Un routage lexical ne peut pas distinguer une mention incidente d'une identité :
+la règle a donc changé de nature. **Présélectionner est une affirmation** ; elle
+exige une preuve d'identité :
+
+- un **alias déclaré** trouvé n'importe où (c'est l'humain qui l'affirme) ;
+- ou le **nom du dossier en en-tête** (≤ 35 % du texte) ou **en signature**
+  (≥ 75 %).
+
+Position mesurée : « taxe » à **57 %** (corps → mention incidente) contre
+« orcinvest » à **93 %** (signature → identité). Une mention au milieu du corps
+ne présélectionne plus ; le candidat reste affiché avec sa raison.
+
+Un second défaut a été trouvé par le test de bout en bout : un alias
+**multi-mots** (« aduriz bonneau ») ne pouvait jamais correspondre, la
+comparaison se faisant sur des jetons isolés. Les alias sont désormais
+recherchés comme **phrases normalisées** dans le texte replié.
+
+### 0 bis. La correction est durable
+
+Quand l'humain choisit un dossier qui n'était pas proposé, l'écran permet de
+**mémoriser un alias** (typiquement le nom de l'expéditeur). Il est ajouté aux
+alias du dossier au moment de l'intégration, journalisé, et le courrier suivant
+du même correspondant est routé correctement sans intervention. C'est le seul
+« apprentissage » du système : une **déclaration humaine**, pas un modèle.
+
+De même, en cas d'abstention, l'écran peut **créer le dossier manquant** en un
+clic puis y intégrer le message.
+
 ### 1. `route()` propose, ne décide jamais
 
 `recall.route(root, text)` renvoie jusqu'à trois candidats

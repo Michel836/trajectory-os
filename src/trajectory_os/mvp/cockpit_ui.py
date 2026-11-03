@@ -4397,6 +4397,14 @@ function renderIntake(){
         function(o){return '<option value="'+esc(o.ref_id)+'">'+
           esc(o.title)+'</option>';}).join('')+'</select></div>';
   }
+  h+='<div class="bar"><input id="intake-alias" placeholder="mémoriser un '+
+    'alias (ex. nom de l\'expéditeur)" style="max-width:250px"></div>';
+  if(route.abstain){
+    h+='<div class="bar"><input id="intake-new-project" placeholder="créer '+
+      'un dossier pour ce message…" style="max-width:250px">'+
+      '<button class="small" onclick="createIntakeProject()">Créer ce '+
+      'dossier</button></div>';
+  }
   h+='<div class="bar"><label class="small">Nature '+
     '<select id="intake-kind" class="inline">'+
     intakeState.kinds.map(function(k){return '<option value="'+esc(k)+'"'+
@@ -4423,15 +4431,40 @@ function intakeProject(){
   const manual=$('intake-project-manual');
   return manual?manual.value:'';}
 function cancelIntake(){intakeState=null;renderIntake();}
+async function createIntakeProject(){
+  if(!intakeState)return;
+  const nameEl=$('intake-new-project');
+  const name=nameEl?String(nameEl.value||'').trim():'';
+  if(!name){notice('Donnez un nom au nouveau dossier');return;}
+  const kindEl=$('intake-kind');
+  const aliasEl=$('intake-alias');
+  try{
+    const created=await api('/api/projects','POST',{
+      name:name,objective:'Créé depuis un message collé.'});
+    const res=await api('/api/intake/confirm','POST',{
+      text:intakeState.text,source_ref:intakeState.source,
+      project_id:created.project_id,
+      note_kind:kindEl?kindEl.value:'NOTE',
+      remember_alias:aliasEl?(aliasEl.value||'').trim():''});
+    intakeState=null;
+    const el=$('signal-text');if(el)el.value='';
+    renderIntake();
+    await refresh({keepNotice:true,notice:'Dossier « '+name+
+      ' » créé · message intégré'+
+      (res.pending&&res.pending.length?' · '+res.pending.length+
+        ' proposition(s) à valider':'')});
+  }catch(err){notice(err.message);}}
 async function confirmIntake(){
   if(!intakeState)return;
   const project=intakeProject();
   if(!project){notice('Choisissez un dossier');return;}
   const kindEl=$('intake-kind');
   try{
+    const aliasEl=$('intake-alias');
     const res=await api('/api/intake/confirm','POST',{
       text:intakeState.text,source_ref:intakeState.source,
-      project_id:project,note_kind:kindEl?kindEl.value:'NOTE'});
+      project_id:project,note_kind:kindEl?kindEl.value:'NOTE',
+      remember_alias:aliasEl?(aliasEl.value||'').trim():''});
     intakeState=null;
     const el=$('signal-text');if(el)el.value='';
     renderIntake();

@@ -99,10 +99,19 @@ l’alias n’a pas été déclaré : ajoutez-le dans l’édition du projet
    l’alias … ») ;
 2. s’il hésite, il l’écrit et ne rattache rien : les candidats restent
    cliquables ;
-3. choisir la nature (fait, question, réponse, décision, référence, événement) ;
-4. **Intégrer au dossier** : le message devient une **note** du dossier,
+3. si aucun dossier ne convient : **créer le dossier** depuis ce panneau, ou
+   choisir un dossier existant ;
+4. si le même correspondant vous écrira encore, renseigner
+   **« mémoriser un alias »** (ex. son nom) : la prochaine lettre sera routée
+   correctement ;
+5. choisir la nature (fait, question, réponse, décision, référence, événement) ;
+6. **Intégrer au dossier** : le message devient une **note** du dossier,
    cherchable, avec sa provenance ;
-5. les propositions détectées restent à valider une par une dans la liste.
+7. les propositions détectées restent à valider une par une dans la liste.
+
+Un nom de dossier cité **au milieu** d'un texte ne suffit pas à le
+présélectionner : c'est une mention, pas une identité. Le candidat reste
+affiché, c'est vous qui tranchez.
 
 Rien n’est écrit avant le clic sur **Intégrer au dossier**. Re-coller le même
 message ne crée pas de doublon.

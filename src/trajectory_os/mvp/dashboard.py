@@ -285,6 +285,18 @@ class Dashboard:
             "sensitivity": sensitive,
             "content_hash": signal["content_hash"],
         })
+        remembered = ""
+        alias = payload.get("remember_alias")
+        if isinstance(alias, str) and alias.strip():
+            current = self.portfolio().project_map()[project_id]
+            merged = list(current.aliases)
+            folded = {model.fold_text(item) for item in merged}
+            if (model.fold_text(alias) not in folded
+                    and len(merged) < model.MAX_ALIASES):
+                merged.append(alias.strip())
+                mutations.set_aliases(self.root, project_id,
+                                      {"aliases": merged})
+                remembered = alias.strip()
         applied: list[str] = []
         rejected: list[dict[str, Any]] = []
         for proposal_id in accept_ids:
@@ -302,6 +314,7 @@ class Dashboard:
         return {
             "signal_id": signal["signal_id"],
             "note": note,
+            "remembered_alias": remembered,
             "applied": applied,
             "rejected": rejected,
             "pending": remaining,

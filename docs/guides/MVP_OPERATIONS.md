@@ -60,6 +60,10 @@ POST /api/intake/confirm    {"text": "…", "project_id": "…", "note_kind": "F
 `/api/intake` ne modifie rien. `/api/intake/confirm` écrit : signal (provenance),
 note attachée, puis les seules propositions explicitement acceptées.
 
+`remember_alias` (optionnel) ajoute un alias au dossier choisi : c’est ainsi
+qu’un correspondant devient reconnaissable sans modèle. L’alias est journalisé
+et borné (`MAX_ALIASES`), les doublons sont ignorés.
+
 ### Index de récupération
 
 L’index de recherche est **dérivé et reconstructible** : il est bâti depuis

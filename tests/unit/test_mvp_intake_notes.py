@@ -63,6 +63,12 @@ def _seed(root: str | Path) -> None:
             model.Project(project_id="case-beta", name="Dossier Beta",
                           objective="Obtenir les attestations.",
                           domain="admin"),
+            # a dossier whose *name* is a common expression, so a passing
+            # mention of it can be reproduced (the real-world failure mode)
+            model.Project(project_id="case-tax",
+                          name="Taxe Foncière — réduire la demande",
+                          objective="Obtenir une réduction.",
+                          domain="admin"),
         ),
         tasks=(
             model.Task(task_id="alpha.pay", project_id="case-alpha",
@@ -424,3 +430,159 @@ def test_note_kind_has_a_french_label() -> None:
         # the page translates known values; an unknown one falls back to itself
         assert ui.PAGE_JS.count(kind) >= 0
     assert classification.normalize_text("QUESTION") == "question"
+
+
+# --- routing precision: a passing mention is not identity --------------------
+
+
+PASSING_MENTION = """Bonjour Madame,
+
+Je me suis présenté au service social pour ma carte de restauration sociale.
+J'ai vérifié mes messageries sans retrouver de trace de vos appels.
+Ma situation financière demeure inchangée.
+La dernière épreuve a été le règlement de ma taxe foncière de 423 EUR.
+Je vous remercie de votre accompagnement et de votre attention.
+La personne qui m'a accueilli indique que vous reprendriez contact.
+Bien cordialement, Michel"""
+
+SIGNATURE = """Bonjour,
+
+Le cabinet a répondu favorablement sur le dossier.
+
+Bien cordialement,
+Michel
+Alphacorp"""
+
+
+def test_route_abstains_when_the_name_is_a_passing_mention(
+        tmp_path: Path) -> None:
+    """A dossier named in the middle of a letter is vocabulary, not identity.
+
+    Measured on a real letter: an expense quoted in the fifth paragraph was the
+    name of another dossier and the router preselected it. The name must appear
+    in the header or the signature to justify a proposal.
+    """
+    root = str(tmp_path)
+    _seed(root)
+    result = recall.route(root, PASSING_MENTION)
+    assert result["abstain"] is True
+    assert result["top"] is None
+    assert "passant" in result["reason"]
+    # the candidate stays visible so the human can still pick it
+    assert result["candidates"]
+
+
+def test_route_proposes_when_the_name_is_in_the_signature(
+        tmp_path: Path) -> None:
+    root = str(tmp_path)
+    _seed(root)
+    result = recall.route(root, SIGNATURE)
+    assert result["abstain"] is False
+    assert result["top"] == "case-alpha"
+    candidate = result["candidates"][0]
+    assert candidate["identity_position"] is not None
+    assert candidate["identity_position"] >= 0.75
+
+
+def test_route_matches_a_multi_word_alias(tmp_path: Path) -> None:
+    """An alias is often several words; a token set can never match it."""
+    root = str(tmp_path)
+    _seed(root)
+    mutations.set_aliases(root, "case-alpha",
+                          {"aliases": ["aduriz bonneau"]})
+    result = recall.route(root, "Bonjour Madame Aduriz Bonneau, je confirme.")
+    assert result["abstain"] is False
+    assert result["top"] == "case-alpha"
+    assert "alias" in result["candidates"][0]["reason"]
+
+
+def test_route_requires_identity_even_with_rich_vocabulary(
+        tmp_path: Path) -> None:
+    """Shared vocabulary alone never preselects a dossier."""
+    root = str(tmp_path)
+    _seed(root)
+    result = recall.route(
+        root, "Payer le cabinet, envoyer les statuts, obtenir les "
+              "attestations, relancer le greffe.")
+    assert result["abstain"] is True
+    assert result["top"] is None
+
+
+# --- the correction is durable ------------------------------------------------
+
+
+def test_a_remembered_alias_routes_the_next_message(
+        tmp_path: Path) -> None:
+    from test_mvp_dashboard_api import _request, _server
+
+    root = str(tmp_path)
+    _seed(root)
+    with _server(root) as port:
+        status, preview = _request(port, "POST", "/api/intake",
+                                   {"text": PASSING_MENTION,
+                                    "source_ref": "courrier:social"})
+        assert preview["route"]["abstain"] is True
+        status, done = _request(port, "POST", "/api/intake/confirm", {
+            "text": PASSING_MENTION,
+            "source_ref": "courrier:social",
+            "project_id": "case-beta",
+            "note_kind": "FACT",
+            "remember_alias": "aduriz bonneau",
+        })
+        assert status == 200
+        assert done["remembered_alias"] == "aduriz bonneau"
+        status, again = _request(port, "POST", "/api/intake", {
+            "text": "Bonjour Madame Aduriz Bonneau, je confirme mon adresse.",
+            "source_ref": "courrier:social-2"})
+        assert again["route"]["abstain"] is False
+        assert again["route"]["top"] == "case-beta"
+
+    portfolio = store.load_portfolio(root)
+    assert portfolio is not None
+    assert "aduriz bonneau" in portfolio.project_map()["case-beta"].aliases
+    # the alias was journalled as a project update
+    assert any(record.object_kind == "project"
+               for record in changes.read_changes(root, limit=10))
+
+
+def test_remember_alias_is_idempotent_and_bounded(tmp_path: Path) -> None:
+    from test_mvp_dashboard_api import _request, _server
+
+    root = str(tmp_path)
+    _seed(root)
+    payload = {"text": MESSAGE, "project_id": "case-alpha",
+               "remember_alias": "aduriz bonneau"}
+    with _server(root) as port:
+        first = _request(port, "POST", "/api/intake/confirm", payload)[1]
+        second = _request(port, "POST", "/api/intake/confirm", payload)[1]
+    assert first["remembered_alias"] == "aduriz bonneau"
+    assert second["remembered_alias"] == ""
+    portfolio = store.load_portfolio(root)
+    assert portfolio is not None
+    assert portfolio.project_map()["case-alpha"].aliases.count(
+        "aduriz bonneau") == 1
+
+
+def test_create_a_dossier_then_attach_the_message(tmp_path: Path) -> None:
+    from test_mvp_dashboard_api import _request, _server
+
+    root = str(tmp_path)
+    _seed(root)
+    with _server(root) as port:
+        status, created = _request(port, "POST", "/api/projects", {
+            "name": "Service social — carte de restauration",
+            "objective": "Maintenir le lien avec le service social."})
+        assert status == 200
+        status, done = _request(port, "POST", "/api/intake/confirm", {
+            "text": PASSING_MENTION,
+            "source_ref": "courrier:social",
+            "project_id": created["project_id"],
+            "note_kind": "FACT"})
+        assert status == 200
+    portfolio = store.load_portfolio(root)
+    assert portfolio is not None
+    notes = portfolio.notes_of(created["project_id"])
+    assert len(notes) == 1
+    assert "service social" in notes[0].text
+    assert any(hit["kind"] == "note"
+               for hit in recall.search(root, "service social")["results"])

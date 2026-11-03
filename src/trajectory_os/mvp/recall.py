@@ -836,6 +836,13 @@ __all__ = [
 ROUTE_MIN_SCORE = 2.0
 #: Minimum top/second ratio; below it the answer is considered ambiguous.
 ROUTE_MIN_MARGIN = 1.2
+#: Where a dossier name must appear to count as *identity* rather than a passing
+#: mention: in the header (subject/opening) or in the signature block. A name
+#: quoted mid-body is evidence that the word is shared vocabulary, not that the
+#: message belongs to that dossier (measured on a real letter where an expense
+#: mentioned in the fifth paragraph was the name of another dossier).
+ROUTE_IDENTITY_HEADER = 0.35
+ROUTE_IDENTITY_SIGNATURE = 0.75
 #: Text tokens shorter than this are ignored when scoring.
 ROUTE_MIN_TOKEN_LEN = 3
 #: Bounded number of tokens read from a pasted text.
@@ -912,6 +919,8 @@ def route(root: str | Path, text: str, *,
                 "margin": margin}
 
     tokens = _route_tokens(raw)
+    folded = classification.normalize_text(raw)
+    total_chars = max(1, len(folded))
     vocabulary = _project_vocabulary(loaded)
     project_tokens = {pid: set(hay.split()) for pid, hay in vocabulary.items()}
     document_frequency: Counter[str] = Counter()
@@ -931,13 +940,19 @@ def route(root: str | Path, text: str, *,
 
     brand_tokens = {project.project_id: _brand(project)
                     for project in loaded.projects}
-    alias_tokens = {
-        project.project_id: {classification.normalize_text(alias)
-                             for alias in project.aliases}
+    # Aliases are matched as normalized *phrases* inside the folded text: an
+    # alias is often several words ("aduriz bonneau"), which can never match a
+    # set of single tokens.
+    alias_phrases = {
+        project.project_id: tuple(
+            phrase for phrase in (classification.normalize_text(alias)
+                                  for alias in project.aliases)
+            if len(phrase) >= 3)
         for project in loaded.projects
     }
 
-    scored: list[tuple[float, model.Project, str, list[str]]] = []
+    scored: list[tuple[float, model.Project, str, list[str], bool,
+                       float | None]] = []
     for project in loaded.projects:
         words = project_tokens.get(project.project_id, set())
         matched = sorted(token for token in tokens if token in words)
@@ -945,15 +960,31 @@ def route(root: str | Path, text: str, *,
                     for token in matched)
         reasons: list[str] = []
         identity: set[str] = set()
+        positions: list[float] = []
+        declared_hit = False
         brand = brand_tokens.get(project.project_id, "")
         if brand and brand in tokens:
             identity.add(brand)
             score += 3.0
-            reasons.append("le texte nomme « " + brand + " »")
-        declared = sorted(alias_tokens.get(project.project_id, set()) & tokens)
+            at = folded.find(brand)
+            position = (at / total_chars) if at >= 0 else None
+            if position is not None:
+                positions.append(position)
+                reasons.append("le texte nomme « " + brand + " » ("
+                               + str(round(position * 100)) + " %)")
+            else:  # pragma: no cover - brand is in the tokens by construction
+                reasons.append("le texte nomme « " + brand + " »")
+        declared: list[str] = []
+        for phrase in alias_phrases.get(project.project_id, ()):
+            at = folded.find(phrase)
+            if at < 0:
+                continue
+            declared.append(phrase)
+            positions.append(at / total_chars)
         if declared:
-            identity |= set(declared)
+            declared_hit = True
             score += 3.0 * len(declared)
+            identity |= set(" ".join(declared).split())
             reasons.append("le texte contient l'alias « "
                            + " », « ".join(declared) + " »")
         context = [token for token in matched if token not in identity]
@@ -961,7 +992,9 @@ def route(root: str | Path, text: str, *,
             reasons.append("vocabulaire commun : " + ", ".join(context[:6]))
         if score <= 0:
             continue
-        scored.append((round(score, 2), project, "; ".join(reasons), context))
+        best_position = min(positions) if positions else None
+        scored.append((round(score, 2), project, "; ".join(reasons), context,
+                       declared_hit, best_position))
 
     scored.sort(key=lambda item: (-item[0], item[1].project_id))
     ranked = scored[:bound]
@@ -969,21 +1002,38 @@ def route(root: str | Path, text: str, *,
         {"project_id": project.project_id, "title": project.name,
          "status": project.status, "score": score,
          "reason": reason or "vocabulaire commun",
-         "matched": matched[:8]}
-        for score, project, reason, matched in ranked
+         "matched": matched[:8],
+         "identity": declared_hit or position is not None,
+         "identity_position": position}
+        for score, project, reason, matched, declared_hit, position in ranked
     ]
     if not candidates:
         return {"candidates": [], "abstain": True, "top": None,
                 "reason": "aucun vocabulaire commun avec un dossier",
                 "threshold": threshold, "margin": margin}
 
-    top_score = ranked[0][0]
+    top_score, _, _, _, top_alias, top_position = ranked[0]
     second_score = ranked[1][0] if len(ranked) > 1 else 0.0
+    positioned = (top_position is not None and (
+        top_position <= ROUTE_IDENTITY_HEADER
+        or top_position >= ROUTE_IDENTITY_SIGNATURE))
+    # Preselecting a dossier is a *claim*. Vocabulary alone is not enough: a
+    # word shared with a dossier (an expense quoted mid-letter) is not identity.
+    # Only a declared alias (anywhere) or the dossier name in the header or the
+    # signature justifies a proposal.
+    strong_identity = top_alias or positioned
     abstain = top_score < threshold
     reason = ""
     if abstain:
         reason = ("score insuffisant (" + str(top_score) + " < "
                   + str(threshold) + ") : / rattachement non proposé")
+    elif not strong_identity:
+        abstain = True
+        where = ("mentionné en passant"
+                 if top_position is not None else
+                 "aucun nom ni alias dans l'en-tête ou la signature")
+        reason = (where + " : / rattachement non proposé, choisissez le "
+                  "dossier")
     elif second_score and top_score / second_score < margin:
         abstain = True
         reason = ("deux dossiers trop proches (" + str(top_score) + " / "

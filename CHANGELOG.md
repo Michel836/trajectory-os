@@ -11,7 +11,13 @@
 - re-collage idempotent, note cherchable (`bioverify` retrouve le dossier) ;
 - `POST /api/intake` (essai à blanc, zéro écriture) et
   `POST /api/intake/confirm` (seul chemin d'écriture) ;
-- `mutations.add_note` / `update_note` / `delete_note`, journalisées.
+- `mutations.add_note` / `update_note` / `delete_note`, journalisées ;
+- présélection d’un dossier **uniquement sur preuve d’identité** : alias déclaré,
+  ou nom en en-tête/signature — une mention au milieu du texte n’est plus une
+  identité (correction après usage réel) ;
+- alias multi-mots pris en charge par le routage ;
+- **mémorisation d’un alias** depuis l’écran d’intake, et création du dossier
+  manquant en un clic.
 
 ## V0.8.0 — Context Recall (2026-11-03)
 
