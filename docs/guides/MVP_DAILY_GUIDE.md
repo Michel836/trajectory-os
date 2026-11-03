@@ -89,7 +89,12 @@ l’alias n’a pas été déclaré : ajoutez-le dans l’édition du projet
 - une ou plusieurs lignes ;
 - preview ;
 - **Appliquer cette ligne** ou **Tout appliquer** ;
-- rien n’est écrit avant confirmation.
+- rien n’est écrit avant confirmation ;
+- les lignes de structure (salutation, signature, téléphone, e-mail) sont
+  **ignorées** et comptées comme telles ;
+- si vous collez un **message écrit** (lettre, courriel), la capture refuse de
+  le découper : elle l’annonce et propose **« Conserver et rattacher à un
+  dossier »**, qui bascule vers l’intake.
 
 ### Coller un message (intake)
 

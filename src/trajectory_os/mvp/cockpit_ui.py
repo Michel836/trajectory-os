@@ -5322,17 +5322,43 @@ function capItemRow(item){
     '</div></div>';}
 function renderCapturePreview(res){
   const c=res.counts||{};const inst=res.instrumentation||{};
+  // A written message is not a list. Say it plainly and offer the right
+  // surface instead of a wall of "no clear signal" rows.
+  if(res.looks_like_message){
+    $('capture-preview').innerHTML='<div class="card" '+
+      'style="background:#fff7ed;border-color:#fdba74"><strong>'+
+      'Ce texte est un message écrit, pas une liste.</strong>'+
+      '<p class="muted" style="margin:.4rem 0">Il n’a pas été découpé : '+
+      'aucune tâche n’est proposée.</p>'+
+      '<div class="bar"><button class="small primary" '+
+      'onclick="captureToIntake()">Conserver et rattacher à un dossier'+
+      '</button></div>'+
+      '<p class="muted" style="margin:.4rem 0 0">Aperçu seulement · rien '+
+      'n’est écrit.</p></div>';
+    $('capture-actions').style.display='none';
+    return;}
   let h='<div class="card" style="background:#f8fafc"><strong>'+c.items+
-    '</strong> élément(s) · '+c.matched_existing+' correspondance(s) · '+
+    '</strong> ligne(s) à découper';
+  if(c.ignored){h+=' · '+c.ignored+' ignorée(s)';}
+  h+=' · '+c.matched_existing+' correspondance(s) · '+
     c.duplicates+' doublon(s) · '+c.new_tasks+' nouvelle(s) tâche(s) · '+
     c.possible_projects+' projet(s) possible(s) · '+c.possible_ideas+
-    ' idée(s) possible(s)<div class="muted">'+
-    'moteur '+esc(inst.engine||'')+' · modèle '+esc(inst.model||'')+' · '+
-    (inst.elapsed_ms||0)+'ms · coût $'+(inst.cost_usd||0)+
-    ' · aperçu seulement, rien n’est écrit</div></div>';
+    ' idée(s) possible(s)';
+  if(res.hint){h+='<div class="muted">'+esc(res.hint)+'</div>';}
+  h+='<div class="muted">aperçu seulement, rien n’est écrit</div></div>';
   h+=(res.items||[]).map(capItemRow).join('');
   $('capture-preview').innerHTML=h;
-  $('capture-actions').style.display='';}
+  $('capture-actions').style.display=(res.items||[]).length?'':'none';}
+// Hand the captured text to Intake: the content is preserved, the destination
+// becomes the human's choice (ADR-046).
+function captureToIntake(){
+  const text=($('capture-text')||{}).value||'';
+  closeCapture();
+  setView('signals');
+  const el=$('signal-text');
+  if(el){el.value=text;}
+  const src=$('signal-source');if(src)src.value='capture';
+  if(text.trim())analyzeSignal();}
 function captureDecisionFor(item){
   const action=$('cap-action-'+item.capture_id).value;
   const title=$('cap-title-'+item.capture_id).value;

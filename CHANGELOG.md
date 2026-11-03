@@ -17,7 +17,11 @@
   identité (correction après usage réel) ;
 - alias multi-mots pris en charge par le routage ;
 - **mémorisation d’un alias** depuis l’écran d’intake, et création du dossier
-  manquant en un clic.
+  manquant en un clic ;
+- capture rapide : un **message écrit** est refusé explicitement (au lieu de
+  produire une douzaine de lignes « aucun signal »), avec bascule vers l’intake ;
+- capture rapide : salutation, signature et coordonnées **ignorées** et
+  comptées, motifs réécrits en français.
 
 ## V0.8.0 — Context Recall (2026-11-03)
 

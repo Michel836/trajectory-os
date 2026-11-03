@@ -125,6 +125,20 @@ ensuite, une par une), et un bouton **Intégrer au dossier**. Le chemin fichier
 (`.eml`, `.mbox`, document) conserve le comportement antérieur : son contenu
 n'est connu qu'après l'envoi.
 
+### 0 ter. Capture rapide et message : deux surfaces, pas une
+
+Constat d'usage : coller une lettre dans **Capture rapide** produisait douze
+lignes, toutes « new_task », toutes « aucun signal clair », avec le numéro de
+téléphone et l'adresse électronique de l'auteur proposés comme tâches, et des
+motifs en anglais.
+
+Capture répond à « une idée par ligne ». Un message écrit n'en est pas une.
+La détection est déterministe et explicable (pas de puces, lignes de contenu
+longues en mots, salutation ou signature présente) : la capture **refuse** de
+découper, le dit en une phrase, et propose la bascule vers l'intake
+(« Conserver et rattacher à un dossier »). Les lignes de structure sont
+ignorées et comptées ; tous les motifs sont réécrits pour un humain.
+
 ## Consequences
 
 Positives :
