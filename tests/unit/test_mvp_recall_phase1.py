@@ -93,7 +93,7 @@ def test_project_alias_is_validated_and_round_trips(tmp_path: Path) -> None:
     stored = next(p for p in document["projects"]
                   if p["project_id"] == "case-alpha")
     assert stored["aliases"] == ["zephyr", "ALPHA"]
-    assert document["schema_version"] == 2
+    assert document["schema_version"] == model.SCHEMA_VERSION
 
 
 def test_duplicate_alias_is_rejected_case_and_accent_insensitively() -> None:
@@ -165,11 +165,11 @@ def test_legacy_v1_document_is_readable_and_upgraded_in_memory(
     (tmp_path / "portfolio.json").write_text(
         json.dumps(_legacy_document()), encoding="utf-8")
     project = model.Portfolio.from_dict(_legacy_document())
-    assert project.schema_version == model.SCHEMA_VERSION == 2
+    assert project.schema_version == model.SCHEMA_VERSION
     assert project.project_map()["case-alpha"].aliases == ()
 
     loaded = store.load_portfolio(str(tmp_path))
-    assert loaded is not None and loaded.schema_version == 2
+    assert loaded is not None and loaded.schema_version == model.SCHEMA_VERSION
     assert store.portfolio_schema_version(str(tmp_path)) == 1
 
 
@@ -180,7 +180,7 @@ def test_first_write_after_v1_takes_a_pre_migration_backup(
     mutations.set_aliases(str(tmp_path), "case-alpha", {"aliases": "zephyr"})
     names = [item["name"] for item in store.list_backups(str(tmp_path))]
     assert any("pre-migration-v1" in name for name in names)
-    assert store.portfolio_schema_version(str(tmp_path)) == 2
+    assert store.portfolio_schema_version(str(tmp_path)) == model.SCHEMA_VERSION
     loaded = store.load_portfolio(str(tmp_path))
     assert loaded is not None
     assert loaded.project_map()["case-alpha"].aliases == ("zephyr",)

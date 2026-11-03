@@ -51,8 +51,10 @@ KINDS = frozenset({
 #: Object kinds (closed set).
 OBJECT_TASK = "task"
 OBJECT_PROJECT = "project"
+OBJECT_NOTE = "note"
 OBJECT_BATCH = "batch"
-OBJECT_KINDS = frozenset({OBJECT_TASK, OBJECT_PROJECT, OBJECT_BATCH})
+OBJECT_KINDS = frozenset({OBJECT_TASK, OBJECT_PROJECT, OBJECT_NOTE,
+                          OBJECT_BATCH})
 
 #: Defensive bound for one read (the UI never needs the full history).
 MAX_READ = 500
@@ -459,7 +461,8 @@ __all__ = [
     "KINDS", "KIND_CAPTURE", "KIND_CREATE", "KIND_DELETE", "KIND_IMPORT",
     "KIND_OUTCOME", "KIND_RESTORE", "KIND_SIGNAL", "KIND_UNDO",
     "KIND_UPDATE", "MAX_READ", "OBJECT_BATCH", "OBJECT_KINDS",
-    "OBJECT_PROJECT", "OBJECT_TASK", "RECENT_LIMIT", "append_change",
+    "OBJECT_NOTE", "OBJECT_PROJECT", "OBJECT_TASK", "RECENT_LIMIT",
+    "append_change",
     "changes_path", "last_undoable", "read_changes", "recent_changes",
     "undone_change_ids",
 ]

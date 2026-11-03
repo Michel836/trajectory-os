@@ -1000,6 +1000,111 @@ def apply_calibrated_estimate(root: str | Path,
 
 
 @_serialized
+def add_note(root: str | Path, payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Attach one free note to a dossier (journaled, idempotent by content).
+
+    This is the write behind "paste a message, validate, it lands in the
+    dossier". The text is stored verbatim (P04); the note never becomes a task
+    and never becomes a project. Re-pasting the same text into the same dossier
+    returns the existing note instead of creating a duplicate.
+    """
+    portfolio = _load(root)
+    _reject_unknown(payload, frozenset({
+        "project_id", "text", "kind", "source_ref", "sensitivity",
+        "content_hash", "allow_duplicate"}), "note")
+    project_id = _required_str(payload, "project_id")
+    if project_id not in portfolio.project_map():
+        raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+    text = _required_str(payload, "text")
+    if len(text) > model.MAX_NOTE_TEXT:
+        raise model.MvpError(
+            model.E_MALFORMED,
+            f"text exceeds {model.MAX_NOTE_TEXT} chars")
+    kind = str(_value(payload, "kind", model.NK_NOTE))
+    source_ref = str(_value(payload, "source_ref", ""))
+    sensitivity = str(_value(payload, "sensitivity", "INTERNAL"))
+    content_hash = str(_value(payload, "content_hash", ""))
+    if content_hash and payload.get("allow_duplicate") is not True:
+        for existing in portfolio.notes:
+            if (existing.project_id == project_id
+                    and existing.content_hash == content_hash):
+                return {"note_id": existing.note_id, "duplicate": True,
+                        "project_id": project_id}
+    existing_ids = {note.note_id for note in portfolio.notes}
+    note_id = _unique_id(existing_ids, "note-" + project_id[:24])
+    stamp = _updated_at(portfolio)
+    note = model.Note(
+        note_id=note_id, project_id=project_id, text=text, kind=kind,
+        captured_at=stamp, source_ref=source_ref,
+        content_hash=content_hash, sensitivity=sensitivity).validate()
+    new_portfolio = replace(
+        portfolio, notes=portfolio.notes + (note,), updated_at=stamp
+    ).validate()
+    store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_CAPTURE,
+             object_kind=changes_module.OBJECT_NOTE, object_id=note_id,
+             title=note.title, summary=f"note {kind.lower()} ajoutée",
+             after={"project_id": project_id, "kind": kind,
+                    "source_ref": source_ref},
+             at=stamp)
+    return {"note_id": note_id, "project_id": project_id,
+            "duplicate": False, "kind": kind, "captured_at": stamp}
+
+
+@_serialized
+def update_note(root: str | Path, note_id: str,
+                payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Edit a note's text or kind (the raw capture is never rewritten silently)."""
+    portfolio = _load(root)
+    _reject_unknown(payload, frozenset({"text", "kind"}), "note")
+    notes = portfolio.note_map()
+    if note_id not in notes:
+        raise model.MvpError(model.E_UNKNOWN_ID, note_id)
+    current = notes[note_id]
+    changes: dict[str, Any] = {}
+    for key in ("text", "kind"):
+        if key in payload:
+            changes[key] = payload[key]
+    updated = replace(current, **changes)
+    stamp = _updated_at(portfolio)
+    new_notes = tuple(updated if note.note_id == note_id else note
+                      for note in portfolio.notes)
+    new_portfolio = replace(portfolio, notes=new_notes,
+                            updated_at=stamp).validate()
+    store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_NOTE, object_id=note_id,
+             title=updated.title, summary="note mise à jour",
+             before={key: getattr(current, key) for key in changes},
+             after={key: getattr(updated, key) for key in changes}, at=stamp)
+    return {"note_id": note_id, "kind": updated.kind}
+
+
+@_serialized
+def delete_note(root: str | Path, note_id: str) -> dict[str, Any]:
+    """Remove a note (journaled; the reversal is an explicit re-add)."""
+    portfolio = _load(root)
+    notes = portfolio.note_map()
+    if note_id not in notes:
+        raise model.MvpError(model.E_UNKNOWN_ID, note_id)
+    current = notes[note_id]
+    stamp = _updated_at(portfolio)
+    new_portfolio = replace(
+        portfolio,
+        notes=tuple(note for note in portfolio.notes
+                    if note.note_id != note_id),
+        updated_at=stamp,
+    ).validate()
+    store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_DELETE,
+             object_kind=changes_module.OBJECT_NOTE, object_id=note_id,
+             title=current.title, summary="note supprimée",
+             before={"project_id": current.project_id,
+                     "kind": current.kind}, at=stamp)
+    return {"note_id": note_id, "deleted": True}
+
+
+@_serialized
 @_serialized
 def rename_domain(root: str | Path, *, old: str, new: str) -> dict[str, Any]:
     """Rename one domain across every project (explicit human decision)."""
@@ -1221,12 +1326,15 @@ __all__ = [
     "PROJECT_EDITABLE",
     "TASK_EDITABLE",
     "add_dependency",
+    "add_note",
     "create_project",
     "create_task",
+    "delete_note",
     "estimate_tasks",
     "remove_dependency",
     "rename_domain",
     "set_aliases",
+    "update_note",
     "update_project",
     "update_task",
 ]

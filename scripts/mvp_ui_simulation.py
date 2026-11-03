@@ -93,12 +93,31 @@ document.getElementById = function(id){
     if (!node.scrollIntoView) node.scrollIntoView = function(){};
     if (!node.getAttribute) node.getAttribute = function(){ return null; };
     if (!node.removeAttribute) node.removeAttribute = function(){};
+    if (!node.files) node.files = [];
   }
   return node;
 };
 window.scrollTo = function(){};
-global.prompt = function(){ return 'Vue simulation'; };
-global.confirm = function(){ return true; };
+window.prompt = function(){ return 'Vue simulation'; };
+window.confirm = function(){ return true; };
+// A browser resolves these against the rendered DOM. The stub parses the
+// admin-rendered markup for the one selector shape the page uses on inputs.
+document.querySelectorAll = function(selectors){
+  const match = /input\[name="([^"]+)"\]/.exec(String(selectors));
+  if (!match) return [];
+  const out = [];
+  Object.keys(els).forEach(function(id){
+    const html = els[id].innerHTML || '';
+    const pattern = new RegExp('<input[^>]*name="' + match[1] + '"[^>]*>', 'g');
+    let found;
+    while ((found = pattern.exec(html))) {
+      const tag = found[0];
+      const value = (/value="([^"]*)"/.exec(tag) || [])[1] || '';
+      out.push({name: match[1], value: value, checked: /checked/.test(tag)});
+    }
+  });
+  return out;
+};
 """
 
 _SIM = r"""
@@ -286,6 +305,35 @@ function record(bucket, label, fn, note){
     setView('signals'); signalFilterChange('pending');
     if (!visible(el('view-root').innerHTML)) throw new Error('vue vide');
   });
+  use('coller un message', function(){
+    setView('signals');
+    el('signal-text').value = 'Mollie — AML/BioVerify\n\nDear Mollie, ' +
+      'kind regards — ' + DOSSIER_TITLE;
+    el('signal-source').value = 'email:simulation';
+    el('signal-project').value = '';
+    analyzeSignal();
+  });
+  await tick(); await tick(); await tick();
+  use('l\'aperçu propose le dossier et sa raison', function(){
+    var html = el('intake-preview').innerHTML;
+    if (html.indexOf(DOSSIER_TITLE.slice(0, 18)) < 0)
+      throw new Error('aucun dossier proposé dans l\'aperçu');
+    if (html.indexOf('Intégrer au dossier') < 0)
+      throw new Error('pas de bouton de validation');
+    if (html.indexOf('name="intake-project"') < 0)
+      throw new Error('pas de choix de dossier');
+  });
+  use('choisir le dossier puis intégrer', function(){
+    var radios = document.querySelectorAll('input[name="intake-project"]');
+    if (!radios.length) throw new Error('aucun candidat à choisir');
+    var target = null;
+    for (var i = 0; i < radios.length; i++) {
+      if (radios[i].value === DOSSIER_ID) target = radios[i];
+    }
+    if (!target) throw new Error('le dossier attendu n\'est pas candidat');
+    return confirmIntake();
+  });
+  await tick(); await tick(); await tick();
   use('capture en aperçu', function(){
     setView('today'); openCapture();
     el('capture-text').value = 'Préparer le dossier pour la revue';
@@ -409,7 +457,8 @@ def _call(port: int, method: str, path: str,
         return resp.status, raw[:200].decode("utf-8", "replace")
 
 
-def _response_map(port: int, project: str, alias: str) -> dict[str, Any]:
+def _response_map(port: int, project: str, alias: str,
+                  dossier_name: str) -> dict[str, Any]:
     """Pre-fetch every GET payload the page asks for during a session.
 
     A browser would call these; the simulation serves them from this map so the
@@ -429,11 +478,21 @@ def _response_map(port: int, project: str, alias: str) -> dict[str, Any]:
         f"/api/search?q={alias}",
         f"/api/recall?q={alias}&limit=3",
         f"/api/recall?q={alias}",
+        "/api/intake",
     ]
     responses: dict[str, Any] = {}
     for path in paths:
         status, payload = _call(port, "GET", path, None)
         responses[path] = payload if 200 <= status < 300 else {}
+    # POST endpoints the UI calls during the simulated session: the dry intake
+    # must answer, the confirm must succeed without touching the source root.
+    # The canned intake answer must propose the reference dossier, so the text
+    # used to build it names that dossier (the router needs the brand token).
+    intake_text = "Message de simulation\n\n" + dossier_name
+    status, payload = _call(port, "POST", "/api/intake",
+                            {"text": intake_text,
+                             "source_ref": "email:simulation"})
+    responses["/api/intake"] = payload if 200 <= status < 300 else {}
     return responses
 
 
@@ -458,7 +517,8 @@ def _ui_simulation(port: int, aliases: list[str]) -> dict[str, Any]:
     project = projects[0]
     task = tasks[0]
 
-    responses = _response_map(port, project["project_id"], alias)
+    responses = _response_map(port, project["project_id"], alias,
+                              dossier["name"])
     work = Path(tempfile.mkdtemp(prefix="tos-sim-js-"))
     (work / "views.json").write_text(json.dumps(views), encoding="utf-8")
     (work / "prefs.json").write_text(

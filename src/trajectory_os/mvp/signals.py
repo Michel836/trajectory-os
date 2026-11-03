@@ -875,6 +875,65 @@ def analyze_signal(root: str | Path, signal: InboundSignal,
 # --- public creation ---------------------------------------------------------
 
 
+def preview_signal(
+    root: str | Path,
+    *,
+    text: str,
+    source_kind: str = SOURCE_TEXT,
+    source_ref: str = "manuel",
+    title: str = "",
+    project_hint: str = "",
+    sensitivity: str = "INTERNAL",
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Analyse a text *without writing anything* (dry run for intake).
+
+    Returns the same proposal shape as :func:`create_signal`, so the intake
+    screen can show exactly what would be created before the human validates.
+    Nothing is appended to ``signals.jsonl`` and no proposal file is written.
+    """
+    if source_kind not in SOURCE_KINDS:
+        raise SignalError(model.E_MALFORMED, f"source_kind {source_kind!r}")
+    if sensitivity not in SENSITIVITIES:
+        raise SignalError(model.E_MALFORMED, f"sensitivity {sensitivity!r}")
+    if not isinstance(text, str) or not text.strip():
+        raise SignalError(model.E_MALFORMED, "text is required")
+    if len(text) > MAX_TEXT_CHARS:
+        raise SignalError(model.E_OVERFLOW, "text exceeds bound")
+    instant = now or datetime.now(tz=UTC)
+    stamp = instant.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    content_hash = _hash(text)
+    signal_id = _signal_id(source_kind, source_ref, content_hash)
+    for existing in read_signals(root):
+        if existing.signal_id == signal_id:
+            return {
+                "signal": existing.to_dict(),
+                "proposals": [proposal.to_dict()
+                              for proposal in load_proposals(
+                                  root, existing.signal_id)],
+                "duplicate": True,
+            }
+    first_line = next((line.strip() for line in text.splitlines()
+                       if line.strip()), text.strip())
+    signal = InboundSignal(
+        signal_id=signal_id, source_kind=source_kind,
+        source_ref=source_ref, received_at=stamp,
+        title=(title or first_line)[:MAX_TITLE_CHARS], text=text,
+        content_hash=content_hash, status=STATUS_NEW,
+        sensitivity=sensitivity, project_hint=project_hint).validate()
+    rules = load_rules(root)
+    rule = source_rule(root, source_ref) or {}
+    proposals = analyze_signal(
+        root, signal, today=instant.date(),
+        max_proposals=int(rule.get("max_proposals")
+                          or rules["max_proposals_per_signal"]))
+    return {
+        "signal": signal.to_dict(),
+        "proposals": [proposal.to_dict() for proposal in proposals],
+        "duplicate": False,
+    }
+
+
 def create_signal(
     root: str | Path,
     *,

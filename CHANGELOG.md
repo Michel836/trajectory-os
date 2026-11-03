@@ -1,5 +1,18 @@
 # Changelog
 
+## V0.9.0 — Intake & Notes (2026-11-03)
+
+- objet `Note` attachée à un dossier (schéma portefeuille v3, migration additive
+  avec sauvegarde `pre-migration-v2`) ;
+- coller un message → **dossier proposé avec sa raison**, alternatives
+  cliquables, abstention explicite quand le routage hésite ;
+- un clic **Intégrer au dossier** : provenance (signal) + note lisible +
+  application des seules propositions acceptées ;
+- re-collage idempotent, note cherchable (`bioverify` retrouve le dossier) ;
+- `POST /api/intake` (essai à blanc, zéro écriture) et
+  `POST /api/intake/confirm` (seul chemin d'écriture) ;
+- `mutations.add_note` / `update_note` / `delete_note`, journalisées.
+
 ## V0.8.0 — Context Recall (2026-11-03)
 
 - alias de dossier déclarés par l’humain (schéma portefeuille v2) ;

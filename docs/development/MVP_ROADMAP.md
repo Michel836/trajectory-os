@@ -14,6 +14,7 @@ pas encore validé par un dogfood long.
 | V0.6 | Adaptive Triage | santé projet, métriques, revue projet guidée, split inbox, mises à jour projet, activité par objet | fait |
 | V0.7 | Bounded Assistance | explication déterministe, assistant read-only, revue assistée, citations, raccourcis clavier | fait |
 | V0.8 | Context Recall | alias déclarés, schéma v2, index unifié, resolver contextuel, panneau de reprise | fait (gate à dogfooder) |
+| V0.9 | Intake & Notes | note attachée (schéma v3), routage proposé avec abstention, intégration après validation | fait (gate à dogfooder) |
 
 ---
 

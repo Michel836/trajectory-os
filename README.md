@@ -251,6 +251,23 @@ Portfolio documents are now **schema v2** (additive `aliases`). A v1 document
 is read and upgraded in memory, and the first write takes a
 `pre-migration-v1` backup before persisting v2.
 
+### Paste a message (Intake, V0.9)
+
+**`i`** (Entrée → Signaux) → coller le message → **Analyser**.
+
+The screen then says where it thinks the message belongs, and why:
+
+- **« Proposé : ORCINVEST — … — le texte nomme « orcinvest » »** when it is sure;
+- **« Rattachement non proposé : score insuffisant »** when it is not — the
+  candidates remain clickable, but nothing is assigned silently;
+- re-pasting the same text is idempotent.
+
+**Intégrer au dossier** is the only write: it records the provenance (signal
+with hash), attaches the message as a searchable **note** to the dossier, and
+leaves every detected proposal to be accepted or rejected one by one.
+
+Before that click, nothing is written: `/api/intake` is a dry run (ADR-046).
+
 ### Quick Capture (daily input)
 
 ```bash

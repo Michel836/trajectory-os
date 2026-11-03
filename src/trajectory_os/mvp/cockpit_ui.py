@@ -4306,7 +4306,8 @@ function renderSignals(){
     '<select id="signal-project" class="inline">'+
     '<option value="">(aucun projet)</option>'+projectOpts+'</select>'+
     '<button class="small primary" onclick="analyzeSignal()">Analyser'+
-    '</button></div></div>';
+    '</button></div>'+
+    '<div id="intake-preview"></div></div>';
   const pendingCount=bundles.filter(function(b){
     return (b.proposals||[]).some(function(p){return p.state==='PENDING';});
   }).length;
@@ -4330,7 +4331,14 @@ async function postSignal(body){
         'Signal analysé · '+sources+' source(s) · '+proposals+
         ' proposition(s)'});
   }catch(err){notice(err.message);}}
-function analyzeSignal(){
+// --- paste -> propose -> validate -> attach (ADR-046) ------------------------
+//
+// The text path never writes on "Analyser": it asks the server for a dry
+// routing + proposal preview, shows the destination it *proposes* and why, and
+// waits for an explicit "Intégrer au dossier". A file still uses the immediate
+// signal path (its content is only known server-side after upload).
+let intakeState = null;
+async function analyzeSignal(){
   const source=($('signal-source').value||'manuel').trim()||'manuel';
   const project=$('signal-project').value||'';
   const file=$('signal-file').files[0];
@@ -4348,8 +4356,90 @@ function analyzeSignal(){
   }
   const text=$('signal-text').value;
   if(!text.trim()){notice('Colle un texte ou dépose un fichier');return;}
-  postSignal({text:text,source_ref:source,project_hint:project});
-}
+  if(project){postSignal({text:text,source_ref:source,project_hint:project});
+    return;}
+  try{
+    const res=await api('/api/intake','POST',{text:text,source_ref:source});
+    intakeState={text:text,source:source,route:res.route,
+      proposals:res.proposals||[],kinds:res.note_kinds||['NOTE'],
+      signal:res.signal};
+    renderIntake();
+  }catch(err){notice(err.message);}}
+function renderIntake(){
+  const el=$('intake-preview');if(!el)return;
+  if(!intakeState){el.innerHTML='';return;}
+  const route=intakeState.route;
+  const cands=route.candidates||[];
+  let h='<div class="card" style="margin-top:.6rem"><h4 style="margin:0 0 .4rem">'+
+    'Où ranger ce message ?</h4>';
+  if(!cands.length){
+    h+='<p class="muted">Aucun dossier ne correspond. Choisissez-en un '+
+      'ci-dessous ou renoncez.</p>';
+  }else if(route.abstain){
+    h+='<p class="muted">Rattachement non proposé : '+esc(route.reason)+
+      '. Choisissez le dossier si vous le savez.</p>';
+  }else{
+    h+='<p class="muted">Proposé : <strong>'+
+      esc(cands[0].title)+'</strong> — '+esc(cands[0].reason)+'</p>';
+  }
+  h+='<div class="bar">';
+  const chosen=route.abstain?null:cands[0].project_id;
+  cands.forEach(function(c,i){
+    const checked=(c.project_id===chosen)?' checked':'';
+    h+='<label class="small"><input type="radio" name="intake-project" '+
+      'value="'+esc(c.project_id)+'"'+checked+'> '+esc(c.title)+
+      ' <span class="muted">('+c.score+')</span></label>';
+  });
+  h+='</div>';
+  if(!cands.length){
+    h+='<div class="bar"><select id="intake-project-manual" class="inline">'+
+      objects().filter(function(o){return o.kind==='project';}).map(
+        function(o){return '<option value="'+esc(o.ref_id)+'">'+
+          esc(o.title)+'</option>';}).join('')+'</select></div>';
+  }
+  h+='<div class="bar"><label class="small">Nature '+
+    '<select id="intake-kind" class="inline">'+
+    intakeState.kinds.map(function(k){return '<option value="'+esc(k)+'"'+
+      (k==='FACT'?' selected':'')+'>'+esc(t(k))+'</option>';}).join('')+
+    '</select></label></div>';
+  if(intakeState.proposals.length){
+    h+='<div class="detail-block"><h4>Propositions détectées ('+
+      intakeState.proposals.length+')</h4><div class="body">'+
+      intakeState.proposals.map(function(p){return '- '+esc(p.op)+' · '+
+        esc(p.title);}).join('<br>')+
+      '<br><span class="muted">Elles resteront à valider une par une dans '+
+      'la liste ci-dessous.</span></div></div>';
+  }else{
+    h+='<p class="muted">Aucune proposition : le message sera conservé '+
+      'comme note, sans rien modifier au portefeuille.</p>';
+  }
+  h+='<div class="bar"><button class="primary small" '+
+    'onclick="confirmIntake()">Intégrer au dossier</button>'+
+    '<button class="small" onclick="cancelIntake()">Annuler</button></div></div>';
+  el.innerHTML=h;}
+function intakeProject(){
+  const radios=document.querySelectorAll('input[name="intake-project"]');
+  for(let i=0;i<radios.length;i++){if(radios[i].checked)return radios[i].value;}
+  const manual=$('intake-project-manual');
+  return manual?manual.value:'';}
+function cancelIntake(){intakeState=null;renderIntake();}
+async function confirmIntake(){
+  if(!intakeState)return;
+  const project=intakeProject();
+  if(!project){notice('Choisissez un dossier');return;}
+  const kindEl=$('intake-kind');
+  try{
+    const res=await api('/api/intake/confirm','POST',{
+      text:intakeState.text,source_ref:intakeState.source,
+      project_id:project,note_kind:kindEl?kindEl.value:'NOTE'});
+    intakeState=null;
+    const el=$('signal-text');if(el)el.value='';
+    renderIntake();
+    await refresh({keepNotice:true,notice:
+      'Intégré au dossier · note conservée'+
+      (res.pending&&res.pending.length?' · '+res.pending.length+
+        ' proposition(s) à valider':''),actions:[]});
+  }catch(err){notice(err.message);}}
 async function acceptProposal(signalId,proposalId){
   try{await api('/api/signals/'+encodeURIComponent(signalId)+
       '/proposals/'+encodeURIComponent(proposalId)+'/accept','POST',{});

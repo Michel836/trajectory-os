@@ -32,21 +32,23 @@ from typing import Any, NoReturn
 
 #: Schema version of every durable MVP document.
 #:
-#: v2 adds ``Project.aliases`` (a bounded list of user-declared search
-#: synonyms). The change is purely additive: a v1 document loads and is
-#: upgraded in memory, and the first write persists v2. A v1-on-disk file is
-#: backed up before that write (see ``store.save_portfolio``).
-SCHEMA_VERSION = 2
+#: v2 adds ``Project.aliases`` (user-declared search synonyms).
+#: v3 adds ``Portfolio.notes``: free information attached to a dossier (a
+#: pasted message, a question, a fact), searchable and never turned into a task.
+#: Both upgrades are purely additive: a legacy document loads and is upgraded in
+#: memory, and the first write persists the current version after a one-off
+#: ``pre-migration-v<n>`` backup (see ``store.save_portfolio``).
+SCHEMA_VERSION = 3
 
 #: Legacy schema versions still accepted on read (upgraded, never rewritten
 #: silently: the upgrade only materialises on the next explicit write).
-LEGACY_SCHEMA_VERSIONS = (1,)
+LEGACY_SCHEMA_VERSIONS = (1, 2)
 
 #: Every schema version this build can read.
-READABLE_SCHEMA_VERSIONS = (1, SCHEMA_VERSION)
+READABLE_SCHEMA_VERSIONS = (1, 2, SCHEMA_VERSION)
 
 #: Human/machine MVP version string (additive).
-MVP_VERSION = "mvp.2"
+MVP_VERSION = "mvp.3"
 
 # --- bounded limits -----------------------------------------------------------
 #
@@ -64,6 +66,9 @@ MAX_DAYS_OFF = 366
 #: Declared search synonyms per project (bounded, fail closed).
 MAX_ALIASES = 12
 MAX_ALIAS_LEN = 64
+#: Free notes attached to a dossier (a pasted email is one note).
+MAX_NOTES = 4096
+MAX_NOTE_TEXT = 20_000
 MAX_ROUTINES = 256
 MAX_DECISIONS = 512
 MAX_OPTIONS = 16
@@ -156,6 +161,28 @@ I_LOW = "LOW"
 
 IMPACTS = frozenset({I_HIGH, I_MEDIUM, I_LOW})
 IMPACT_RANK = {I_HIGH: 3, I_MEDIUM: 2, I_LOW: 1}
+
+# --- note kinds (closed set) -------------------------------------------------
+#
+# A note records *information*, not work: the guide's P03 ("an information is
+# not automatically a task"). A note is always attached to a project; it never
+# becomes a project of its own and never carries a status.
+
+NK_NOTE = "NOTE"
+NK_FACT = "FACT"
+NK_QUESTION = "QUESTION"
+NK_ANSWER = "ANSWER"
+NK_DECISION = "DECISION"
+NK_REFERENCE = "REFERENCE"
+NK_EVENT = "EVENT"
+
+NOTE_KINDS = frozenset({
+    NK_NOTE, NK_FACT, NK_QUESTION, NK_ANSWER, NK_DECISION, NK_REFERENCE,
+    NK_EVENT,
+})
+
+#: Sensitivity labels a note may carry (never a calibrated probability).
+NOTE_SENSITIVITIES = ("PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED")
 
 # --- outcomes (closed set) ----------------------------------------------------
 
@@ -939,6 +966,77 @@ class Decision:
 
 
 @dataclass(frozen=True)
+class Note:
+    """Free information attached to a dossier — never a task, never a project.
+
+    A note is how the product keeps what a manual notebook keeps: a pasted
+    message, a question asked, an answer received, a reference, a fact. It
+    carries provenance (``source_ref`` + ``content_hash``) and a capture time,
+    is searchable by recall, and is journalled on write.
+
+    Deliberate limits: a note has **no status** (it is not work), **no
+    children** (it never becomes a second register of projects), and its text
+    is preserved verbatim (the guide's P04).
+    """
+
+    note_id: str
+    project_id: str
+    text: str
+    kind: str = NK_NOTE
+    captured_at: str = ""
+    source_ref: str = ""
+    content_hash: str = ""
+    sensitivity: str = "INTERNAL"
+
+    def validate(self) -> Note:
+        _require_id(self.note_id, "note_id")
+        _require_id(self.project_id, "project_id")
+        _require_str(self.text, "text", maximum=MAX_NOTE_TEXT)
+        _require_enum(self.kind, "kind", NOTE_KINDS)
+        if self.sensitivity not in NOTE_SENSITIVITIES:
+            _fail(E_MALFORMED, f"sensitivity={self.sensitivity!r}")
+        if self.source_ref:
+            _require_str(self.source_ref, "source_ref", maximum=MAX_STR_LEN)
+        if self.content_hash and len(self.content_hash) > 128:
+            _fail(E_MALFORMED, "content_hash is too long")
+        return self
+
+    @property
+    def title(self) -> str:
+        """First non-empty line, bounded — a note has no stored title."""
+        for line in self.text.splitlines():
+            stripped = line.strip()
+            if stripped:
+                return stripped[:MAX_STR_LEN]
+        return self.text[:MAX_STR_LEN]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "note_id": self.note_id,
+            "project_id": self.project_id,
+            "text": self.text,
+            "kind": self.kind,
+            "captured_at": self.captured_at,
+            "source_ref": self.source_ref,
+            "content_hash": self.content_hash,
+            "sensitivity": self.sensitivity,
+        }
+
+    @staticmethod
+    def from_dict(data: Mapping[str, Any]) -> Note:
+        return Note(
+            note_id=str(data.get("note_id", "")),
+            project_id=str(data.get("project_id", "")),
+            text=str(data.get("text", "")),
+            kind=str(data.get("kind", NK_NOTE)),
+            captured_at=str(data.get("captured_at", "")),
+            source_ref=str(data.get("source_ref", "")),
+            content_hash=str(data.get("content_hash", "")),
+            sensitivity=str(data.get("sensitivity", "INTERNAL")),
+        ).validate()
+
+
+@dataclass(frozen=True)
 class Portfolio:
     """The whole structured personal portfolio."""
 
@@ -948,6 +1046,7 @@ class Portfolio:
     tasks: tuple[Task, ...]
     routines: tuple[Routine, ...] = ()
     decisions: tuple[Decision, ...] = ()
+    notes: tuple[Note, ...] = ()
     resources: tuple[Resource, ...] = ()
     calendar: tuple[CalendarEvent, ...] = ()
     days_off: tuple[str, ...] = ()
@@ -967,6 +1066,8 @@ class Portfolio:
             _fail(E_OVERFLOW, "too many routines")
         if len(self.decisions) > MAX_DECISIONS:
             _fail(E_OVERFLOW, "too many decisions")
+        if len(self.notes) > MAX_NOTES:
+            _fail(E_OVERFLOW, "too many notes")
         if len(self.resources) > MAX_RESOURCES:
             _fail(E_OVERFLOW, "too many resources")
         if len(self.calendar) > MAX_EVENTS:
@@ -988,6 +1089,7 @@ class Portfolio:
             [r.routine_id for r in self.routines], "routine")
         _validate_unique_ids(
             [d.decision_id for d in self.decisions], "decision")
+        _validate_unique_ids([n.note_id for n in self.notes], "note")
 
         for project in self.projects:
             project.validate()
@@ -1003,6 +1105,11 @@ class Portfolio:
             decision.validate()
             if decision.project_id and decision.project_id not in project_ids:
                 _fail(E_UNKNOWN_PROJECT, decision.decision_id)
+
+        for note in self.notes:
+            note.validate()
+            if note.project_id not in project_ids:
+                _fail(E_UNKNOWN_PROJECT, note.note_id)
 
         for task in self.tasks:
             task.validate()
@@ -1029,6 +1136,15 @@ class Portfolio:
     def resource_map(self) -> dict[str, Resource]:
         return {r.resource_id: r for r in self.resources}
 
+    def note_map(self) -> dict[str, Note]:
+        return {n.note_id: n for n in self.notes}
+
+    def notes_of(self, project_id: str) -> tuple[Note, ...]:
+        """Notes attached to one dossier, newest first."""
+        return tuple(sorted(
+            (note for note in self.notes if note.project_id == project_id),
+            key=lambda note: (note.captured_at, note.note_id), reverse=True))
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
@@ -1038,6 +1154,7 @@ class Portfolio:
             "tasks": [t.to_dict() for t in self.tasks],
             "routines": [r.to_dict() for r in self.routines],
             "decisions": [d.to_dict() for d in self.decisions],
+            "notes": [n.to_dict() for n in self.notes],
             "resources": [r.to_dict() for r in self.resources],
             "calendar": [e.to_dict() for e in self.calendar],
             "days_off": list(self.days_off),
@@ -1058,6 +1175,7 @@ class Portfolio:
         raw_tasks = data.get("tasks") or []
         raw_routines = data.get("routines") or []
         raw_decisions = data.get("decisions") or []
+        raw_notes = data.get("notes") or []
         raw_resources = data.get("resources") or []
         raw_calendar = data.get("calendar") or []
         raw_days_off = data.get("days_off") or []
@@ -1080,6 +1198,8 @@ class Portfolio:
             decisions=tuple(Decision.from_dict(item)
                             for item in raw_decisions
                             if isinstance(item, Mapping)),
+            notes=tuple(Note.from_dict(item) for item in raw_notes
+                        if isinstance(item, Mapping)),
             resources=tuple(Resource.from_dict(item)
                             for item in raw_resources
                             if isinstance(item, Mapping)),

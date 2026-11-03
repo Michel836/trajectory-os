@@ -10,7 +10,7 @@ confidentialité.
 Sous le data root (par défaut `local_data/mvp/`) :
 
 ```text
-portfolio.json                 portefeuille canonique (schéma v2)
+portfolio.json                 portefeuille canonique (schéma v3, notes incluses)
 outcomes.jsonl                 ledger append-only des résultats
 changes.jsonl                  journal des changements
 ui_state.json                  préférences de présentation
@@ -43,6 +43,22 @@ scripts/mvp aliases --project mon-dossier  # alias d’un projet
 scripts/mvp aliases --project mon-dossier --set "surnom, acronyme"
 scripts/mvp recall "surnom" --json         # contexte résolu (lecture seule)
 ```
+
+### Notes attachées
+
+Une note (`notes` dans `portfolio.json`) porte un message ou une information
+rattachée à un dossier : texte verbatim, nature (`NOTE`, `FACT`, `QUESTION`,
+`ANSWER`, `DECISION`, `REFERENCE`, `EVENT`), provenance (`source_ref`, hash) et
+date de capture. Elle n’a pas de statut et ne devient jamais un projet.
+
+```bash
+# intégration après validation, par l’API
+POST /api/intake            {"text": "…", "source_ref": "email:…"}   # essai à blanc
+POST /api/intake/confirm    {"text": "…", "project_id": "…", "note_kind": "FACT"}
+```
+
+`/api/intake` ne modifie rien. `/api/intake/confirm` écrit : signal (provenance),
+note attachée, puis les seules propositions explicitement acceptées.
 
 ### Index de récupération
 

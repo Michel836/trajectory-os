@@ -33,6 +33,8 @@ No LLM, no embedding, no network on this path (ADR-043).
 
 from __future__ import annotations
 
+import math
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -56,16 +58,17 @@ from trajectory_os.mvp import (
 K_PROJECT = "project"
 K_TASK = "task"
 K_DECISION = "decision"
+K_NOTE = "note"
 K_SOURCE = "source"
 K_SIGNAL = "signal"
 K_CHANGE = "change"
 
-KINDS = frozenset({K_PROJECT, K_TASK, K_DECISION, K_SOURCE, K_SIGNAL,
+KINDS = frozenset({K_PROJECT, K_TASK, K_DECISION, K_NOTE, K_SOURCE, K_SIGNAL,
                    K_CHANGE})
 
 #: Display order used when several kinds share the same score.
-KIND_ORDER = {K_PROJECT: 0, K_TASK: 1, K_DECISION: 2, K_SOURCE: 3,
-              K_SIGNAL: 4, K_CHANGE: 5}
+KIND_ORDER = {K_PROJECT: 0, K_TASK: 1, K_DECISION: 2, K_NOTE: 3,
+              K_SOURCE: 4, K_SIGNAL: 5, K_CHANGE: 6}
 
 # --- bounds -------------------------------------------------------------------
 
@@ -357,6 +360,24 @@ def _source_document(record: sources.SourceRecord) -> RecallDocument:
     )
 
 
+def _note_document(note: model.Note,
+                   projects: Mapping[str, model.Project]) -> RecallDocument:
+    project = projects.get(note.project_id)
+    fields: list[tuple[str, str]] = [("note", note.text)]
+    if note.source_ref:
+        fields.append(("provenance", note.source_ref))
+    return RecallDocument(
+        kind=K_NOTE,
+        ref_id=note.note_id,
+        title=note.title,
+        project_id=note.project_id,
+        project=project.name if project is not None else "",
+        status=note.kind,
+        fields=tuple(fields),
+        hint=f"{note.kind.lower()} · {note.captured_at}",
+    )
+
+
 def _signal_document(signal: signals.InboundSignal) -> RecallDocument:
     return RecallDocument(
         kind=K_SIGNAL,
@@ -429,6 +450,9 @@ def build_index(root: str | Path,
 
     for decision in portfolio.decisions:
         documents.append(_decision_document(decision, projects))
+
+    for note in portfolio.notes:
+        documents.append(_note_document(note, projects))
 
     for source_record in _safe_sources(root):
         documents.append(_source_document(source_record))
@@ -503,6 +527,14 @@ def _rank_field(field_name: str, text: str, query: str,
     if field_name in ("domaine", "projet", "expéditeur", "fil"):
         if query in folded:
             return S_FIELD_WEAK, field_name
+        return None
+    if field_name in ("note",):
+        if query in folded:
+            return S_FIELD_STRONG, "note"
+        return None
+    if field_name in ("provenance",):
+        if query in folded:
+            return S_JOURNAL, "provenance"
         return None
     if field_name in ("source",):
         if query in folded:
@@ -759,10 +791,13 @@ def cache_size() -> int:
 
 __all__ = [
     "DEFAULT_CONTEXT_PROJECTS",
+    "ROUTE_MIN_MARGIN",
+    "ROUTE_MIN_SCORE",
     "DEFAULT_LIMIT",
     "KINDS",
     "K_CHANGE",
     "K_DECISION",
+    "K_NOTE",
     "K_PROJECT",
     "K_SIGNAL",
     "K_SOURCE",
@@ -779,6 +814,185 @@ __all__ = [
     "clear_cache",
     "query",
     "resolve",
+    "route",
     "search",
     "stats",
 ]
+
+
+# --- routing: which dossier does this text belong to? -------------------------
+#
+# `query` answers "what matches this word?". `route` answers the opposite and
+# harder question: "this whole message — where does it belong?".
+#
+# Measured on a real 56-dossier portfolio: a pure token-overlap scorer picks the
+# right dossier when the text names it or uses its declared vocabulary, and it
+# picks *nonsense* on an off-topic message. Therefore routing never assigns:
+# it proposes up to three candidates with a reason, and it **abstains** below an
+# explicit threshold or when the top two candidates are too close. The human (or
+# the intake screen) decides. See ADR-046.
+
+#: Minimum score for a dossier to be proposed as the destination.
+ROUTE_MIN_SCORE = 2.0
+#: Minimum top/second ratio; below it the answer is considered ambiguous.
+ROUTE_MIN_MARGIN = 1.2
+#: Text tokens shorter than this are ignored when scoring.
+ROUTE_MIN_TOKEN_LEN = 3
+#: Bounded number of tokens read from a pasted text.
+ROUTE_MAX_TOKENS = 4000
+
+#: Function words ignored by the router (French + English administrative
+#: mail). Kept as a source list so the vocabulary stays readable and reviewable.
+_ROUTE_STOPWORDS_SOURCE = """
+the and for you your with this that have has had will would could should please kind
+regards dear before from about also whether there afterwards then once been being all
+any can not but its his her she him they them was were are is our out up down over
+under again further here when where why how both each few more most other some such
+only own same than too very just now le la les des du de un une et ou en au aux ce cet
+cette ces que qui quoi dont pour dans sur avec par sans sous vers chez est sont ete
+etait seront serait comme plus moins tres tout tous toute toutes autre autres meme
+aussi afin donc car si non oui je tu il elle nous vous ils elles mon ma mes ton ta tes
+son sa ses notre nos votre vos leur leurs me te se lui y
+"""
+_ROUTE_STOPWORDS = frozenset(_ROUTE_STOPWORDS_SOURCE.split())
+
+
+def _route_tokens(text: str) -> set[str]:
+    tokens = classification.normalize_text(text).split()
+    return {token for token in tokens[:ROUTE_MAX_TOKENS]
+            if len(token) >= ROUTE_MIN_TOKEN_LEN
+            and token not in _ROUTE_STOPWORDS}
+
+
+def _project_vocabulary(portfolio: model.Portfolio) -> dict[str, str]:
+    """Everything a dossier is *known* to talk about, per project id."""
+    tasks: dict[str, list[str]] = {}
+    notes: dict[str, list[str]] = {}
+    for task in portfolio.tasks:
+        tasks.setdefault(task.project_id, []).append(task.title)
+    for note in portfolio.notes:
+        notes.setdefault(note.project_id, []).append(note.text[:2000])
+    out: dict[str, str] = {}
+    for project in portfolio.projects:
+        out[project.project_id] = classification.normalize_text(" ".join([
+            project.name,
+            project.objective,
+            project.description,
+            project.domain,
+            " ".join(project.aliases),
+            " ".join(tasks.get(project.project_id, ())),
+            " ".join(notes.get(project.project_id, ())),
+        ]))
+    return out
+
+
+def route(root: str | Path, text: str, *,
+          limit: int = 3,
+          portfolio: model.Portfolio | None = None,
+          threshold: float = ROUTE_MIN_SCORE,
+          margin: float = ROUTE_MIN_MARGIN) -> dict[str, Any]:
+    """Propose the dossier a pasted text belongs to (never assign it).
+
+    Returns candidates ordered by score with an explicit reason, plus
+    ``abstain`` when no dossier is convincing. A caller must present the
+    candidates and let the human confirm before anything is written.
+    """
+    raw = str(text or "").strip()
+    bound = max(1, min(int(limit), MAX_CONTEXT_PROJECTS))
+    if not raw:
+        return {"candidates": [], "abstain": True, "top": None,
+                "reason": "texte vide", "threshold": threshold,
+                "margin": margin}
+    if len(raw) > model.MAX_NOTE_TEXT:
+        raise model.MvpError(model.E_MALFORMED, "text is too long")
+    loaded = portfolio if portfolio is not None else store.load_portfolio(root)
+    if loaded is None:
+        return {"candidates": [], "abstain": True, "top": None,
+                "reason": "aucun portefeuille", "threshold": threshold,
+                "margin": margin}
+
+    tokens = _route_tokens(raw)
+    vocabulary = _project_vocabulary(loaded)
+    project_tokens = {pid: set(hay.split()) for pid, hay in vocabulary.items()}
+    document_frequency: Counter[str] = Counter()
+    for words in project_tokens.values():
+        for token in words:
+            document_frequency[token] += 1
+
+    # The *leading* identity token of a dossier name is its brand ("orcinvest",
+    # "donation"). Other name words are ordinary vocabulary: counting them as
+    # identity made "restauration" propose a company-restoration dossier for a
+    # backup-restore message (measured, then fixed here).
+    def _brand(project: model.Project) -> str:
+        for token in classification.normalize_text(project.name).split():
+            if len(token) >= 4:
+                return token
+        return ""
+
+    brand_tokens = {project.project_id: _brand(project)
+                    for project in loaded.projects}
+    alias_tokens = {
+        project.project_id: {classification.normalize_text(alias)
+                             for alias in project.aliases}
+        for project in loaded.projects
+    }
+
+    scored: list[tuple[float, model.Project, str, list[str]]] = []
+    for project in loaded.projects:
+        words = project_tokens.get(project.project_id, set())
+        matched = sorted(token for token in tokens if token in words)
+        score = sum(1.0 / math.log(1 + document_frequency[token])
+                    for token in matched)
+        reasons: list[str] = []
+        identity: set[str] = set()
+        brand = brand_tokens.get(project.project_id, "")
+        if brand and brand in tokens:
+            identity.add(brand)
+            score += 3.0
+            reasons.append("le texte nomme « " + brand + " »")
+        declared = sorted(alias_tokens.get(project.project_id, set()) & tokens)
+        if declared:
+            identity |= set(declared)
+            score += 3.0 * len(declared)
+            reasons.append("le texte contient l'alias « "
+                           + " », « ".join(declared) + " »")
+        context = [token for token in matched if token not in identity]
+        if context:
+            reasons.append("vocabulaire commun : " + ", ".join(context[:6]))
+        if score <= 0:
+            continue
+        scored.append((round(score, 2), project, "; ".join(reasons), context))
+
+    scored.sort(key=lambda item: (-item[0], item[1].project_id))
+    ranked = scored[:bound]
+    candidates = [
+        {"project_id": project.project_id, "title": project.name,
+         "status": project.status, "score": score,
+         "reason": reason or "vocabulaire commun",
+         "matched": matched[:8]}
+        for score, project, reason, matched in ranked
+    ]
+    if not candidates:
+        return {"candidates": [], "abstain": True, "top": None,
+                "reason": "aucun vocabulaire commun avec un dossier",
+                "threshold": threshold, "margin": margin}
+
+    top_score = ranked[0][0]
+    second_score = ranked[1][0] if len(ranked) > 1 else 0.0
+    abstain = top_score < threshold
+    reason = ""
+    if abstain:
+        reason = ("score insuffisant (" + str(top_score) + " < "
+                  + str(threshold) + ") : / rattachement non proposé")
+    elif second_score and top_score / second_score < margin:
+        abstain = True
+        reason = ("deux dossiers trop proches (" + str(top_score) + " / "
+                  + str(second_score) + ") : / rattachement ambigu")
+    return {
+        "candidates": candidates,
+        "abstain": abstain,
+        "top": None if abstain else candidates[0]["project_id"],
+        "reason": reason or "dossier le plus proche du texte",
+        "threshold": threshold,
+        "margin": margin,
+    }

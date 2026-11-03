@@ -91,6 +91,22 @@ l’alias n’a pas été déclaré : ajoutez-le dans l’édition du projet
 - **Appliquer cette ligne** ou **Tout appliquer** ;
 - rien n’est écrit avant confirmation.
 
+### Coller un message (intake)
+
+**Entrée → Signaux** → coller le message → **Analyser**.
+
+1. L’écran propose un dossier **et la raison** (« le texte nomme … », « contient
+   l’alias … ») ;
+2. s’il hésite, il l’écrit et ne rattache rien : les candidats restent
+   cliquables ;
+3. choisir la nature (fait, question, réponse, décision, référence, événement) ;
+4. **Intégrer au dossier** : le message devient une **note** du dossier,
+   cherchable, avec sa provenance ;
+5. les propositions détectées restent à valider une par une dans la liste.
+
+Rien n’est écrit avant le clic sur **Intégrer au dossier**. Re-coller le même
+message ne crée pas de doublon.
+
 ### Signaux entrants
 
 **Entrée → Signaux**.
