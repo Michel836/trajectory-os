@@ -23,6 +23,7 @@ are never invented.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -34,7 +35,7 @@ from typing import Any
 from urllib import error, request
 
 from trajectory_os.intelligence import model as intel_model
-from trajectory_os.mvp import document, import_engine, model, store
+from trajectory_os.mvp import changes, document, import_engine, model, store
 from trajectory_os.mvp.classification import (
     AREA,
     BLOCKER,
@@ -2694,6 +2695,16 @@ def confirm_import(
     analysis: ImportAnalysis,
     decisions: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
+    """Apply an import under the portfolio write lock."""
+    with store.portfolio_lock(root):
+        return _confirm_import_locked(root, analysis, decisions)
+
+
+def _confirm_import_locked(
+    root: str | Path,
+    analysis: ImportAnalysis,
+    decisions: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
     """Apply confirmed decisions: back up, atomically save, persist artifact."""
     portfolio = store.load_portfolio(root)
     if portfolio is None:
@@ -2703,9 +2714,29 @@ def confirm_import(
 
     backup_path = default_backup_path(root)
     intel_model.write_json(backup_path, portfolio.to_dict())
+    store.backup_portfolio(root, reason="import")
 
     store.save_portfolio(root, new_portfolio)
     artifact_path = write_import_artifact(root, analysis, parsed, entity_map)
+    old_projects = {project.project_id for project in portfolio.projects}
+    old_tasks = {task.task_id for task in portfolio.tasks}
+    created_projects = [project.project_id
+                        for project in new_portfolio.projects
+                        if project.project_id not in old_projects]
+    created_tasks = [task.task_id for task in new_portfolio.tasks
+                     if task.task_id not in old_tasks]
+    if created_projects or created_tasks:
+        with contextlib.suppress(OSError, changes.ChangeError):
+            changes.append_change(
+                root, kind=changes.KIND_IMPORT,
+                object_kind=changes.OBJECT_BATCH,
+                object_id=f"import-{analysis.imported_at}",
+                title=f"Import {analysis.source_name}",
+                summary=(f"{len(created_tasks)} tâche(s), "
+                         f"{len(created_projects)} projet(s)"),
+                after={"created_task_ids": created_tasks,
+                       "created_project_ids": created_projects},
+                source="import", undoable=True)
 
     return {
         "status": "OK",

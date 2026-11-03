@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import json
 import os
 from collections.abc import Callable, Mapping
@@ -24,22 +25,33 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from trajectory_os.mvp import (
+    assistant,
     capture,
+    changes,
     document,
     engine,
     enrichment,
     import_engine,
     import_jobs,
     importer,
+    insights,
     model,
     mutations,
     outcomes,
     planning,
+    project_review,
+    proposals,
     render,
+    signals,
+    sources,
     store,
     superproductivity,
+    trash,
     uistate,
     visualization,
+)
+from trajectory_os.mvp import (
+    search as search_module,
 )
 
 MAX_BODY_BYTES = 64 * 1024
@@ -59,6 +71,10 @@ class Dashboard:
         self.token = token
         self.llm = llm
         self.jobs = import_jobs.ImportJobManager(root, llm=llm)
+        # Best-effort daily safety net: a missing/corrupt portfolio or a
+        # read-only root must never prevent the cockpit from opening.
+        with contextlib.suppress(OSError, model.MvpError):
+            store.maybe_daily_backup(root)
 
     def cockpit(self) -> engine.Cockpit:
         return engine.build_cockpit(self.root, persist=False)
@@ -71,6 +87,227 @@ class Dashboard:
 
     def record(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         return _record_outcome(self.root, payload)
+
+    def undo_outcome(self, task_id: str) -> dict[str, Any]:
+        return outcomes.undo_last(self.root, task_id=task_id)
+
+    def changes(self, limit: int = 50, since: str = "") -> dict[str, Any]:
+        return {"changes": changes.recent_changes(
+            self.root, self.portfolio(), limit=limit, since=since)}
+
+    def rederive_projects(self) -> dict[str, Any]:
+        return outcomes.rederive_project_statuses(self.root)
+
+    def explain_project(self, project_id: str) -> dict[str, Any]:
+        return insights.explain_project(self.root, project_id)
+
+    def project_review_queue(self) -> dict[str, Any]:
+        return project_review.build_queue(self.root)
+
+    def review_project(self, project_id: str,
+                       payload: Mapping[str, Any]) -> dict[str, Any]:
+        decision = payload.get("decision")
+        if not isinstance(decision, str) or not decision:
+            raise model.MvpError(model.E_MALFORMED, "decision required")
+        return project_review.decide(
+            self.root, project_id, decision,
+            note=str(payload.get("note", "")))
+
+    def project_update(self, project_id: str,
+                       payload: Mapping[str, Any]) -> dict[str, Any]:
+        portfolio = self.portfolio()
+        project = portfolio.project_map().get(project_id)
+        if project is None:
+            raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+        state = str(payload.get("state", ""))
+        if state and state not in visualization.PROJECT_HEALTH:
+            raise model.MvpError(model.E_MALFORMED, "invalid project state")
+        fields = {
+            "state": state,
+            "note": str(payload.get("note", ""))[:2000],
+            "risks": str(payload.get("risks", ""))[:2000],
+            "decision": str(payload.get("decision", ""))[:500],
+            "next_step": str(payload.get("next_step", ""))[:500],
+        }
+        change = changes.append_change(
+            self.root, kind=changes.KIND_UPDATE,
+            object_kind=changes.OBJECT_PROJECT, object_id=project_id,
+            title=project.name, summary="mise à jour de projet",
+            before={}, after=fields, source="human", undoable=False)
+        return {"project_id": project_id, "update": change.to_dict()}
+
+    def project_timeline(self, project_id: str) -> dict[str, Any]:
+        portfolio = self.portfolio()
+        project = portfolio.project_map().get(project_id)
+        if project is None:
+            raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+        task_ids = {task.task_id for task in portfolio.tasks
+                    if task.project_id == project_id}
+        entries: list[dict[str, Any]] = []
+        for change in changes.read_changes(self.root, limit=200):
+            if change.object_id not in task_ids | {project_id}:
+                continue
+            entries.append({
+                "kind": "change", "at": change.at,
+                "title": change.title, "summary": change.summary,
+                "source": change.source,
+            })
+        for signal in signals.read_signals(self.root, limit=200):
+            if signal.project_hint != project_id:
+                continue
+            entries.append({
+                "kind": "signal", "at": signal.received_at,
+                "title": signal.title, "summary": signal.source_ref,
+                "source": signal.source_ref,
+            })
+        for record in store.read_outcomes(self.root):
+            if record.task_id not in task_ids:
+                continue
+            entries.append({
+                "kind": "outcome", "at": record.recorded_at,
+                "title": record.task_id, "summary": record.outcome,
+                "source": "human",
+            })
+        entries.sort(key=lambda item: str(item["at"]), reverse=True)
+        return {"project_id": project_id, "entries": entries[:100]}
+
+    def assistant_project(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        project_id = payload.get("project_id")
+        if not isinstance(project_id, str) or not project_id:
+            raise model.MvpError(model.E_MALFORMED, "project_id required")
+        return assistant.run_assistant(
+            self.root,
+            assistant.AssistantRequest(
+                kind=assistant.KIND_PROJECT, project_id=project_id,
+                question=str(payload.get("question", ""))))
+
+    def assistant_weekly(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return assistant.run_assistant(
+            self.root,
+            assistant.AssistantRequest(
+                kind=assistant.KIND_WEEKLY,
+                question=str(payload.get("question", ""))))
+
+    def trash_entries(self) -> dict[str, Any]:
+        return {"trash": [entry.to_dict()
+                          for entry in trash.list_trash(self.root)]}
+
+    def trash_object(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        kind = payload.get("kind")
+        ref_id = payload.get("ref_id")
+        if kind not in ("task", "project"):
+            raise model.MvpError(model.E_MALFORMED, "kind must be task/project")
+        if not isinstance(ref_id, str) or not ref_id:
+            raise model.MvpError(model.E_MALFORMED, "ref_id required")
+        cascade = bool(payload.get("cascade", False))
+        if kind == "task":
+            return trash.trash_task(self.root, ref_id)
+        return trash.trash_project(self.root, ref_id, cascade=cascade)
+
+    def restore_trash(self, trash_id: str) -> dict[str, Any]:
+        return trash.restore_trash(self.root, trash_id)
+
+    def purge_trash(self, trash_id: str) -> dict[str, Any]:
+        return trash.purge_trash(self.root, trash_id)
+
+    def undo_change(self, change_id: str) -> dict[str, Any]:
+        return changes.undo_change(self.root, change_id)
+
+    def backups(self) -> dict[str, Any]:
+        return {"backups": list(store.list_backups(self.root))}
+
+    def search(self, query: str, limit: int = 30) -> dict[str, Any]:
+        return search_module.search(self.root, query, limit=limit)
+
+    # --- inbound signals / proposals ---------------------------------------
+
+    def signals(self) -> dict[str, Any]:
+        return {"signals": signals.list_bundles(self.root)}
+
+    def create_signal(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        text = payload.get("text")
+        filename = payload.get("filename")
+        content_b64 = payload.get("content_b64")
+        source_ref = str(payload.get("source_ref", "manual"))
+        project_hint = str(payload.get("project_hint", ""))
+        sensitivity = str(payload.get("sensitivity", "INTERNAL"))
+        if isinstance(filename, str) and isinstance(content_b64, str):
+            try:
+                raw = base64.b64decode(content_b64.encode("ascii"),
+                                       validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise model.MvpError(model.E_MALFORMED,
+                                     "invalid file payload") from exc
+            lowered = filename.lower()
+            if lowered.endswith(".eml"):
+                return sources.ingest_eml_bytes(
+                    self.root, filename, raw, sensitivity=sensitivity)
+            if lowered.endswith(".mbox"):
+                result = sources.ingest_mbox_bytes(
+                    self.root, filename, raw, sensitivity=sensitivity)
+                return {
+                    "count": result["count"],
+                    "results": result["results"],
+                    "proposals": [proposal
+                                  for item in result["results"]
+                                  for proposal in item["proposals"]],
+                    "errors": result["errors"],
+                    "limitations": result["limitations"],
+                    "duplicate": False,
+                }
+            return sources.ingest_document_bytes(
+                self.root, filename, raw, project_hint=project_hint,
+                sensitivity=sensitivity)
+        if not isinstance(text, str) or not text.strip():
+            raise model.MvpError(model.E_MALFORMED, "text required")
+        return sources.ingest_text(
+            self.root, text=text, source_ref=source_ref,
+            title=str(payload.get("title", "")),
+            project_hint=project_hint, sensitivity=sensitivity)
+
+    def dismiss_signal(self, signal_id: str) -> dict[str, Any]:
+        return signals.dismiss_signal(self.root, signal_id)
+
+    def set_source_rule(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        source_ref = payload.get("source_ref")
+        if not isinstance(source_ref, str) or not source_ref:
+            raise model.MvpError(model.E_MALFORMED, "source_ref required")
+        return signals.set_source_rule(
+            self.root, source_ref,
+            project_id=str(payload.get("project_id", "")),
+            mute=bool(payload.get("mute", False)),
+            sensitivity=str(payload.get("sensitivity", "INTERNAL")),
+            max_proposals=int(payload.get("max_proposals", 5)))
+
+    def mute_signal_source(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        source_ref = payload.get("source_ref")
+        if not isinstance(source_ref, str) or not source_ref:
+            raise model.MvpError(model.E_MALFORMED, "source_ref required")
+        return signals.mute_source(
+            self.root, source_ref, muted=bool(payload.get("muted", True)))
+
+    def accept_proposal(self, signal_id: str,
+                        proposal_id: str) -> dict[str, Any]:
+        return proposals.apply_proposal(self.root, signal_id, proposal_id)
+
+    def reject_proposal(self, signal_id: str, proposal_id: str,
+                        payload: Mapping[str, Any]) -> dict[str, Any]:
+        return proposals.reject_proposal(
+            self.root, signal_id, proposal_id,
+            reason=str(payload.get("reason", "")))
+
+    def defer_proposal(self, signal_id: str,
+                       proposal_id: str) -> dict[str, Any]:
+        return proposals.defer_proposal(self.root, signal_id, proposal_id)
+
+    def backup_now(self) -> dict[str, Any]:
+        return store.backup_portfolio(self.root, reason="ui")
+
+    def restore_backup(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        name = payload.get("name")
+        if name is not None and not isinstance(name, str):
+            raise model.MvpError(model.E_MALFORMED, "name must be a string")
+        return store.restore_portfolio(self.root, name=name or "")
 
     # --- visual execution layer ----------------------------------------------
 
@@ -503,6 +740,19 @@ class Dashboard:
     def create_task(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         return mutations.create_task(self.root, payload)
 
+    def estimate_tasks(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        updates = payload.get("updates")
+        if not isinstance(updates, list):
+            raise model.MvpError(model.E_MALFORMED, "updates must be a list")
+        return mutations.estimate_tasks(self.root, updates)
+
+    def rename_domain(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        old = payload.get("from")
+        new = payload.get("to")
+        if not isinstance(old, str) or not isinstance(new, str):
+            raise model.MvpError(model.E_MALFORMED, "from/to required")
+        return mutations.rename_domain(self.root, old=old, new=new)
+
     def update_task(self, task_id: str,
                     payload: Mapping[str, Any]) -> dict[str, Any]:
         return mutations.update_task(self.root, task_id, payload)
@@ -735,6 +985,46 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 if parts == ["api", "review"]:
                     self._send_json(HTTPStatus.OK, app.end_of_day_review())
                     return
+                if parts == ["api", "changes"]:
+                    query = parse_qs(urlparse(self.path).query)
+                    limit = (self._query_int("limit")
+                             if "limit" in query else 50)
+                    since = query.get("since", [""])[0]
+                    self._send_json(
+                        HTTPStatus.OK,
+                        {"status": "OK", **app.changes(limit, since)})
+                    return
+                if parts == ["api", "trash"]:
+                    self._send_json(HTTPStatus.OK, app.trash_entries())
+                    return
+                if parts == ["api", "backups"]:
+                    self._send_json(HTTPStatus.OK, app.backups())
+                    return
+                if parts == ["api", "projects", "review"]:
+                    self._send_json(HTTPStatus.OK,
+                                    app.project_review_queue())
+                    return
+                if len(parts) == 4 and parts[:2] == ["api", "projects"] \
+                        and parts[3] == "timeline":
+                    self._send_json(HTTPStatus.OK,
+                                    app.project_timeline(parts[2]))
+                    return
+                if len(parts) == 4 and parts[:2] == ["api", "projects"] \
+                        and parts[3] == "explain":
+                    self._send_json(HTTPStatus.OK,
+                                    app.explain_project(parts[2]))
+                    return
+                if parts == ["api", "signals"]:
+                    self._send_json(HTTPStatus.OK, app.signals())
+                    return
+                if parts == ["api", "search"]:
+                    query = parse_qs(urlparse(self.path).query)
+                    self._send_json(
+                        HTTPStatus.OK,
+                        app.search(query.get("q", [""])[0],
+                                   self._query_int("limit")
+                                   if "limit" in query else 30))
+                    return
                 if parts == ["api", "preferences"]:
                     self._send_json(
                         HTTPStatus.OK,
@@ -792,7 +1082,9 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return
             parts = self._path_parts()
             maximum = (MAX_IMPORT_BODY_BYTES
-                       if parts[:2] == ["api", "import"] else MAX_BODY_BYTES)
+                       if parts[:2] in (["api", "import"],
+                                        ["api", "signals"])
+                       else MAX_BODY_BYTES)
             payload = self._read_json(maximum)
             if payload is None:
                 return
@@ -839,6 +1131,43 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.confirm_import(payload)
             if parts == ["api", "import", "confirm"]:
                 return app.confirm_import(payload)
+            if len(parts) == 4 and parts[:2] == ["api", "changes"] \
+                    and parts[3] == "undo":
+                return app.undo_change(parts[2])
+            if parts == ["api", "trash"]:
+                return app.trash_object(payload)
+            if len(parts) == 4 and parts[:2] == ["api", "trash"] \
+                    and parts[3] == "restore":
+                return app.restore_trash(parts[2])
+            if len(parts) == 4 and parts[:2] == ["api", "trash"] \
+                    and parts[3] == "purge":
+                return app.purge_trash(parts[2])
+            if parts == ["api", "backups"]:
+                return app.backup_now()
+            if parts == ["api", "backups", "restore"]:
+                return app.restore_backup(payload)
+            if parts == ["api", "assistant", "project"]:
+                return app.assistant_project(payload)
+            if parts == ["api", "assistant", "weekly"]:
+                return app.assistant_weekly(payload)
+            if parts == ["api", "sources", "rule"]:
+                return app.set_source_rule(payload)
+            if parts == ["api", "signals"]:
+                return app.create_signal(payload)
+            if len(parts) == 4 and parts[:2] == ["api", "signals"] \
+                    and parts[3] == "dismiss":
+                return app.dismiss_signal(parts[2])
+            if len(parts) == 4 and parts[:2] == ["api", "signals"] \
+                    and parts[3] == "mute":
+                return app.mute_signal_source(payload)
+            if len(parts) == 6 and parts[:2] == ["api", "signals"] \
+                    and parts[3] == "proposals":
+                if parts[5] == "accept":
+                    return app.accept_proposal(parts[2], parts[4])
+                if parts[5] == "reject":
+                    return app.reject_proposal(parts[2], parts[4], payload)
+                if parts[5] == "defer":
+                    return app.defer_proposal(parts[2], parts[4])
             if parts == ["api", "enrichment"]:
                 return app.run_enrichment(payload)
             if len(parts) == 4 and parts[:2] == ["api", "enrichment"] \
@@ -881,6 +1210,14 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.delete_decision(parts[2])
             if len(parts) == 3 and parts[:2] == ["api", "decisions"]:
                 return app.update_decision(parts[2], payload)
+            if len(parts) == 4 and parts[:2] == ["api", "projects"] \
+                    and parts[3] == "review":
+                return app.review_project(parts[2], payload)
+            if len(parts) == 4 and parts[:2] == ["api", "projects"] \
+                    and parts[3] == "update":
+                return app.project_update(parts[2], payload)
+            if parts == ["api", "projects", "rederive"]:
+                return app.rederive_projects()
             if parts == ["api", "projects"]:
                 return app.create_project(payload)
             if len(parts) == 4 and parts[:2] == ["api", "projects"] \
@@ -891,6 +1228,10 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.park_project(parts[2], payload)
             if len(parts) == 3 and parts[:2] == ["api", "projects"]:
                 return app.update_project(parts[2], payload)
+            if parts == ["api", "domains", "rename"]:
+                return app.rename_domain(payload)
+            if parts == ["api", "tasks", "estimate"]:
+                return app.estimate_tasks(payload)
             if parts == ["api", "tasks"]:
                 return app.create_task(payload)
             if len(parts) == 4 and parts[:2] == ["api", "tasks"] \
@@ -899,6 +1240,9 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
             if len(parts) == 4 and parts[:2] == ["api", "tasks"] \
                     and parts[3] == "calibrate":
                 return app.calibrate_task(parts[2])
+            if len(parts) == 5 and parts[:2] == ["api", "tasks"] \
+                    and parts[3] == "outcome" and parts[4] == "undo":
+                return app.undo_outcome(parts[2])
             if len(parts) == 4 and parts[:2] == ["api", "tasks"] \
                     and parts[3] == "outcome":
                 outcome_payload = dict(payload)

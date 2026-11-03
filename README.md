@@ -27,6 +27,32 @@ structured portfolio of:
 - waiting items;
 - resources.
 
+### Current implementation level
+
+As of 2026-10-28, the personal MVP is at **V0.7 — Bounded Assistance**:
+
+| Level | Focus | Status |
+|---|---|---|
+| V0.1 | daily cockpit, four workspaces, Done/undo, changes journal | done |
+| V0.2 | bulk estimates, calibrated suggestions, portfolio debt | done |
+| V0.3 | backups, write lock, trash, global search, command palette | done |
+| V0.4 | inbound signals, deterministic proposals, review queue | done |
+| V0.5 | `.eml`/`.mbox`, document versions, source rules, IMAP opt-in | done |
+| V0.6 | project health, metrics, guided project review, project updates | done |
+| V0.7 | deterministic explanation, read-only assistant, weekly review | done |
+
+In this table, **done** means implemented and quality-gated; it does not mean
+validated by long real-world dogfood. This is **not V1**. Real-world dogfood
+(100 emails, 20 documents, IMAP test mailbox, local-model evaluation) and
+merge/tag are still required. See `docs/development/MVP_ROADMAP.md`.
+
+User documentation:
+
+- `GUIDE_UTILISATEUR.md` — step-by-step test plan for tomorrow;
+- `docs/guides/MVP_DAILY_GUIDE.md` — daily workflow;
+- `docs/guides/MVP_OPERATIONS.md` — backups, trash, sources, IMAP, privacy;
+- `docs/adr/README.md` — architecture decision index.
+
 ## Architecture philosophy
 
 TrajectoryOS does not assume that an LLM should solve every problem.
@@ -112,11 +138,35 @@ scripts/mvp export-sp    # export ready tasks to Super Productivity import JSON
 scripts/mvp export-sp --dry-run   # build the export document, write nothing
 ```
 
-The visual cockpit additionally offers a **Today** view (what to do now, with
-why-selected and explicit blocking reasons), a **Ready** view that separates
-READY / IN PROGRESS / BLOCKED / WAITING / DEFERRED / closed-project work, a
-presentation-only **global search** and **saved views** (filter presets stored
-in `ui_state.json`, never in the portfolio).
+The visual cockpit additionally offers:
+
+- **Aujourd’hui** — plan, agenda, health, changes summary, focus, ready;
+- **Entrée → Signaux** — inbound signals, proposals, sources, ingestion queue;
+- **Entrée → Inbox / En attente / Décisions** — parked projects, follow-ups,
+  decisions;
+- **Portefeuille** — list, Kanban, WBS, graph, Gantt and advanced views behind
+  **Plus**;
+- **Revue → Semaine / Demain / Progression / Changements / Dette / Corbeille /
+  Revue projets**;
+- a presentation-only **List search** and **saved views** (filter presets
+  stored in `ui_state.json`, never in the portfolio);
+- a separate **global search** (projects, tasks, imported vocabulary, signals,
+  changes) that powers the command palette;
+- a command palette (`Ctrl/Cmd+K`) and keyboard shortcuts (`?` for help).
+
+Write-safety commands are also available:
+
+```bash
+scripts/mvp backup   --root local_data/mvp
+scripts/mvp backups  --root local_data/mvp
+scripts/mvp restore  --root local_data/mvp --file <backup>
+```
+
+Read-only IMAP is opt-in only:
+
+```bash
+scripts/mvp imap-sync --root local_data/mvp --config imap.json
+```
 
 Capacity is **time-of-day aware**. `Capacity` carries an explicit working
 window (`day_start_minutes` / `day_end_minutes`, default 09:00–18:00) and the
@@ -131,6 +181,49 @@ default), an explicit `days_off` list, and calendar events with an optional
 into the next working day. The cockpit's **Today** view has an **Agenda**
 block to add, repeat or delete events and to toggle a day off. See ADR-034.
 
+### Daily usability (Phase 0)
+
+The cockpit is organised into four workspaces instead of one flat wall of
+views, and the main labels are in French:
+
+- **Aujourd’hui** — plan, agenda, health card, changes summary, focus, ready;
+- **Entrée** — Signaux, Inbox, waiting items, decisions, capture and document
+  import;
+- **Portefeuille** — list, Kanban, WBS, graph, Gantt and the advanced views
+  behind **Plus**;
+- **Revue** — week, tomorrow, progress, activity, goal flow, **Changements**,
+  **Dette du portefeuille**, **Corbeille et sauvegardes** and **Revue projets**.
+
+Every task row exposes `✓ Terminé`. Completion is recorded immediately, the
+toast survives the refresh and offers **Annuler** when the change journal
+recorded an undoable outcome. Undo restores the previous task status and
+actual minutes; the immutable outcome ledger is never rewritten.
+
+The **Santé du portefeuille** card surfaces deferred projects, projects with
+no open task, ready tasks without an estimate, waiting items older than seven
+days and stored `BLOCKED` projects that still have a ready task. The latter
+can be repaired explicitly with **Recalculer les statuts projet** (or
+`POST /api/projects/rederive`); the repair never touches task readiness or
+priorities.
+
+Changes are journaled in the bounded, append-only `changes.jsonl` sidecar.
+The **Changements** view merges that journal with outcomes recorded before the
+journal existed, so "what changed?" is useful immediately. See ADR-038.
+
+Quick Capture keeps its preview-then-confirm contract and also supports
+**Appliquer cette ligne**, so one reviewed line can be applied without
+applying the rest of the batch.
+
+A read-only dogfood report is available with:
+
+```bash
+.venv/bin/python scripts/mvp_phase0_evidence.py
+```
+
+It reports the real portfolio-health counts, then measures the explicit
+project-status repair on a temporary copy (the real portfolio is never
+modified).
+
 ### Quick Capture (daily input)
 
 ```bash
@@ -141,9 +234,9 @@ scripts/mvp capture --text "..." --confirm --project P    # apply (human)
 Quick Capture is a deterministic, local pipeline: it splits free-form text into
 lines, classifies each one (new task / possible project / possible idea /
 existing match / duplicate), matches it against the relevant existing projects
-and tasks, and shows a preview. Nothing is written until the human confirms,
-and a confirm is all-or-nothing. The cockpit exposes the same flow as **Quick
-Capture** with Accept / Edit / Skip / Merge per line.
+and tasks, and shows a preview. Nothing is written until the human confirms.
+The CLI confirms a batch atomically; the cockpit also supports **Appliquer
+cette ligne**, so one reviewed line can be applied without applying the rest.
 
 ### Project vs task: one shared classification
 
@@ -187,6 +280,151 @@ tasks (re-evaluated readiness) and feeds planned-vs-actual statistics; the
 next `plan` is the replan. The cockpit's outcome form captures completion
 status, actual minutes and a result/blocker note in the same validated path,
 and derives the estimation error without any new schema field.
+
+### Inbound signals and proposals (V0.4)
+
+The cockpit can ingest a text, a note or a document and turn it into
+**reviewable proposals**, never silent writes:
+
+```text
+Entrée → Signaux
+```
+
+The deterministic analyser extracts:
+
+- dates (ISO, French numeric/long, `demain`, `dans 3 jours`);
+- durations (`30 min`, `1h`, `1h30`);
+- completion / blocked / deferred wording;
+- received/waiting wording (`reçu`, `envoyé`, `pièces jointes`, `validé`);
+- action lines and project hints.
+
+Each proposal carries `before`/`after`, a confidence, a source quote and a
+rationale. The human can **Accepter**, **Rejeter** or **Plus tard**. Accepted
+proposals go through the validated mutation/outcome layer, append an evidence
+record to `inbox/evidence.jsonl`, and keep the normal change-journal entry.
+
+Noise control: duplicate hashes, a daily signal cap, a per-signal proposal
+cap, muted sources, split inbox filters and conservative heuristics.
+
+See `docs/adr/ADR-040-inbound-signals-proposals.md`.
+
+### Real sources: emails and documents (V0.5)
+
+Local ingestion supports:
+
+- `.eml` — headers, text/plain, HTML fallback, thread key, attachments listed;
+- `.mbox` — bounded read-only batch ingestion;
+- ODT / DOCX / PDF / MD / TXT — via the existing document extractor.
+
+Every source is recorded in `inbox/sources.jsonl` with origin, location,
+content hash, version, previous hash, status (`NEW`/`DUPLICATE`/`CHANGED`),
+sensitivity, sender, thread key, limitations and a bounded diff. Re-ingesting a
+changed document produces version `n+1` and a diff.
+
+Source rules live in `inbox/rules.json`:
+
+```json
+{
+  "source_rules": {
+    "notaire@exemple.fr": {
+      "project_id": "donation-notary",
+      "mute": false,
+      "sensitivity": "CONFIDENTIAL",
+      "max_proposals": 3
+    }
+  }
+}
+```
+
+IMAP is **opt-in and read-only**: explicit config, sender allowlist, password
+via environment variable, `readonly=True`, no send/delete/move, bounded
+messages, fake-fetcher tests in CI.
+
+Privacy: secret-shaped assignments are redacted before persistence, and
+`RESTRICTED` content is never persisted. No cloud engine is used by default.
+
+See `docs/adr/ADR-041-email-document-ingestion.md` and
+`docs/guides/MVP_OPERATIONS.md`.
+
+### Project health and guided review (V0.6)
+
+Project **health** is derived separately from lifecycle status:
+
+```text
+ON_TRACK / AT_RISK / STALE / NO_NEXT_ACTION / OVERLOADED / WAITING / BLOCKED / DONE
+```
+
+It is based on deadline pressure, progress, readiness, estimated load and last
+activity. It never changes the project automatically.
+
+The **Revue projets** view walks one project at a time and offers explicit
+decisions: **Continuer**, **Défer**, **Idée**, **Un jour**, **Clôturer**,
+**Passer**. The decision is journaled; no task is modified.
+
+The **Dette du portefeuille** view surfaces deferred projects, projects
+without an open task, ready tasks without an estimate, long tasks, old waiting
+items, triage suggestions and domain renaming.
+
+Project updates can be recorded from the Inspector: health, progress note,
+risks, decision and next step. They appear in the object **Activité** and in
+the **Changements** journal.
+
+### Bounded read-only assistant (V0.7)
+
+The assistant has two backends:
+
+- **deterministic** (default) — composes the project explanation or weekly
+  review with citations; no model, no network;
+- **local Ollama** — opt-in:
+
+```bash
+TRAJECTORY_MVP_ASSISTANT_ENGINE=local scripts/mvp dashboard
+```
+
+The assistant:
+
+- is read-only;
+- has no tools and no write path;
+- requires a strict JSON answer with citations;
+- falls back to the deterministic answer when the local model is unavailable,
+  invalid, or cites an unknown fact;
+- marks its output `canonical=false`.
+
+UI: **Expliquer** a project → **Résumé assisté**; **Semaine → Revue assistée**.
+
+Endpoints:
+
+```text
+POST /api/assistant/project
+POST /api/assistant/weekly
+GET  /api/projects/{id}/explain
+GET  /api/projects/{id}/timeline
+```
+
+### Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| `?` | help |
+| `n` | new task |
+| `p` | new project |
+| `c` | quick capture |
+| `i` | inbound signals |
+| `t` | today |
+| `r` | refresh |
+| `d` | complete selected task |
+| `s` | defer selected task |
+| `/` | search |
+| `Ctrl/Cmd+K` | command palette |
+
+### Documentation
+
+- `GUIDE_UTILISATEUR.md` — step-by-step test plan for tomorrow;
+- `docs/guides/MVP_DAILY_GUIDE.md` — daily workflow;
+- `docs/guides/MVP_OPERATIONS.md` — backups, trash, sources, IMAP, privacy;
+- `docs/development/MVP_ROADMAP.md` — V0.0 → V0.7 status and exit criteria;
+- `docs/adr/README.md` — ADR index;
+- `CHANGELOG.md` — release-level summary.
 
 ### Reproducible demo
 
@@ -713,17 +951,33 @@ Durable evidence lives under `docs/missions/m064-m071/`. See
 
 TrajectoryOS is under active experimental development.
 
+The personal MVP is at **V0.7 — Bounded Assistance**:
+
+- daily cockpit and planifiable portfolio;
+- write safety (backups, lock, trash, undo);
+- inbound signals and human-reviewed proposals;
+- local `.eml`/`.mbox`/document ingestion with versions and source rules;
+- project health, guided project review and project updates;
+- deterministic explanation and read-only assistant with citations.
+
 The current executable:
 
     uv run trajectory-os
 
-Quality gate:
+The recommended local cockpit:
 
-    uv run pytest
-    uv run ruff check .
-    uv run mypy src
+    scripts/mvp dashboard
 
-No production-ready release is available yet.
+The canonical quality gate:
+
+    bash scripts/quality.sh
+
+It runs `pytest`, `ruff` and `mypy`. The gate is green on the current branch;
+the authoritative result is always the output of the command, not this README.
+
+No production-ready release is available yet. The remaining work is real-world
+dogfood (100 emails, 20 documents, IMAP test mailbox, local-model evaluation),
+not a new feature layer. See `docs/development/MVP_ROADMAP.md`.
 
 ## License
 

@@ -97,6 +97,56 @@ def _cmd_load(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_backup(args: argparse.Namespace) -> int:
+    result = store.backup_portfolio(
+        args.root, reason=args.reason, keep=args.keep)
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"backup written: {result['path']} ({result['size']} bytes)")
+    return EXIT_OK
+
+
+def _cmd_backups(args: argparse.Namespace) -> int:
+    backups = store.list_backups(args.root)
+    if args.json:
+        _print_json(list(backups))
+    elif not backups:
+        print("no backups")
+    else:
+        for item in backups:
+            print(f"- {item['name']} ({item['size']} bytes)")
+    return EXIT_OK
+
+
+def _cmd_restore(args: argparse.Namespace) -> int:
+    result = store.restore_portfolio(
+        args.root, name=args.file or "",
+        keep_current=not args.no_keep_current)
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"restored {result['restored']} -> {result['portfolio']}")
+        if result["pre_restore_backup"]:
+            print(f"previous state backed up: {result['pre_restore_backup']}")
+    return EXIT_OK
+
+
+def _cmd_imap_sync(args: argparse.Namespace) -> int:
+    from trajectory_os.mvp import imap_source
+
+    config = imap_source.ImapConfig.load(args.config)
+    result = imap_source.ingest_imap(
+        args.root, config, imap_source.ImapReadOnlyFetcher(config))
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"IMAP read-only: {result['count']} message(s) ingested, "
+              f"{len(result['skipped'])} skipped, "
+              f"{len(result['errors'])} error(s)")
+    return EXIT_OK
+
+
 def _cmd_plan(args: argparse.Namespace) -> int:
     root = args.root
     _load_or_fail(root)
@@ -505,6 +555,35 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--root", default=DEFAULT_ROOT)
     p.add_argument("file")
     p.set_defaults(func=_cmd_load)
+
+    p = sub.add_parser("backup", help="write a versioned portfolio backup")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("--reason", default="manual")
+    p.add_argument("--keep", type=int, default=20)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_backup)
+
+    p = sub.add_parser("backups", help="list portfolio backups")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_backups)
+
+    p = sub.add_parser("restore", help="restore a portfolio backup")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("--file", default=None,
+                   help="backup filename (default: latest)")
+    p.add_argument("--no-keep-current", action="store_true",
+                   help="do not back up the current state first")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_restore)
+
+    p = sub.add_parser("imap-sync",
+                       help="opt-in read-only IMAP ingestion")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("--config", required=True,
+                   help="IMAP JSON config with an explicit sender allowlist")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_imap_sync)
 
     p = sub.add_parser("plan", help="full daily cockpit")
     add_root(p)

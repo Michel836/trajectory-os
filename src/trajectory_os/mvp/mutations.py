@@ -21,7 +21,7 @@ from __future__ import annotations
 import functools
 import re
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
@@ -36,6 +36,9 @@ from trajectory_os.mvp import (
     outcomes,
     store,
 )
+from trajectory_os.mvp import (
+    changes as changes_module,
+)
 
 #: Serialize in-process portfolio mutations. The local cockpit server is
 #: threaded, so two read-modify-write requests could otherwise lose an update.
@@ -48,7 +51,10 @@ _MUTATION_LOCK = threading.RLock()
 def _serialized[F: Callable[..., Any]](func: F) -> F:
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        with _MUTATION_LOCK:
+        root = args[0] if args else kwargs.get("root")
+        if root is None:
+            raise model.MvpError(model.E_MALFORMED, "root required")
+        with _MUTATION_LOCK, store.portfolio_lock(root):
             return func(*args, **kwargs)
     return cast(F, wrapper)
 
@@ -189,6 +195,26 @@ def _updated_at(portfolio: model.Portfolio) -> str:
     return _now()
 
 
+def _journal(root: str | Path, *, kind: str, object_kind: str,
+             object_id: str, title: str, summary: str,
+             before: Mapping[str, Any] | None = None,
+             after: Mapping[str, Any] | None = None,
+             source: str = "human", undoable: bool = True,
+             at: str = "") -> None:
+    """Best-effort change journaling after a canonical write.
+
+    A journal failure must never turn a successful, already-persisted human
+    action into an error. The portfolio remains authoritative.
+    """
+    try:
+        changes_module.append_change(
+            root, kind=kind, object_kind=object_kind, object_id=object_id,
+            title=title, summary=summary, before=before, after=after,
+            source=source, undoable=undoable, at=at)
+    except (OSError, changes_module.ChangeError):
+        return
+
+
 # --- project mutations --------------------------------------------------------
 
 
@@ -235,6 +261,11 @@ def create_project(root: str | Path,
         updated_at=_updated_at(portfolio),
     ).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_CREATE,
+             object_kind=changes_module.OBJECT_PROJECT,
+             object_id=project_id, title=name, summary="projet créé",
+             after={"name": name, "status": project.status},
+             at=new_portfolio.updated_at)
     return {"project_id": project_id, "name": name}
 
 
@@ -263,6 +294,12 @@ def update_project(root: str | Path, project_id: str,
     new_portfolio = replace(portfolio, projects=new_projects,
                             updated_at=_updated_at(portfolio)).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_PROJECT,
+             object_id=project_id, title=updated.name,
+             summary="projet mis à jour",
+             before={key: getattr(current, key) for key in changes},
+             after={key: getattr(updated, key) for key in changes})
     return {"project_id": project_id, "status": updated.status}
 
 
@@ -304,6 +341,12 @@ def park_project(root: str | Path, project_id: str,
     new_portfolio = replace(portfolio, projects=new_projects,
                             updated_at=_updated_at(portfolio)).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_PROJECT,
+             object_id=project_id, title=updated.name,
+             summary="projet parqué" if updated.parked else "projet activé",
+             before={"status": projects[project_id].status},
+             after={"status": updated.status})
     return {"project_id": project_id, "status": updated.status,
             "parked": updated.parked}
 
@@ -359,6 +402,17 @@ def promote_task(root: str | Path, task_id: str,
         portfolio, projects=portfolio.projects + (project,), tasks=new_tasks,
         updated_at=stamp).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_CREATE,
+             object_kind=changes_module.OBJECT_PROJECT,
+             object_id=project_id, title=name,
+             summary="projet créé par promotion",
+             after={"name": name, "status": project.status})
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_TASK,
+             object_id=task_id, title=task.title,
+             summary="tâche promue en projet",
+             before={"project_id": task.project_id},
+             after={"project_id": project_id})
     return {"task_id": task_id, "project_id": project_id, "name": name,
             "previous_project_id": task.project_id}
 
@@ -412,6 +466,12 @@ def demote_project(root: str | Path, project_id: str,
         portfolio, projects=new_projects, tasks=tuple(new_tasks),
         updated_at=stamp).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_PROJECT,
+             object_id=project_id, title=current.name,
+             summary=f"projet fusionné dans {target}",
+             before={"status": current.status},
+             after={"status": "REMOVED", "target_project_id": target})
     return {"project_id": project_id, "target_project_id": target,
             "moved_tasks": moved}
 
@@ -826,6 +886,11 @@ def create_task(root: str | Path,
         updated_at=stamp,
     ).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_CREATE,
+             object_kind=changes_module.OBJECT_TASK, object_id=task_id,
+             title=title, summary="tâche créée",
+             after={"title": title, "project_id": project_id,
+                    "status": task.status}, at=stamp)
     return {"task_id": task_id, "project_id": project_id}
 
 
@@ -860,6 +925,11 @@ def apply_calibrated_estimate(root: str | Path,
     new_portfolio = replace(portfolio, tasks=new_tasks,
                             updated_at=stamp).validate()
     store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_TASK, object_id=task_id,
+             title=task.title, summary="estimation calibrée",
+             before={"estimated_minutes": task.estimated_minutes},
+             after={"estimated_minutes": adjusted}, at=stamp)
     return {
         "task_id": task_id,
         "previous_minutes": task.estimated_minutes,
@@ -871,6 +941,104 @@ def apply_calibrated_estimate(root: str | Path,
 
 
 @_serialized
+@_serialized
+def rename_domain(root: str | Path, *, old: str, new: str) -> dict[str, Any]:
+    """Rename one domain across every project (explicit human decision)."""
+    if not isinstance(old, str) or not old.strip():
+        raise model.MvpError(model.E_MALFORMED, "old domain required")
+    if not isinstance(new, str) or not new.strip():
+        raise model.MvpError(model.E_MALFORMED, "new domain required")
+    old = old.strip()
+    new = new.strip()
+    if len(new) > model.MAX_STR_LEN:
+        raise model.MvpError(model.E_MALFORMED, "new domain is too long")
+    portfolio = _load(root)
+    changed = [p for p in portfolio.projects if p.domain == old]
+    if not changed:
+        return {"updated": 0, "from": old, "to": new}
+    stamp = _updated_at(portfolio)
+    projects = tuple(replace(project, domain=new)
+                     if project.domain == old else project
+                     for project in portfolio.projects)
+    candidate = replace(portfolio, projects=projects,
+                        updated_at=stamp).validate()
+    store.backup_portfolio(root, reason="bulk-domain-rename")
+    store.save_portfolio(root, candidate)
+    for project in changed:
+        _journal(root, kind=changes_module.KIND_UPDATE,
+                 object_kind=changes_module.OBJECT_PROJECT,
+                 object_id=project.project_id, title=project.name,
+                 summary="domaine renommé",
+                 before={"domain": old}, after={"domain": new}, at=stamp)
+    return {"updated": len(changed), "from": old, "to": new}
+
+
+@_serialized
+def estimate_tasks(root: str | Path,
+                   updates: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Apply a bounded batch of effort estimates in one atomic write.
+
+    ``updates`` is a sequence of ``{"task_id": ..., "estimated_minutes": N}``
+    where ``estimated_minutes`` is ``None`` (clear) or a positive integer.
+    Duplicate ids and unknown tasks fail closed before anything is written.
+    """
+    if isinstance(updates, (str, bytes)) or not isinstance(updates, Sequence):
+        raise model.MvpError(model.E_MALFORMED, "updates must be a list")
+    if len(updates) > 500:
+        raise model.MvpError(model.E_OVERFLOW, "too many estimates")
+    portfolio = _load(root)
+    tasks = portfolio.task_map()
+    stamp = _updated_at(portfolio)
+    seen: set[str] = set()
+    indexed = {task.task_id: index for index, task in enumerate(
+        portfolio.tasks)}
+    updated_tasks = list(portfolio.tasks)
+    changes: list[tuple[model.Task, model.Task]] = []
+    for raw in updates:
+        if not isinstance(raw, Mapping):
+            raise model.MvpError(model.E_MALFORMED, "update must be an object")
+        task_id = raw.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            raise model.MvpError(model.E_MALFORMED, "task_id required")
+        if task_id in seen:
+            raise model.MvpError(model.E_MALFORMED,
+                                 f"duplicate estimate for {task_id!r}")
+        seen.add(task_id)
+        if task_id not in tasks:
+            raise model.MvpError(model.E_UNKNOWN_ID, task_id)
+        minutes = raw.get("estimated_minutes")
+        if minutes is not None:
+            if isinstance(minutes, bool) or not isinstance(minutes, int):
+                raise model.MvpError(model.E_MALFORMED,
+                                     "estimated_minutes must be an integer")
+            if not 1 <= minutes <= 1440:
+                raise model.MvpError(model.E_MALFORMED,
+                                     "estimated_minutes out of bounds")
+        current = tasks[task_id]
+        if current.estimated_minutes == minutes:
+            continue
+        updated = replace(current, estimated_minutes=minutes,
+                          updated_at=stamp).validate()
+        updated_tasks[indexed[task_id]] = updated
+        changes.append((current, updated))
+    if not changes:
+        return {"updated": 0, "task_ids": []}
+    candidate = replace(portfolio, tasks=tuple(updated_tasks),
+                        updated_at=stamp).validate()
+    store.backup_portfolio(root, reason="bulk-estimate")
+    store.save_portfolio(root, candidate)
+    for before, after in changes:
+        _journal(root, kind=changes_module.KIND_UPDATE,
+                 object_kind=changes_module.OBJECT_TASK,
+                 object_id=after.task_id, title=after.title,
+                 summary="estimation mise à jour",
+                 before={"estimated_minutes": before.estimated_minutes},
+                 after={"estimated_minutes": after.estimated_minutes},
+                 at=stamp)
+    return {"updated": len(changes),
+            "task_ids": [after.task_id for _, after in changes]}
+
+
 def update_task(root: str | Path, task_id: str,
                 payload: Mapping[str, Any]) -> dict[str, Any]:
     """Apply a partial, validated update to one task.
@@ -916,6 +1084,12 @@ def update_task(root: str | Path, task_id: str,
                             updated_at=_updated_at(portfolio)).validate()
 
     store.save_portfolio(root, candidate)
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_TASK, object_id=task_id,
+             title=updated.title, summary="tâche mise à jour",
+             before={key: getattr(current, key) for key in changes},
+             after={key: getattr(updated, key) for key in changes},
+             at=candidate.updated_at)
     return {"task_id": task_id, "status": updated.status}
 
 
@@ -990,6 +1164,8 @@ __all__ = [
     "add_dependency",
     "create_project",
     "create_task",
+    "estimate_tasks",
+    "rename_domain",
     "remove_dependency",
     "update_project",
     "update_task",

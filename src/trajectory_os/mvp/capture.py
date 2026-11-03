@@ -27,6 +27,7 @@ silent mutation.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import time
 from collections.abc import Mapping, Sequence
@@ -35,7 +36,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NoReturn
 
-from trajectory_os.mvp import classification, importer, model, mutations, store
+from trajectory_os.mvp import (
+    changes,
+    classification,
+    importer,
+    model,
+    mutations,
+    store,
+)
 
 #: Deterministic engine identity reported in instrumentation.
 ENGINE = "deterministic"
@@ -424,6 +432,14 @@ def _decision_from_dict(data: Mapping[str, Any]) -> CaptureDecision:
 def confirm(root: str | Path, text: str,
             decisions: Sequence[Mapping[str, Any]],
             *, now: datetime | None = None) -> dict[str, Any]:
+    """Confirm a capture under the portfolio write lock."""
+    with store.portfolio_lock(root):
+        return _confirm_locked(root, text, decisions, now=now)
+
+
+def _confirm_locked(root: str | Path, text: str,
+                    decisions: Sequence[Mapping[str, Any]],
+                    *, now: datetime | None = None) -> dict[str, Any]:
     """Apply the accepted capture items through validated mutations.
 
     The preview is recomputed from ``text`` so the server stays authoritative:
@@ -489,6 +505,19 @@ def confirm(root: str | Path, text: str,
             project_id = decision.project_id or item.project_id
             created_tasks.append(_create_task(
                 root, item, decision, project_id))
+
+    if created_tasks or created_projects:
+        with contextlib.suppress(OSError, changes.ChangeError):
+            changes.append_change(
+                root, kind=changes.KIND_CAPTURE,
+                object_kind=changes.OBJECT_BATCH,
+                object_id=f"capture-{preview_result.generated_at}",
+                title="Capture rapide",
+                summary=(f"{len(created_tasks)} tâche(s), "
+                         f"{len(created_projects)} projet(s)"),
+                after={"created_task_ids": created_tasks,
+                       "created_project_ids": created_projects},
+                source="capture", undoable=True)
 
     return {
         "created_tasks": len(created_tasks),
