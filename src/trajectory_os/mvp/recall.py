@@ -108,6 +108,15 @@ S_JOURNAL = 10
 S_ID = 95             # exact object id (``case-alpha``, ``alpha.accept``)
 
 
+#: Bound on the excerpt shown for a note or a signal in a list.
+MAX_EXCERPT_CHARS = classification.MAX_EXCERPT_CHARS
+
+
+def excerpt(text: str, *, maximum: int = MAX_EXCERPT_CHARS) -> str:
+    """Readable form of a free text (see ``classification.excerpt``)."""
+    return classification.excerpt(text, maximum=maximum)
+
+
 def _fold(value: str) -> str:
     return classification.normalize_text(value)
 
@@ -369,7 +378,7 @@ def _note_document(note: model.Note,
     return RecallDocument(
         kind=K_NOTE,
         ref_id=note.note_id,
-        title=note.title,
+        title=excerpt(note.text),
         project_id=note.project_id,
         project=project.name if project is not None else "",
         status=note.kind,
@@ -382,7 +391,7 @@ def _signal_document(signal: signals.InboundSignal) -> RecallDocument:
     return RecallDocument(
         kind=K_SIGNAL,
         ref_id=signal.signal_id,
-        title=signal.title,
+        title=excerpt(signal.text),
         project_id=signal.project_hint,
         status=signal.status,
         fields=(("signal", signal.text),),
@@ -694,7 +703,8 @@ def _context_for_project(root: str | Path, project_id: str,
     portfolio = store.load_portfolio(root)
     project_notes = portfolio.notes_of(project_id) if portfolio else ()
     notes = [
-        {"note_id": note.note_id, "kind": note.kind, "title": note.title,
+        {"note_id": note.note_id, "kind": note.kind,
+         "title": excerpt(note.text),
          "captured_at": note.captured_at, "source_ref": note.source_ref}
         for note in project_notes
         if note.kind != model.NK_QUESTION
@@ -740,7 +750,10 @@ def _context_for_project(root: str | Path, project_id: str,
         "waiting": waiting,
         "risks": explanation["risks"][:MAX_CONTEXT_ITEMS],
         "recent_changes": explanation["recent_changes"][:MAX_CONTEXT_ITEMS],
-        "signals": explanation["signals"][:MAX_CONTEXT_ITEMS],
+        # A signal and its attached note carry the same text: showing both
+        # would print the same paragraph twice (reported from real use).
+        "signals": _distinct_signals(explanation["signals"], notes,
+                                     project_notes),
         "sources": [
             {
                 "source_id": record.source_id,
@@ -753,6 +766,30 @@ def _context_for_project(root: str | Path, project_id: str,
         ],
         "matched": matched,
     }
+
+
+def _distinct_signals(items: Sequence[Mapping[str, Any]],
+                      notes: Sequence[Mapping[str, Any]],
+                      project_notes: Sequence[model.Note],
+                      ) -> list[dict[str, Any]]:
+    """Signals that add information beyond the notes already attached."""
+    note_texts = {classification.excerpt(note.text)
+                  for note in project_notes}
+    out: list[dict[str, Any]] = []
+    for item in items:
+        title = excerpt(str(item.get("text", "")))
+        if title in note_texts:
+            continue
+        out.append({
+            "signal_id": item.get("signal_id", ""),
+            "title": title,
+            "status": item.get("status", ""),
+            "source_ref": item.get("source_ref", ""),
+            "received_at": item.get("received_at", ""),
+        })
+        if len(out) >= MAX_CONTEXT_ITEMS:
+            break
+    return out
 
 
 def resolve(root: str | Path, text: str, *,
@@ -825,6 +862,7 @@ __all__ = [
     "K_SOURCE",
     "K_TASK",
     "MAX_CONTEXT_PROJECTS",
+    "MAX_EXCERPT_CHARS",
     "MAX_LIMIT",
     "MAX_QUERY_CHARS",
     "RecallDocument",
@@ -834,6 +872,7 @@ __all__ = [
     "build_index",
     "cache_size",
     "clear_cache",
+    "excerpt",
     "query",
     "resolve",
     "route",

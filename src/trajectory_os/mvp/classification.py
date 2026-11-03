@@ -31,6 +31,56 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
+#: Openings and closings of a written message. Shared so capture, recall and
+#: intake agree on what is structure rather than content (ADR-033).
+_GREETING_RE = re.compile(
+    r"^\s*(?:bonjour|bonsoir|salut|madame|monsieur|dear|hello|cher|chère|"
+    r"hi|good morning|good afternoon)\b", re.IGNORECASE)
+_SIGNATURE_RE = re.compile(
+    r"(?:cordialement|bien à vous|bien à toi|sincèrement|respectueusement|"
+    r"kind regards|best regards|sincerely|yours faithfully)", re.IGNORECASE)
+
+
+def is_greeting_line(value: str) -> bool:
+    """True for a short opening line ("Bonjour Madame,")."""
+    text = (value or "").strip()
+    return bool(text) and bool(_GREETING_RE.match(text)) and \
+        len(text.split()) <= 6
+
+
+def is_signature_line(value: str) -> bool:
+    """True for a short closing line ("Bien cordialement,")."""
+    text = (value or "").strip()
+    return bool(text) and bool(_SIGNATURE_RE.search(text)) and \
+        len(text.split()) <= 6
+
+
+#: Bound on the excerpt shown for a free text in a list.
+MAX_EXCERPT_CHARS = 160
+
+
+def excerpt(text: str, *, maximum: int = MAX_EXCERPT_CHARS) -> str:
+    """First *meaningful* words of a text, for a list or a journal entry.
+
+    A note or a message opens with a greeting, so its first line ("Bonjour
+    Madame,") says nothing about its content. The excerpt skips openings,
+    closings and contact lines, then joins the first content words.
+    """
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    content = [
+        line for line in lines
+        if not is_greeting_line(line)
+        and not is_signature_line(line)
+        and "@" not in line
+        and not line.lstrip().lower().startswith(
+            ("téléphone", "telephone", "adresse", "phone"))
+    ]
+    if not content:
+        return (lines[0] if lines else (text or "").strip())[:maximum]
+    joined = " ".join(content[:2])
+    return joined if len(joined) <= maximum else joined[:maximum - 1].rstrip() + "…"
+
+
 # --- semantic taxonomy --------------------------------------------------------
 
 AREA = "AREA"

@@ -706,3 +706,66 @@ def test_today_fallback_renders_on_a_planned_out_day(tmp_path: Path) -> None:
     first = (plan["deferred"] or plan["unknown_effort"])[0]
     for key in ("task_id", "title", "reasons"):
         assert key in first
+
+
+# --- readable excerpts, not the greeting -------------------------------------
+
+
+def test_excerpt_skips_the_opening_line() -> None:
+    from trajectory_os.mvp import classification
+
+    text = ("Bonjour Madame Aduriz Bonneau,\n\n"
+            "Je me suis présenté au service social afin de récupérer ma carte."
+            "\n\nBien cordialement,\nMichel LULEV")
+    result = classification.excerpt(text)
+    assert result.startswith("Je me suis présenté")
+    assert "Bonjour" not in result
+    assert "cordialement" not in result
+    assert len(result) <= classification.MAX_EXCERPT_CHARS
+
+
+def test_excerpt_falls_back_when_there_is_no_content() -> None:
+    from trajectory_os.mvp import classification
+
+    assert classification.excerpt("Bonjour,\nBien cordialement,") == "Bonjour,"
+    assert classification.excerpt("") == ""
+
+
+def test_note_excerpt_is_used_in_the_dossier_context(tmp_path: Path) -> None:
+    from test_mvp_dashboard_api import _request, _server
+
+    root = str(tmp_path)
+    _seed(root)
+    text = ("Bonjour,\n\n"
+            "BioVerify demande une vérification AML avant transmission.\n\n"
+            "Bien cordialement,")
+    with _server(root) as port:
+        _request(port, "POST", "/api/intake/confirm", {
+            "text": text, "source_ref": "email:mollie",
+            "project_id": "case-alpha", "note_kind": "FACT"})
+    dossier = recall.resolve(root, "bioverify")["dossiers"][0]
+    assert dossier["notes"][0]["title"].startswith("BioVerify demande")
+    # the signal carrying the same text is not printed twice
+    titles = [item["title"] for item in dossier["signals"]]
+    assert dossier["notes"][0]["title"] not in titles
+
+
+def test_note_journal_entry_is_readable(tmp_path: Path) -> None:
+    root = str(tmp_path)
+    _seed(root)
+    mutations.add_note(root, {
+        "project_id": "case-alpha",
+        "text": "Bonjour,\n\nLe cabinet a répondu favorablement.\n"})
+    entry = changes.read_changes(root, limit=1)[0]
+    assert entry.object_kind == "note"
+    assert entry.title.startswith("Le cabinet a répondu")
+    assert "Bonjour" not in entry.title
+
+
+def test_duplicate_correspondences_are_collapsed() -> None:
+    from trajectory_os.mvp import cockpit_ui
+
+    js = cockpit_ui.PAGE_JS
+    assert "seenText" in js
+    assert "Correspondances (" in js
+    assert "recallKindLabel" in js

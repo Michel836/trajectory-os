@@ -4007,10 +4007,18 @@ function runRecall(q){
       body.innerHTML=recallHtml(res);
     }).catch(function(err){body.innerHTML='<p class="muted">'+esc(err.message)+
       '</p>';});}
+// One line per *distinct* match, with a real separator. The previous version
+// concatenated kind + title + reason inside inline spans ("… Paristitre") and
+// repeated the same dossier for every hit.
+function recallKindLabel(kind){
+  return ({project:'dossier', task:'tâche', decision:'décision', note:'note',
+    source:'source', signal:'signal', change:'changement'})[kind] || kind;}
 function recallHitLabel(h){
-  return '<div class="cmd-kind">'+esc(t(h.kind))+'</div>'+
-    '<span class="cmd-label">'+esc(h.title)+'</span>'+
-    '<span class="cmd-hint">'+esc(h.reason||'')+'</span>';}
+  // `reason` is already written for a human ("alias exact", "titre",
+  // "prochaine action"); the technical field name adds nothing here.
+  return '<div style="margin:.15rem 0"><span class="chip">'+
+    esc(recallKindLabel(h.kind))+'</span> '+esc(h.title)+
+    (h.reason?' <span class="muted">— '+esc(h.reason)+'</span>':'')+'</div>';}
 function recallHtml(res){
   const dossiers=res.dossiers||[];
   if(!dossiers.length){
@@ -4043,11 +4051,22 @@ function recallHtml(res){
       esc(d.project_id)+'\')">Ouvrir le dossier</button>'+
       '<button class="small" onclick="recallCapture()">Ajouter une '+
       'information</button></div></div>';});
-  const matched=(res.results||[]).slice(0,8);
+  // Deduplicate by object *and* by displayed text: an attached note and the
+  // signal that carried it show the same paragraph, which reads as noise.
+  const seen={};
+  const seenText={};
+  const matched=(res.results||[]).filter(function(r){
+    const key=r.kind+':'+r.ref_id;
+    if(seen[key])return false;
+    seen[key]=true;
+    const text=String(r.title||'').trim();
+    if(text&&seenText[text])return false;
+    seenText[text]=true;
+    return true;}).slice(0,6);
   if(matched.length){
-    h+='<div class="detail-block"><h4>Pourquoi ces résultats</h4>'+
-      '<div class="body">'; 
-    matched.forEach(function(r){h+='<div>'+recallHitLabel(r)+'</div>';});
+    h+='<div class="detail-block"><h4>Correspondances ('+matched.length+
+      ')</h4><div class="body">';
+    matched.forEach(function(r){h+=recallHitLabel(r);});
     h+='</div></div>';}
   return h;}
 function recallQuestions(items){

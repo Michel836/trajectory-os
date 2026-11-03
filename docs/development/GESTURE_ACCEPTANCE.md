@@ -60,6 +60,7 @@ Un geste refusé par l'humain rouvre l'incrément, quel que soit l'état du gate
 | 2026-11-03 | V0.9 intake | Michel : coller une lettre, « Analyser » | dossier proposé correct | **mauvais dossier** — mention incidente prise pour une identité | ❌ corrigé |
 | 2026-11-03 | V0.9 alias mémorisé | (test de bout en bout) | le courrier suivant est routé | **abstention** — alias multi-mots non reconnu | ❌ corrigé |
 | 2026-11-03 | Capture rapide | Michel : coller un mail dans `c` | 2-3 propositions lisibles | **12 lignes opaques**, téléphone et e-mail proposés en tâches | ❌ corrigé |
+| 2026-11-03 | Panneau Contexte | Michel : `g` puis `aduriz` | le dossier et son contenu lisible | dossier correct mais sections **« Bonjour Madame… »** (titre = 1re ligne) et **« Paristitre »** (type concaténé) | ❌ corrigé |
 
 Ces cinq lignes sont la justification de cette règle. Elles ne doivent pas
 disparaître : elles sont la preuve que L1+L2 ne suffisent pas.

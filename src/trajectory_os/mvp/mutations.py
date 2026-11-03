@@ -1043,7 +1043,8 @@ def add_note(root: str | Path, payload: Mapping[str, Any]) -> dict[str, Any]:
     store.save_portfolio(root, new_portfolio)
     _journal(root, kind=changes_module.KIND_CAPTURE,
              object_kind=changes_module.OBJECT_NOTE, object_id=note_id,
-             title=note.title, summary=f"note {kind.lower()} ajoutée",
+             title=classification.excerpt(text),
+             summary=f"note {kind.lower()} ajoutée",
              after={"project_id": project_id, "kind": kind,
                     "source_ref": source_ref},
              at=stamp)
@@ -1074,7 +1075,8 @@ def update_note(root: str | Path, note_id: str,
     store.save_portfolio(root, new_portfolio)
     _journal(root, kind=changes_module.KIND_UPDATE,
              object_kind=changes_module.OBJECT_NOTE, object_id=note_id,
-             title=updated.title, summary="note mise à jour",
+             title=classification.excerpt(updated.text),
+             summary="note mise à jour",
              before={key: getattr(current, key) for key in changes},
              after={key: getattr(updated, key) for key in changes}, at=stamp)
     return {"note_id": note_id, "kind": updated.kind}
