@@ -285,6 +285,7 @@ def test_push_check_no_tracking_ref_not_initial_push(tmp_path: Path) -> None:
     advanced = _git(remote, "commit-tree", tree, "-p", base_sha, "-m", "remote-only work")
     _git(remote, "update-ref", "refs/heads/feat/x", advanced)
     # hard requirement: local tracking ref is absent (the old buggy signal)
+    _forget_remote_tracking_ref(repo, "feat/x")
     assert _no_local_tracking_ref(repo, "feat/x")
 
     options = _options(repo)
@@ -309,6 +310,7 @@ def test_push_check_no_tracking_ref_ready_when_fast_forward(tmp_path: Path) -> N
     _git(repo, "add", "work.md")
     _git(repo, "commit", "-q", "-m", "local ahead")
     # local tracking ref is deliberately absent (the old buggy signal)
+    _forget_remote_tracking_ref(repo, "feat/x")
     assert _no_local_tracking_ref(repo, "feat/x")
 
     options = _options(repo)
@@ -909,6 +911,23 @@ def _no_local_tracking_ref(repo: Path, branch: str) -> bool:
         cwd=repo, capture_output=True,
     )
     return proc.returncode != 0
+
+
+def _forget_remote_tracking_ref(repo: Path, branch: str) -> None:
+    """Force the hostile precondition: no local remote-tracking ref.
+
+    The scenario under test is "the tracking ref is absent, so the gate must
+    rely on `git ls-remote` only". How the ref came to be absent must not be
+    part of the fixture: some git versions create `refs/remotes/origin/<b>`
+    as a side effect of a push whose target URL happens to be the configured
+    `origin` (observed on git 2.56), while older ones do not. Deleting the ref
+    explicitly makes the precondition deterministic on every git version
+    without weakening any assertion about the gate.
+    """
+    subprocess.run(
+        ["git", "update-ref", "-d", f"refs/remotes/origin/{branch}"],
+        cwd=repo, check=False, capture_output=True,
+    )
 
 
 def _make_remote(repo: Path, tmp_path: Path, name: str) -> Path:
