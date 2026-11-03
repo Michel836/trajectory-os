@@ -25,6 +25,23 @@ A change is **Done** only when every applicable item below is satisfied.
 - [ ] GitHub Actions CI passes.
 - [ ] No unexplained lint or type-check suppression has been introduced.
 
+## Usage evidence (user-facing changes)
+
+- [ ] Level 1: `bash scripts/quality.sh` passes (the code runs).
+- [ ] Level 2: the headless usage simulation reports no anomaly for every view,
+      entry surface and route touched (the surface renders).
+- [ ] Level 3: the human performed the gesture on real data and the observed
+      result is recorded in `docs/development/GESTURE_ACCEPTANCE.md`
+      (the gesture succeeds).
+- [ ] The visible field, not only the API, was checked.
+- [ ] A click produces a visible change, not only a persisted state.
+- [ ] The case was tried with real content (a letter, a multi-word alias, an
+      accented value, a long text), not only with fixtures.
+- [ ] Ambiguity is stated ("I don't know") instead of guessed.
+
+A green gate is not usage evidence. Without Level 3 the honest status is
+"gate green, gesture pending".
+
 ## Security and data
 
 - [ ] No secret, credential, token, private key, or sensitive local configuration is committed.

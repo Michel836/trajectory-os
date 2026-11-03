@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import binascii
 import contextlib
+import hashlib
 import json
 import os
 from collections.abc import Callable, Mapping
@@ -49,6 +50,12 @@ from trajectory_os.mvp import (
     trash,
     uistate,
     visualization,
+)
+from trajectory_os.mvp import (
+    intake as intake_module,
+)
+from trajectory_os.mvp import (
+    recall as recall_module,
 )
 from trajectory_os.mvp import (
     search as search_module,
@@ -218,6 +225,134 @@ class Dashboard:
 
     def search(self, query: str, limit: int = 30) -> dict[str, Any]:
         return search_module.search(self.root, query, limit=limit)
+
+    def intake(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Dry intake: propose a dossier and the proposals, write nothing.
+
+        This is the "paste the whole message" entry point. It never assigns a
+        project: it proposes candidates with a reason and abstains when unsure
+        (ADR-046). Only `confirm_intake` writes.
+        """
+        text = payload.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise model.MvpError(model.E_MALFORMED, "text required")
+        source_ref = str(payload.get("source_ref", "manuel")) or "manuel"
+        route = recall_module.route(self.root, text)
+        preview = signals.preview_signal(
+            self.root, text=text,
+            source_ref=source_ref,
+            title=str(payload.get("title", "")),
+            project_hint=route["top"] or "",
+            sensitivity=str(payload.get("sensitivity", "INTERNAL")))
+        return {
+            "canonical": False,
+            "route": route,
+            "duplicate": preview["duplicate"],
+            "signal": preview["signal"],
+            "proposals": preview["proposals"],
+            "note_kinds": sorted(model.NOTE_KINDS),
+        }
+
+    def confirm_intake(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Persist the intake after human validation: signal + note (+ accepted).
+
+        One click records the provenance (signal with its hash), attaches the
+        readable note to the dossier, and applies only the proposals the human
+        explicitly accepted. Nothing else is mutated.
+        """
+        text = payload.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise model.MvpError(model.E_MALFORMED, "text required")
+        project_id = payload.get("project_id")
+        if not isinstance(project_id, str) or not project_id.strip():
+            raise model.MvpError(model.E_MALFORMED, "project_id required")
+        portfolio = self.portfolio()
+        if project_id not in portfolio.project_map():
+            raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+        source_ref = str(payload.get("source_ref", "manuel")) or "manuel"
+        note_kind = str(payload.get("note_kind", model.NK_NOTE))
+        sensitive = str(payload.get("sensitivity", "INTERNAL"))
+        accept = payload.get("accept_proposals")
+        accept_ids = ([str(item) for item in accept]
+                      if isinstance(accept, list) else [])
+
+        signal = signals.create_signal(
+            self.root, text=text, source_ref=source_ref,
+            project_hint=project_id,
+            title=str(payload.get("title", "")),
+            sensitivity=sensitive)["signal"]
+        note = mutations.add_note(self.root, {
+            "project_id": project_id,
+            "text": text,
+            "kind": note_kind,
+            "source_ref": source_ref,
+            "sensitivity": sensitive,
+            "content_hash": signal["content_hash"],
+        })
+        # A message usually carries questions, and questions are what make a
+        # dossier resumable. They are extracted deterministically and attached
+        # as their own notes, so the dossier can list them (ADR-045).
+        questions: list[dict[str, Any]] = []
+        for question in intake_module.extract_questions(text):
+            digest = hashlib.sha256(
+                question.encode("utf-8")).hexdigest()[:32]
+            created = mutations.add_note(self.root, {
+                "project_id": project_id,
+                "text": question,
+                "kind": model.NK_QUESTION,
+                "source_ref": source_ref,
+                "sensitivity": sensitive,
+                "content_hash": "q:" + digest,
+            })
+            questions.append({
+                "note_id": created["note_id"],
+                "text": question,
+                "duplicate": created["duplicate"],
+            })
+        remembered = ""
+        alias = payload.get("remember_alias")
+        if isinstance(alias, str) and alias.strip():
+            current = self.portfolio().project_map()[project_id]
+            merged = list(current.aliases)
+            folded = {model.fold_text(item) for item in merged}
+            if (model.fold_text(alias) not in folded
+                    and len(merged) < model.MAX_ALIASES):
+                merged.append(alias.strip())
+                mutations.set_aliases(self.root, project_id,
+                                      {"aliases": merged})
+                remembered = alias.strip()
+        applied: list[str] = []
+        rejected: list[dict[str, Any]] = []
+        for proposal_id in accept_ids:
+            try:
+                proposals.apply_proposal(self.root, signal["signal_id"],
+                                         proposal_id)
+                applied.append(proposal_id)
+            except (model.MvpError, signals.SignalError) as exc:
+                rejected.append({"proposal_id": proposal_id,
+                                 "detail": str(exc)})
+        remaining = [proposal.to_dict()
+                     for proposal in signals.load_proposals(
+                         self.root, signal["signal_id"])
+                     if proposal.state == signals.STATE_PENDING]
+        return {
+            "signal_id": signal["signal_id"],
+            "note": note,
+            "remembered_alias": remembered,
+            "questions": questions,
+            "applied": applied,
+            "rejected": rejected,
+            "pending": remaining,
+        }
+
+    def recall(self, query: str, limit: int = 3) -> dict[str, Any]:
+        """Resolve a word into a resumable dossier context (read-only)."""
+        return recall_module.resolve(self.root, query, limit_projects=limit)
+
+    def set_aliases(self, project_id: str,
+                    payload: Mapping[str, Any]) -> dict[str, Any]:
+        return mutations.set_aliases(self.root, project_id,
+                                     {"aliases": payload.get("aliases")})
 
     # --- inbound signals / proposals ---------------------------------------
 
@@ -1025,6 +1160,14 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                                    self._query_int("limit")
                                    if "limit" in query else 30))
                     return
+                if parts == ["api", "recall"]:
+                    query = parse_qs(urlparse(self.path).query)
+                    self._send_json(
+                        HTTPStatus.OK,
+                        app.recall(query.get("q", [""])[0],
+                                   self._query_int("limit")
+                                   if "limit" in query else 3))
+                    return
                 if parts == ["api", "preferences"]:
                     self._send_json(
                         HTTPStatus.OK,
@@ -1226,6 +1369,9 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
             if len(parts) == 4 and parts[:2] == ["api", "projects"] \
                     and parts[3] == "park":
                 return app.park_project(parts[2], payload)
+            if len(parts) == 4 and parts[:2] == ["api", "projects"] \
+                    and parts[3] == "aliases":
+                return app.set_aliases(parts[2], payload)
             if len(parts) == 3 and parts[:2] == ["api", "projects"]:
                 return app.update_project(parts[2], payload)
             if parts == ["api", "domains", "rename"]:
@@ -1259,6 +1405,10 @@ def make_handler(app: Dashboard) -> type[BaseHTTPRequestHandler]:
                 return app.update_task(parts[2], payload)
             if parts == ["api", "record"]:
                 return app.record(payload)
+            if parts == ["api", "intake"]:
+                return app.intake(payload)
+            if parts == ["api", "intake", "confirm"]:
+                return app.confirm_intake(payload)
             if parts == ["api", "capture"]:
                 return app.capture_preview(payload)
             if parts == ["api", "capture", "confirm"]:

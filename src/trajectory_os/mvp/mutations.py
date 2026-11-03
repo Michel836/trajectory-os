@@ -61,7 +61,7 @@ def _serialized[F: Callable[..., Any]](func: F) -> F:
 #: Fields the dashboard may edit on a project (fail closed on anything else).
 PROJECT_EDITABLE = frozenset({
     "name", "objective", "status", "domain", "urgency", "impact",
-    "deadline", "description",
+    "deadline", "description", "aliases",
 })
 
 #: Fields the dashboard may edit on a task (fail closed on anything else).
@@ -254,6 +254,7 @@ def create_project(root: str | Path,
         impact=str(_value(payload, "impact", model.I_MEDIUM)),
         deadline=_optional_blankable(_value(payload, "deadline")),
         description=str(_value(payload, "description", "")),
+        aliases=_aliases_payload(payload.get("aliases")),
     )
     new_portfolio = replace(
         portfolio,
@@ -267,6 +268,62 @@ def create_project(root: str | Path,
              after={"name": name, "status": project.status},
              at=new_portfolio.updated_at)
     return {"project_id": project_id, "name": name}
+
+
+def _aliases_payload(value: Any) -> tuple[str, ...]:
+    """Normalize an alias payload into the validated tuple form.
+
+    Accepts a list of strings, or a single comma/semicolon separated string
+    (what a human types in one inline field). Validation of length, count and
+    duplicates stays in ``model.Project.validate`` so there is one authority.
+    """
+    if value is None or value == "":
+        return ()
+    if isinstance(value, str):
+        parts = [part.strip() for part in re.split(r"[,;\n]", value)]
+        return tuple(part for part in parts if part)
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item).strip() for item in value
+                     if str(item).strip())
+    raise model.MvpError(model.E_MALFORMED, "aliases must be a list or string")
+
+
+@_serialized
+def set_aliases(root: str | Path, project_id: str,
+                payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Replace one project's declared search aliases (explicit, journaled).
+
+    Aliases are how a word that exists only in the user's head (``zephyr``)
+    becomes an exact recall match for a dossier. They are declared by the
+    human, never inferred, so setting them is a first-class journaled
+    mutation rather than a side effect of free-text editing.
+    """
+    portfolio = _load(root)
+    _reject_unknown(payload, frozenset({"aliases"}), "aliases")
+    projects = portfolio.project_map()
+    if project_id not in projects:
+        raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+    current = projects[project_id]
+    aliases = _aliases_payload(payload.get("aliases"))
+    if tuple(model.fold_text(alias) for alias in aliases) == tuple(
+            model.fold_text(alias) for alias in current.aliases):
+        return {"project_id": project_id, "aliases": list(current.aliases),
+                "changed": False}
+    updated = replace(current, aliases=aliases)
+    new_projects = tuple(updated if p.project_id == project_id else p
+                         for p in portfolio.projects)
+    new_portfolio = replace(portfolio, projects=new_projects,
+                            updated_at=_updated_at(portfolio)).validate()
+    store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_PROJECT,
+             object_id=project_id, title=updated.name,
+             summary="alias de recherche mis à jour",
+             before={"aliases": list(current.aliases)},
+             after={"aliases": list(updated.aliases)},
+             at=new_portfolio.updated_at)
+    return {"project_id": project_id, "aliases": list(updated.aliases),
+            "changed": True}
 
 
 @_serialized
@@ -286,6 +343,8 @@ def update_project(root: str | Path, project_id: str,
         value = payload[key]
         if key == "deadline":
             changes[key] = _optional_blankable(value)
+        elif key == "aliases":
+            changes[key] = _aliases_payload(value)
         else:
             changes[key] = value
     updated = replace(current, **changes)
@@ -941,6 +1000,113 @@ def apply_calibrated_estimate(root: str | Path,
 
 
 @_serialized
+def add_note(root: str | Path, payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Attach one free note to a dossier (journaled, idempotent by content).
+
+    This is the write behind "paste a message, validate, it lands in the
+    dossier". The text is stored verbatim (P04); the note never becomes a task
+    and never becomes a project. Re-pasting the same text into the same dossier
+    returns the existing note instead of creating a duplicate.
+    """
+    portfolio = _load(root)
+    _reject_unknown(payload, frozenset({
+        "project_id", "text", "kind", "source_ref", "sensitivity",
+        "content_hash", "allow_duplicate"}), "note")
+    project_id = _required_str(payload, "project_id")
+    if project_id not in portfolio.project_map():
+        raise model.MvpError(model.E_UNKNOWN_PROJECT, project_id)
+    text = _required_str(payload, "text")
+    if len(text) > model.MAX_NOTE_TEXT:
+        raise model.MvpError(
+            model.E_MALFORMED,
+            f"text exceeds {model.MAX_NOTE_TEXT} chars")
+    kind = str(_value(payload, "kind", model.NK_NOTE))
+    source_ref = str(_value(payload, "source_ref", ""))
+    sensitivity = str(_value(payload, "sensitivity", "INTERNAL"))
+    content_hash = str(_value(payload, "content_hash", ""))
+    if content_hash and payload.get("allow_duplicate") is not True:
+        for existing in portfolio.notes:
+            if (existing.project_id == project_id
+                    and existing.content_hash == content_hash):
+                return {"note_id": existing.note_id, "duplicate": True,
+                        "project_id": project_id}
+    existing_ids = {note.note_id for note in portfolio.notes}
+    note_id = _unique_id(existing_ids, "note-" + project_id[:24])
+    stamp = _updated_at(portfolio)
+    note = model.Note(
+        note_id=note_id, project_id=project_id, text=text, kind=kind,
+        captured_at=stamp, source_ref=source_ref,
+        content_hash=content_hash, sensitivity=sensitivity).validate()
+    new_portfolio = replace(
+        portfolio, notes=portfolio.notes + (note,), updated_at=stamp
+    ).validate()
+    store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_CAPTURE,
+             object_kind=changes_module.OBJECT_NOTE, object_id=note_id,
+             title=classification.excerpt(text),
+             summary=f"note {kind.lower()} ajoutée",
+             after={"project_id": project_id, "kind": kind,
+                    "source_ref": source_ref},
+             at=stamp)
+    return {"note_id": note_id, "project_id": project_id,
+            "duplicate": False, "kind": kind, "captured_at": stamp}
+
+
+@_serialized
+def update_note(root: str | Path, note_id: str,
+                payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Edit a note's text or kind (the raw capture is never rewritten silently)."""
+    portfolio = _load(root)
+    _reject_unknown(payload, frozenset({"text", "kind"}), "note")
+    notes = portfolio.note_map()
+    if note_id not in notes:
+        raise model.MvpError(model.E_UNKNOWN_ID, note_id)
+    current = notes[note_id]
+    changes: dict[str, Any] = {}
+    for key in ("text", "kind"):
+        if key in payload:
+            changes[key] = payload[key]
+    updated = replace(current, **changes)
+    stamp = _updated_at(portfolio)
+    new_notes = tuple(updated if note.note_id == note_id else note
+                      for note in portfolio.notes)
+    new_portfolio = replace(portfolio, notes=new_notes,
+                            updated_at=stamp).validate()
+    store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_UPDATE,
+             object_kind=changes_module.OBJECT_NOTE, object_id=note_id,
+             title=classification.excerpt(updated.text),
+             summary="note mise à jour",
+             before={key: getattr(current, key) for key in changes},
+             after={key: getattr(updated, key) for key in changes}, at=stamp)
+    return {"note_id": note_id, "kind": updated.kind}
+
+
+@_serialized
+def delete_note(root: str | Path, note_id: str) -> dict[str, Any]:
+    """Remove a note (journaled; the reversal is an explicit re-add)."""
+    portfolio = _load(root)
+    notes = portfolio.note_map()
+    if note_id not in notes:
+        raise model.MvpError(model.E_UNKNOWN_ID, note_id)
+    current = notes[note_id]
+    stamp = _updated_at(portfolio)
+    new_portfolio = replace(
+        portfolio,
+        notes=tuple(note for note in portfolio.notes
+                    if note.note_id != note_id),
+        updated_at=stamp,
+    ).validate()
+    store.save_portfolio(root, new_portfolio)
+    _journal(root, kind=changes_module.KIND_DELETE,
+             object_kind=changes_module.OBJECT_NOTE, object_id=note_id,
+             title=current.title, summary="note supprimée",
+             before={"project_id": current.project_id,
+                     "kind": current.kind}, at=stamp)
+    return {"note_id": note_id, "deleted": True}
+
+
+@_serialized
 @_serialized
 def rename_domain(root: str | Path, *, old: str, new: str) -> dict[str, Any]:
     """Rename one domain across every project (explicit human decision)."""
@@ -1162,11 +1328,15 @@ __all__ = [
     "PROJECT_EDITABLE",
     "TASK_EDITABLE",
     "add_dependency",
+    "add_note",
     "create_project",
     "create_task",
+    "delete_note",
     "estimate_tasks",
-    "rename_domain",
     "remove_dependency",
+    "rename_domain",
+    "set_aliases",
+    "update_note",
     "update_project",
     "update_task",
 ]

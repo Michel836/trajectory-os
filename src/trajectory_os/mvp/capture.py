@@ -59,11 +59,17 @@ CAT_POSSIBLE_IDEA = "possible_idea"
 CAT_EXISTING_PROJECT = "existing_project"
 CAT_EXISTING_TASK = "existing_task"
 CAT_DUPLICATE = "duplicate"
+#: A line that carries no capturable content: greeting, signature, phone,
+#: e-mail, postal address, separator. Never proposed, never written.
+CAT_IGNORED = "ignored"
 
 CATEGORIES = frozenset({
     CAT_NEW_TASK, CAT_POSSIBLE_PROJECT, CAT_POSSIBLE_IDEA,
-    CAT_EXISTING_PROJECT, CAT_EXISTING_TASK, CAT_DUPLICATE,
+    CAT_EXISTING_PROJECT, CAT_EXISTING_TASK, CAT_DUPLICATE, CAT_IGNORED,
 })
+
+#: Reasons written for a human, in the language of the interface.
+_IGNORED_REASON = "salutation, signature ou coordonnées : rien à capturer"
 
 #: Categories where the human explicitly confirmed a matched/duplicate item.
 #: Accepting such an item is an intentional decision, so Capture must be able
@@ -106,6 +112,72 @@ MAX_CAPTURE_CHARS = 16_384
 _MAX_TITLE = model.MAX_STR_LEN
 
 _BULLET_RE = re.compile(r"^\s*(?:[-*•·—–]|\d{1,3}[.)])\s*")
+
+#: Markers of a written message rather than a to-do list.
+_GREETING_RE = re.compile(
+    r"^\s*(?:bonjour|bonsoir|salut|madame|monsieur|dear|hello|cher|chère)",
+    re.IGNORECASE)
+_SIGNATURE_RE = re.compile(
+    r"(?:cordialement|bien à vous|bien à toi|sincèrement|respectueusement|"
+    r"kind regards|best regards|sincerely|yours faithfully)", re.IGNORECASE)
+_CONTACT_RE = re.compile(
+    r"^\s*(?:t[ée]l[ée]phone|t[ée]l\.?|mobile|portable|adresse|"
+    r"adresse [ée]lectronique|e-?mail|mail|courriel|siret|tva)\s*[:：]",
+    re.IGNORECASE)
+_EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+\.[A-Za-z]{2,}")
+_PHONE_RE = re.compile(r"^(?:\+?\d[\d .()-]{7,})\d$")
+_URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
+_SEPARATOR_RE = re.compile(r"^[-_=*~\s]{3,}$")
+
+
+def _is_non_content(line: str) -> bool:
+    """True for a line that is structure, not information."""
+    stripped = line.strip()
+    if not stripped:
+        return True
+    if _SEPARATOR_RE.match(stripped):
+        return True
+    if _CONTACT_RE.match(stripped):
+        return True
+    if _EMAIL_RE.fullmatch(stripped) or _PHONE_RE.match(stripped):
+        return True
+    if _URL_RE.match(stripped):
+        return True
+    if _GREETING_RE.match(stripped) and len(stripped.split()) <= 6:
+        return True
+    if _SIGNATURE_RE.search(stripped) and len(stripped.split()) <= 6:
+        return True
+    # A bare name block: one to four words, all upper case.
+    words = stripped.split()
+    return 1 <= len(words) <= 4 and stripped.upper() == stripped
+
+
+def looks_like_message(text: str) -> bool:
+    """Heuristic: is this a written message rather than a list of ideas?
+
+    Capture is designed for a brain-dump of short lines. Pasting a letter into
+    it produced a dozen meaningless "task" candidates. The contract stays
+    deterministic and explainable: a message has no bullet markers, long lines,
+    and either a greeting or a signature.
+    """
+    lines = [line for line in (raw.strip() for raw in text.splitlines())
+             if line]
+    if len(lines) < 3:
+        return False
+    if any(_BULLET_RE.match(line) for line in lines):
+        return False
+    # Judge the *content* lines only: a letter is full of short structural
+    # lines (greeting, phone, signature) that would otherwise hide its prose.
+    content = [line for line in lines if not _is_non_content(line)]
+    if len(content) < 2:
+        return False
+    average = sum(len(line) for line in content) / len(content)
+    # Prose is measured in words, not characters: a wrapped paragraph has
+    # many words per line, a to-do line has few.
+    prose = sum(1 for line in content if len(line.split()) >= 8)
+    has_greeting = any(_GREETING_RE.match(line) for line in lines[:3])
+    has_signature = any(_SIGNATURE_RE.search(line) for line in lines[-4:])
+    return (has_greeting or has_signature) and (average >= 60 or prose >= 2)
 
 
 class CaptureError(model.MvpError):
@@ -166,6 +238,10 @@ class CapturePreview:
     items: tuple[CaptureItem, ...]
     counts: dict[str, int]
     instrumentation: dict[str, Any]
+    #: True when the text is a written message, not a list of ideas.
+    looks_like_message: bool = False
+    #: Plain-language explanation shown above the preview (empty = none).
+    hint: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -173,6 +249,8 @@ class CapturePreview:
             "items": [item.to_dict() for item in self.items],
             "counts": dict(self.counts),
             "instrumentation": dict(self.instrumentation),
+            "looks_like_message": self.looks_like_message,
+            "hint": self.hint,
         }
 
 
@@ -211,7 +289,18 @@ def preview(root: str | Path, text: str, *,
 
     projects = portfolio.project_map()
     tasks = portfolio.task_map()
-    lines = _split_lines(text)
+    # A written message is not a brain-dump: capturing it line by line produced
+    # a dozen meaningless "task" candidates (measured on a real letter). It is
+    # refused explicitly and pointed to Intake instead.
+    as_message = looks_like_message(text)
+    all_lines = _split_lines(text)
+    lines: list[str] = []
+    ignored: list[str] = []
+    for line in all_lines:
+        if _is_non_content(line):
+            ignored.append(line)
+        elif not as_message:
+            lines.append(line)
 
     items: list[CaptureItem] = []
     seen_titles: dict[str, str] = {}
@@ -235,6 +324,7 @@ def preview(root: str | Path, text: str, *,
                                  if item.category == CAT_POSSIBLE_PROJECT),
         "possible_ideas": sum(1 for item in items
                               if item.category == CAT_POSSIBLE_IDEA),
+        "ignored": len(ignored),
     }
     elapsed_ms = int(round((time.perf_counter() - started) * 1000))
     instrumentation = {
@@ -249,11 +339,21 @@ def preview(root: str | Path, text: str, *,
         "cost_usd": 0.0,
         "reanalyzed_portfolio": False,
     }
+    hint = ""
+    if as_message:
+        hint = ("Ce texte est un message écrit, pas une liste à découper. "
+                "Pour le conserver et le rattacher à un dossier, utilisez "
+                "« Intégrer au dossier » (Signaux).")
+    elif not items:
+        hint = ("Aucune ligne à capturer : salutations, coordonnées et "
+                "signature ont été ignorées.")
     return CapturePreview(
         generated_at=_now(now).astimezone(UTC).isoformat(),
         items=tuple(items),
         counts=counts,
         instrumentation=instrumentation,
+        looks_like_message=as_message,
+        hint=hint,
     )
 
 
@@ -275,7 +375,7 @@ def _classify(
             category=CAT_DUPLICATE, suggested_action=ACT_SKIP,
             kind="task", matched_kind="", matched_id="", matched_title="",
             match_score=1.0, project_id="", project_name="",
-            reason=f"duplicate of line {earlier} in this capture",
+            reason=f"doublon de la ligne {earlier} de cette capture",
             duplicate_of=earlier)
 
     # 2. best task match (never silently re-create something that exists)
@@ -296,7 +396,7 @@ def _classify(
             kind="task", matched_kind="task", matched_id=best_task[0],
             matched_title=best_task[1], match_score=best_task[2],
             project_id="", project_name="",
-            reason=f"very close to existing task: {best_task[1]}")
+            reason=f"très proche d'une tâche existante : {best_task[1]}")
 
     if best_task is not None and best_task[2] >= MATCH_THRESHOLD:
         matched_task = tasks.get(best_task[0])
@@ -309,7 +409,7 @@ def _classify(
             project_id=project_id,
             project_name=projects[project_id].name if project_id in projects
             else "",
-            reason=f"similar existing task: {best_task[1]}")
+            reason=f"tâche existante similaire : {best_task[1]}")
 
     # Shared classification contract (ADR-033): the same criteria used by
     # the document importer, applied here without any LLM.
@@ -325,7 +425,7 @@ def _classify(
             kind="project", matched_kind="project", matched_id=project_match[0],
             matched_title=project_match[1], match_score=project_match[2],
             project_id=project_match[0], project_name=project_match[1],
-            reason=f"same project already exists: {project_match[1]}")
+            reason=f"ce projet existe déjà : {project_match[1]}")
 
     if project_match is not None and project_match[2] >= MATCH_THRESHOLD:
         if project_like:
@@ -344,7 +444,7 @@ def _classify(
             kind="task", matched_kind="project", matched_id=project_match[0],
             matched_title=project_match[1], match_score=project_match[2],
             project_id=project_match[0], project_name=project_match[1],
-            reason=f"adds a next action to existing project: {project_match[1]}")
+            reason=f"ajoute une prochaine action au projet : {project_match[1]}")
 
     if classified.kind in classification.INBOX_KINDS:
         kind = ("someday" if classified.kind == classification.SOMEDAY
@@ -355,7 +455,7 @@ def _classify(
             kind=kind, matched_kind="", matched_id="", matched_title="",
             match_score=project_match[2] if project_match else 0.0,
             project_id="", project_name="",
-            reason=classified.reasons[0] + "; parked in the Inbox")
+            reason=classified.reasons[0] + " ; placé dans l'Entrée")
 
     if project_like:
         return CaptureItem(
@@ -364,7 +464,7 @@ def _classify(
             kind="project", matched_kind="", matched_id="", matched_title="",
             match_score=project_match[2] if project_match else 0.0,
             project_id="", project_name="",
-            reason=classified.reasons[0] + "; confirm before creating")
+            reason=classified.reasons[0] + " ; à confirmer avant création")
 
     target_id = ""
     target_name = ""
@@ -375,12 +475,13 @@ def _classify(
         # Do not present uncertain text as an already-settled task: default
         # to skip and surface the ambiguity for an explicit human decision.
         action = ACT_SKIP
-        reason = ("no clear signal; confirm kind/project or rephrase before "
-                  "accepting")
+        reason = ("aucun signal clair : à préciser (nature et projet) avant "
+                  "d'accepter")
     else:
         action = ACT_ACCEPT
-        reason = (f"new task for {target_name}" if target_id
-                  else "new task; choose a project before accepting")
+        reason = (f"nouvelle tâche pour {target_name}" if target_id
+                  else "nouvelle tâche : choisissez un projet avant "
+                       "d'accepter")
     return CaptureItem(
         capture_id=capture_id, text=line, title=title,
         category=CAT_NEW_TASK, suggested_action=action,

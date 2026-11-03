@@ -10,7 +10,7 @@ confidentialité.
 Sous le data root (par défaut `local_data/mvp/`) :
 
 ```text
-portfolio.json                 portefeuille canonique
+portfolio.json                 portefeuille canonique (schéma v3, notes incluses)
 outcomes.jsonl                 ledger append-only des résultats
 changes.jsonl                  journal des changements
 ui_state.json                  préférences de présentation
@@ -28,6 +28,52 @@ enrichment/                    suggestions IA par projet
 ```
 
 Le portefeuille reste la seule source de vérité métier.
+
+### Schéma du portefeuille
+
+`portfolio.json` est en **schéma v2** depuis V0.8 (ajout additif
+`projects[].aliases`). Un fichier v1 reste lisible : il est surchargé en
+mémoire et la **première** écriture prend une sauvegarde
+`portfolio-<horodatage>-pre-migration-v1.json` avant de persister le v2. Une
+version inconnue est refusée (`UNSUPPORTED_MVP_SCHEMA`).
+
+```bash
+scripts/mvp aliases                      # lister les alias déclarés
+scripts/mvp aliases --project mon-dossier  # alias d’un projet
+scripts/mvp aliases --project mon-dossier --set "surnom, acronyme"
+scripts/mvp recall "surnom" --json         # contexte résolu (lecture seule)
+```
+
+### Notes attachées
+
+Une note (`notes` dans `portfolio.json`) porte un message ou une information
+rattachée à un dossier : texte verbatim, nature (`NOTE`, `FACT`, `QUESTION`,
+`ANSWER`, `DECISION`, `REFERENCE`, `EVENT`), provenance (`source_ref`, hash) et
+date de capture. Elle n’a pas de statut et ne devient jamais un projet.
+
+```bash
+# intégration après validation, par l’API
+POST /api/intake            {"text": "…", "source_ref": "email:…"}   # essai à blanc
+POST /api/intake/confirm    {"text": "…", "project_id": "…", "note_kind": "FACT"}
+```
+
+`/api/intake` ne modifie rien. `/api/intake/confirm` écrit : signal (provenance),
+note attachée, puis les seules propositions explicitement acceptées.
+
+`remember_alias` (optionnel) ajoute un alias au dossier choisi : c’est ainsi
+qu’un correspondant devient reconnaissable sans modèle. L’alias est journalisé
+et borné (`MAX_ALIASES`), les doublons sont ignorés.
+
+### Index de récupération
+
+L’index de recherche est **dérivé et reconstructible** : il est bâti depuis
+`portfolio.json`, `changes.jsonl`, `inbox/signals.jsonl`,
+`inbox/sources.jsonl` et `imports/*.json`, puis mis en cache par signature de
+fichiers (mtime + taille). Le supprimer ne coûte rien ; aucun index n’est une
+source de vérité.
+
+Un sidecar absent ou illisible est ignoré : la recherche reste disponible. Une
+requête de plus de 200 caractères est refusée, jamais tronquée.
 
 ---
 
@@ -214,6 +260,29 @@ TRAJECTORY_MVP_ASSISTANT_ENGINE=local
 - une citation invalide provoque un repli déterministe.
 
 ---
+
+## 8 bis. Vérifier toutes les surfaces
+
+Avant de conclure qu'une version est utilisable, lancer la simulation d'usage :
+
+```bash
+.venv/bin/python scripts/mvp_ui_simulation.py           # portefeuille par défaut
+.venv/bin/python scripts/mvp_ui_simulation.py --json    # sortie exploitable
+```
+
+Elle couvre les 24 vues, les 15 surfaces d'entrée (capture, formulaires, import,
+revue, palette, contexte, estimation, assistant, explication, mise à jour,
+résultat, export, fiche détaillée), 19 gestes enchaînés et toutes les routes
+HTTP du dashboard.
+
+- une racine de données **source n'est jamais modifiée** : tout passe par une
+  copie temporaire ;
+- elle répond à « le code livré s'exécute-t-il sans erreur et produit-il
+  quelque chose de visible ? » — pas à « est-ce que c'est agréable à l'usage » ;
+- un échec indique la surface exacte (vue, entrée, geste, route) et le message.
+
+Elle est aussi exécutée par le quality gate : une vue qui ne rend rien fait
+échouer `bash scripts/quality.sh`.
 
 ## 9. Dépannage
 

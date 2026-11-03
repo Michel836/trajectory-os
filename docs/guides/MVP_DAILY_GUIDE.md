@@ -66,6 +66,22 @@ scripts/mvp dashboard --root chemin/vers/donnees
 
 ## 4. Pendant la journée
 
+### Retrouver un dossier (Context Recall)
+
+`g` ou commande **Contexte d’un dossier**.
+
+- saisir un mot, un nom, un montant ou une référence ;
+- les dossiers apparaissent, triés par meilleure correspondance ;
+- chaque dossier affiche son statut, sa santé, ses prochaines actions, ses
+  blocages, ses attentes, ses sources liées et la raison du match ;
+- **Ouvrir le dossier** pour reprendre le travail ;
+- **Ajouter une information** ouvre la capture sans quitter le dossier.
+
+Une recherche ne modifie rien. Si un mot connu n’est pas retrouvé, c’est que
+l’alias n’a pas été déclaré : ajoutez-le dans l’édition du projet
+(**Alias de recherche**) ou via
+`scripts/mvp aliases --project ID --set "surnom, acronyme"`.
+
 ### Capture rapide
 
 `c` ou bouton **Capture rapide**.
@@ -73,7 +89,50 @@ scripts/mvp dashboard --root chemin/vers/donnees
 - une ou plusieurs lignes ;
 - preview ;
 - **Appliquer cette ligne** ou **Tout appliquer** ;
-- rien n’est écrit avant confirmation.
+- rien n’est écrit avant confirmation ;
+- les lignes de structure (salutation, signature, téléphone, e-mail) sont
+  **ignorées** et comptées comme telles ;
+- si vous collez un **message écrit** (lettre, courriel), la capture refuse de
+  le découper : elle l’annonce et propose **« Conserver et rattacher à un
+  dossier »**, qui bascule vers l’intake.
+
+### Ouvrir l'application : que faire maintenant ?
+
+**Aujourd'hui** répond toujours à « quoi faire », même quand rien n'est
+planifiable :
+
+- si la capacité restante est épuisée : « Fenêtre de travail terminée » et les
+  **3 priorités** à traiter en premier ;
+- si aucune tâche n'est dimensionnée : la même liste, avec
+  **Estimer les tâches sans estimation** ;
+- chaque priorité est cliquable : le contexte du dossier s'ouvre à droite.
+
+### Coller un message (intake)
+
+**Entrée → Signaux** → coller le message → **Analyser**.
+
+1. L’écran propose un dossier **et la raison** (« le texte nomme … », « contient
+   l’alias … ») ;
+2. s’il hésite, il l’écrit et ne rattache rien : les candidats restent
+   cliquables ;
+3. si aucun dossier ne convient : **créer le dossier** depuis ce panneau, ou
+   choisir un dossier existant ;
+4. si le même correspondant vous écrira encore, renseigner
+   **« mémoriser un alias »** (ex. son nom) : la prochaine lettre sera routée
+   correctement ;
+5. choisir la nature (fait, question, réponse, décision, référence, événement) ;
+6. **Intégrer au dossier** : le message devient une **note** du dossier,
+   cherchable, avec sa provenance ; ses **questions** (phrases terminées par
+   « ? ») deviennent des notes de nature `QUESTION`, listées dans le contexte
+   du dossier sous « Questions ouvertes » ;
+7. les propositions détectées restent à valider une par une dans la liste.
+
+Un nom de dossier cité **au milieu** d'un texte ne suffit pas à le
+présélectionner : c'est une mention, pas une identité. Le candidat reste
+affiché, c'est vous qui tranchez.
+
+Rien n’est écrit avant le clic sur **Intégrer au dossier**. Re-coller le même
+message ne crée pas de doublon.
 
 ### Signaux entrants
 
@@ -222,6 +281,7 @@ Résumé de la semaine, sans écriture.
 | `d` | terminer la tâche sélectionnée |
 | `s` | reporter la tâche sélectionnée |
 | `/` | recherche |
+| `g` | contexte d’un dossier |
 | `Ctrl/Cmd+K` | palette de commandes |
 
 ---

@@ -1,5 +1,48 @@
 # Changelog
 
+## V0.9.0 — Intake & Notes (2026-11-03)
+
+- objet `Note` attachée à un dossier (schéma portefeuille v3, migration additive
+  avec sauvegarde `pre-migration-v2`) ;
+- coller un message → **dossier proposé avec sa raison**, alternatives
+  cliquables, abstention explicite quand le routage hésite ;
+- un clic **Intégrer au dossier** : provenance (signal) + note lisible +
+  application des seules propositions acceptées ;
+- re-collage idempotent, note cherchable (`bioverify` retrouve le dossier) ;
+- `POST /api/intake` (essai à blanc, zéro écriture) et
+  `POST /api/intake/confirm` (seul chemin d'écriture) ;
+- `mutations.add_note` / `update_note` / `delete_note`, journalisées ;
+- présélection d’un dossier **uniquement sur preuve d’identité** : alias déclaré,
+  ou nom en en-tête/signature — une mention au milieu du texte n’est plus une
+  identité (correction après usage réel) ;
+- alias multi-mots pris en charge par le routage ;
+- **mémorisation d’un alias** depuis l’écran d’intake, et création du dossier
+  manquant en un clic ;
+- capture rapide : un **message écrit** est refusé explicitement (au lieu de
+  produire une douzaine de lignes « aucun signal »), avec bascule vers l’intake ;
+- capture rapide : salutation, signature et coordonnées **ignorées** et
+  comptées, motifs réécrits en français ;
+- **questions ouvertes** : les phrases interrogatives d'un message collé
+  deviennent des notes `QUESTION`, listées dans le contexte du dossier ;
+- **Inspecteur** : la fiche montre les champs de **son** type d’objet (plus de
+  champs de tâche vides sur un projet), le nombre de notes et leur extrait, les
+  alias, et regroupe les actions secondaires ; libellés français ;
+- **Aujourd’hui** répond même à plan vide : « fenêtre terminée » ou « rien de
+  dimensionnable », puis les **3 priorités** cliquables et l’action d’estimation.
+
+## V0.8.0 — Context Recall (2026-11-03)
+
+- alias de dossier déclarés par l’humain (schéma portefeuille v2) ;
+- migration v1 → v2 additive, avec sauvegarde `pre-migration-v1` avant la
+  première écriture ;
+- index de récupération unifié : projets, tâches, décisions, sources entrantes,
+  signaux, journal, vocabulaire d’import ;
+- explication du match (`matched_field` + `reason`) sur chaque résultat ;
+- resolver contextuel `mot → dossier → contexte de reprise` ;
+- panneau **Contexte du dossier** (touche `g`), palette groupée par dossier ;
+- commandes `mvp aliases` et `mvp recall` ;
+- cache d’index par signature de fichiers (recherche p50 ≈ 6 ms).
+
 ## V0.7.0 — Bounded Assistance (2026-10-28)
 
 - explication déterministe d’un projet ;

@@ -246,3 +246,102 @@ def test_confirm_parks_an_idea_in_the_inbox(tmp_path: object) -> None:
     parked = [p for p in portfolio.projects if p.parked]
     assert len(parked) == 1
     assert parked[0].status == model.PS_SOMEDAY
+
+
+# --- a written message is not a brain-dump -----------------------------------
+
+
+LETTER = """Bonjour Madame,
+
+Je me suis présenté cet après-midi au service social afin de récupérer ma
+nouvelle carte de restauration sociale pour le mois de novembre.
+
+La dernière épreuve financière a été le règlement de ma taxe foncière, d'un
+montant de 423 EUR, qui m'a contraint à me serrer la ceinture.
+
+Téléphone : 06 60 69 44 89
+Adresse électronique : michel.lulev@example.com
+
+Bien cordialement,
+
+Michel LULEV"""
+
+
+def test_preview_refuses_to_shred_a_written_message(tmp_path: object) -> None:
+    """Reported from real use: a pasted letter produced a dozen opaque rows.
+
+    Capture answers "one idea per line". A letter is refused explicitly, with
+    a plain hint, and nothing is proposed — so nothing can be applied.
+    """
+    from trajectory_os.mvp import model, store
+
+    root = str(tmp_path)
+    store.save_portfolio(root, model.Portfolio(
+        schema_version=model.SCHEMA_VERSION, name="t",
+        projects=(model.Project(project_id="p", name="P", objective="o"),),
+        tasks=(model.Task(task_id="t", project_id="p", title="T",
+                          estimated_minutes=5),),
+    ))
+    preview = capture.preview(root, LETTER)
+    assert preview.looks_like_message is True
+    assert preview.items == ()
+    assert "message écrit" in preview.hint
+    assert "Intégrer au dossier" in preview.hint
+    # the structural lines are still accounted for, and never proposed
+    assert preview.counts["ignored"] >= 3
+    assert preview.counts["items"] == 0
+
+
+def test_preview_still_splits_a_real_list(tmp_path: object) -> None:
+    from trajectory_os.mvp import model, store
+
+    root = str(tmp_path)
+    store.save_portfolio(root, model.Portfolio(
+        schema_version=model.SCHEMA_VERSION, name="t",
+        projects=(model.Project(project_id="p", name="P", objective="o"),),
+        tasks=(),
+    ))
+    preview = capture.preview(root, "- Payer le cabinet\n- Relancer le greffe")
+    assert preview.looks_like_message is False
+    assert len(preview.items) == 2
+    assert preview.counts["ignored"] == 0
+
+
+def test_preview_ignores_greeting_signature_and_contact_lines(
+        tmp_path: object) -> None:
+    from trajectory_os.mvp import model, store
+
+    root = str(tmp_path)
+    store.save_portfolio(root, model.Portfolio(
+        schema_version=model.SCHEMA_VERSION, name="t",
+        projects=(model.Project(project_id="p", name="P", objective="o"),),
+        tasks=(),
+    ))
+    preview = capture.preview(
+        root, "Payer le cabinet\nBien cordialement,\n06 60 69 44 89")
+    assert [item.text for item in preview.items] == ["Payer le cabinet"]
+    assert preview.counts["ignored"] == 2
+
+
+def test_capture_reasons_are_written_for_a_human(tmp_path: object) -> None:
+    from trajectory_os.mvp import model, store
+
+    root = str(tmp_path)
+    store.save_portfolio(root, model.Portfolio(
+        schema_version=model.SCHEMA_VERSION, name="t",
+        projects=(model.Project(project_id="p", name="P", objective="o"),),
+        tasks=(),
+    ))
+    for text in ("Payer le cabinet", "alpha beta gamma", "- item"):
+        for item in capture.preview(root, text).items:
+            assert "no clear signal" not in item.reason
+            assert item.reason.strip()
+            assert item.reason[0].islower() or item.reason[0].isupper()
+
+
+def test_cockpit_offers_the_intake_handoff() -> None:
+    from trajectory_os.mvp import cockpit_ui
+
+    assert "function captureToIntake" in cockpit_ui.PAGE_JS
+    assert "message écrit, pas une liste" in cockpit_ui.PAGE_JS
+    assert "captureToIntake()" in cockpit_ui.PAGE_JS

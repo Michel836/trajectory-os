@@ -20,6 +20,16 @@ Une décision non documentée ne doit pas être considérée comme acquise.
 | ADR-039 | write safety : sauvegardes, verrou, corbeille, undo |
 | ADR-040 | signaux entrants et propositions humaines |
 | ADR-041 | ingestion email/document, versions, confidentialité |
+| ADR-042 | alias de dossier et schéma portefeuille v2 |
+| ADR-043 | Context Recall : index unifié et explication du match |
+| ADR-044 | resolver contextuel et surface de reprise |
+| ADR-045 | note attachée, schéma portefeuille v3 |
+| ADR-046 | intake : coller, proposer un dossier, valider, intégrer |
+
+La numérotation suit l’ordre de rédaction. Les décisions d’architecture
+restantes du programme V1 (Living Case, grammaire sémantique, signaux étendus,
+IA supervisée, analytics) seront enregistrées à partir d’ADR-047 lorsqu’elles
+seront effectivement prises, avec les identifiants attribués à l’audit Phase 0.
 
 ## Plateforme et opérateur
 

@@ -13,6 +13,8 @@ pas encore validé par un dogfood long.
 | V0.5 | Real Sources | `.eml`, `.mbox`, documents, versions, règles de source, IMAP opt-in | fait |
 | V0.6 | Adaptive Triage | santé projet, métriques, revue projet guidée, split inbox, mises à jour projet, activité par objet | fait |
 | V0.7 | Bounded Assistance | explication déterministe, assistant read-only, revue assistée, citations, raccourcis clavier | fait |
+| V0.8 | Context Recall | alias déclarés, schéma v2, index unifié, resolver contextuel, panneau de reprise | fait (gate à dogfooder) |
+| V0.9 | Intake & Notes | note attachée (schéma v3), routage proposé avec abstention, intégration après validation | fait (gate à dogfooder) |
 
 ---
 
@@ -56,6 +58,15 @@ pas encore validé par un dogfood long.
 - citations valides ;
 - 0 écriture ;
 - temps gagné ≥ 30 % sur les cas ambigus.
+
+### V0.8
+
+- un mot absent des données résout un dossier via un alias déclaré ;
+- un alias déclaré est une identité exacte, jamais déduite ;
+- un document v1 se lit et se migre avec sauvegarde préalable ;
+- recherche couvrant projets, tâches, décisions, sources, signaux, journal ;
+- 0 écriture pendant une recherche ou un resolve ;
+- P95 de la recherche ≤ 150 ms et du panneau contextuel ≤ 300 ms.
 
 ---
 

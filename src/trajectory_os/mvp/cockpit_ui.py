@@ -888,17 +888,18 @@ function normaliseTables(value){
         if(raw==null||raw==='')return;
         out[k].filters[key]=String(raw);});}});
   return out;}
-// Presentation-only global search: pure, deterministic token matching over
-// the fields a human would search, plus the server-derived import vocabulary
-// (`o.search_text`, from persisted import artifacts). Case- and accent-
-// insensitive. Combined with (never replacing) the global
+// Presentation-only view filter: pure, deterministic token matching over the
+// fields a human would search, plus the server-derived import vocabulary
+// (`o.search_text`, from persisted import artifacts) and the project's
+// declared aliases (`o.aliases`, ADR-042) — a declared synonym must filter its
+// dossier in here too, not only in the global palette. Case- and
+// accent-insensitive. Combined with (never replacing) the global
 // scope/level/status/evidence filters. No business rule here.
 //
-// LIMITATION (V1, deliberate): search only sees the objects that already pass
-// the active filters, so it answers "is it in the current view?" rather than
-// the eventual "does Trajectory know this?" question used for search-before-
-// capture. Widening this to a filter-independent lookup is a next step, not a
-// silent change here.
+// LIMITATION (deliberate): this filter only sees the objects that already pass
+// the active filters and the active view, so it answers "is it in the current
+// view?" rather than "does Trajectory know this?". Pressing Enter in the field
+// hands the text to the global recall panel, which answers the second one.
 function searchFold(value){return String(value==null?'':value)
   .normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();}
 function searchTermsOf(value){return searchFold(value)
@@ -908,7 +909,7 @@ function searchMatches(o,terms){
   if(!o)return false;
   var hay=searchFold([o.title,o.project,o.domain,o.workstream,o.deliverable,
     o.description,o.objective,o.next_action,o.status,o.evidence,o.ref_id,
-    o.search_text]
+    o.search_text,(o.aliases||[]).join(' ')]
     .map(function(v){return v==null?'':String(v);}).join(' '));
   return terms.every(function(t){return hay.indexOf(t)>=0;});}
 // --- inspector workspace helpers (pure; no DOM) ------------------------------
@@ -984,6 +985,15 @@ const ADVANCED_VIEWS = {
   review:['heatmap','goal_flow']
 };
 const FR = {
+  // colour-by values and the small vocabulary reused by the Inspector
+  'domain':'domaine','project':'projet','status':'statut','urgency':'urgence',
+  'impact':'impact','Area/domain':'Domaine','Workstream':'Flux de travail',
+  'Work package':'Lot de travail','Readiness':'Prêt','Priority':'Priorité',
+  'Estimated':'Estimé','Actual':'Réel','Deadline':'Échéance',
+  'Next action':'Prochaine action','Prerequisites':'Dépend de',
+  'Dependencies':'Dépend de','Blockers':'Bloqué par','Waiting for':'En attente de',
+  'Downstream':'Débloque','Deliverables':'Livrable','Outcomes':'Résultats',
+  'Why':'Pourquoi','Notes':'Notes','Description':'Description',
   'Today':'Aujourd’hui','Inbox':'Entrée','Waiting':'En attente',
   'Decisions':'Décisions','Ready':'Prêt','Tomorrow':'Demain','Week':'Semaine',
   'List':'Liste','Kanban':'Kanban','WBS':'WBS',
@@ -1125,7 +1135,8 @@ const S = {
   weekDraft:null, review:null,
   inspectorEdit:null, inspectorWidth:INSPECTOR_DEFAULT_WIDTH,
   inspectorCollapsed:false, inspectorInit:false,
-  openObject:null, objectOpenInit:false, duplicatePending:null
+  openObject:null, objectOpenInit:false, duplicatePending:null,
+  recallQuery:''
 };
 const $ = id => document.getElementById(id);
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;')
@@ -1530,8 +1541,11 @@ function renderControls(){
         esc(t(e))+'</span>';}).join('')+'</div></span>'+
     '<span class="ctl"><label>Recherche</label>'+
     '<input id="f-search" class="inline" type="search" '+
-    'placeholder="projets et tâches…" value="'+esc(S.search)+'" '+
-    'style="min-width:170px" oninput="searchInput(this.value)"></span>'+
+    'placeholder="filtrer la vue… (Entrée : chercher partout)" '+
+    'title="Filtre la vue courante. Entrée : chercher dans tous les dossiers" '+
+    'value="'+esc(S.search)+'" '+
+    'style="min-width:170px" oninput="searchInput(this.value)" '+
+    'onkeydown="searchKey(event)"></span>'+
     '<span class="ctl"><label>Vue enregistrée</label>'+
     '<select id="f-saved" onchange="savedViewChange()">'+
     savedViewOptions()+'</select>'+
@@ -1542,6 +1556,12 @@ function renderControls(){
 }
 function searchInput(v){S.search=v||'';reconcileSelection();renderView();
   renderInspector();}
+// Enter in the view filter hands the text to global recall: the same gesture
+// answers both questions ("is it in this view?" and "which dossier is it?").
+function searchKey(e){
+  if(e.key!=='Enter')return;
+  e.preventDefault();
+  openRecall(String(e.target.value||'').trim());}
 function savedViewOptions(){
   const views=(S.prefs&&S.prefs.saved_views)||{};
   return '<option value="">—</option>'+Object.keys(views).sort().map(
@@ -2477,118 +2497,137 @@ function renderInspector(){
   let h='';
   h+='<div class="card" style="border-left:5px solid '+colourOf(o)+'">'+
     '<strong>'+esc(o.title)+'</strong><div class="muted">'+
-    pill(o.kind,'badge-ACTIVE')+pill(o.evidence,'badge-'+o.evidence)+
-    (o.kind==='task'?pill(uiStatus(o),'badge-'+uiStatus(o)):'')+
-    (o.highlight?'<span class="pill">highlight: '+esc(o.highlight)+'</span>':'')+
+    pill(o.kind,'badge-ACTIVE')+' '+pill(o.evidence,'badge-'+o.evidence)+
+    (isTask(o)?' '+pill(uiStatus(o),'badge-'+uiStatus(o)):'')+
+    (o.highlight?' '+pill('surligné',''):'')+
     '</div></div>';
   h+='<dl class="attr">';
-  h+=attr('title','Title',esc(o.title));
+  // Show the fields that exist for *this* object, and only when they carry a
+  // value. A project sheet used to display every task field with an em dash,
+  // which read as a broken page (reported from real use).
+  h+=attr('title','Titre',esc(o.title));
   h+=attr('kind','Type',esc(t(o.kind)));
-  h+=attr('status','Status',esc(t(o.status)));
-  if(o.kind==='project')h+=attr('health','Santé',esc(t(o.health||'')));
-  h+=attr('project','Project',esc(o.project));
-  h+=attr('domain','Area/domain',esc(o.domain));
-  h+=attr('workstream','Workstream',esc(o.workstream||'—'));
-  h+=attr('work_package','Work package',esc(o.work_package||'—'));
-  h+=attr('readiness','Readiness',esc(t(o.readiness||'—')));
-  h+=attr('urgency','Urgency',esc(t(o.urgency)));
-  h+=attr('impact','Impact',esc(t(o.impact)));
-  h+=attr('priority','Priority',o.priority_rank?'#'+o.priority_rank+' (score '+
-    o.priority_score+')':'—');
-  h+=attr('priority_reasons','Why',o.priority_reasons.map(function(r){
-    return esc(reasonFr(r));}).join('<br>'));
-  h+=attr('estimated_minutes','Estimated',fmtMin(o.estimated_minutes));
-  h+=attr('actual_minutes','Actual',fmtMin(o.actual_minutes));
-  h+=attr('planned_vs_actual','Planned vs actual',o.estimate_error_minutes!=null?
-    ('error '+o.estimate_error_minutes+' min'):'—');
-  h+=attr('estimation_error','Estimation error',
-    o.estimate_error_minutes!=null?o.estimate_error_minutes+' min':'—');
-  h+=attr('deadline','Deadline',esc(o.deadline||'—'));
-  h+=attr('next_action','Next action',esc(o.next_action||'—'));
-  h+=attr('prerequisites','Prerequisites',o.dependency_titles.map(function(t){
-    return esc(t);}).join('<br>'));
-  h+=attr('dependencies','Dependencies',o.dependencies.map(function(d){
-    return esc(d);}).join(', '));
-  h+=attr('suggested_dependencies','Suggested deps',
-    o.suggested_dependencies.join(', '));
-  h+=attr('blockers','Blockers',o.blocked_by_titles.map(function(t){
-    return esc(t);}).join('<br>'));
-  h+=attr('waiting_for','Waiting for',o.waiting_for.map(function(t){
-    return esc(t);}).join('<br>'));
-  h+=attr('downstream','Downstream',o.downstream.map(function(id){const t=
-    obj('task:'+id);return t?esc(t.title):esc(id);}).join('<br>'));
-  h+=attr('deliverables','Deliverables',esc(o.deliverable||'—'));
-  h+=attr('notes','Notes',esc(o.notes||'—'));
-  h+=attr('outcomes','Outcomes',o.outcomes.map(function(r){
-    return esc(r.outcome+' @ '+r.recorded_at.slice(0,10));}).join('<br>'));
+  h+=attr('status','Statut',esc(t(o.status)));
+  if(isTask(o)){
+    h+=attr('project','Projet',esc(o.project));
+    h+=attr('domain','Domaine',esc(o.domain));
+    h+=attr('readiness','Prêt',o.readiness?esc(t(o.readiness)):'');
+    h+=attr('workstream','Flux de travail',esc(o.workstream||''));
+    h+=attr('deliverable','Livrable',esc(o.deliverable||''));
+    h+=attr('urgency','Urgence',esc(t(o.urgency)));
+    h+=attr('impact','Impact',esc(t(o.impact)));
+    h+=attr('priority','Priorité',o.priority_rank?('#'+o.priority_rank+
+      ' (score '+o.priority_score+')'):'');
+    h+=attr('estimated_minutes','Estimé',
+      o.estimated_minutes!=null?fmtMin(o.estimated_minutes):'');
+    h+=attr('actual_minutes','Réel',
+      o.actual_minutes!=null?fmtMin(o.actual_minutes):'');
+    h+=attr('estimation_error','Écart d’estimation',
+      o.estimate_error_minutes!=null?(o.estimate_error_minutes+' min'):'');
+    h+=attr('deadline','Échéance',esc(o.deadline||''));
+    h+=attr('next_action','Prochaine action',esc(o.next_action||''));
+    h+=attr('dependencies','Dépend de',o.dependency_titles.join('<br>'));
+    h+=attr('blockers','Bloqué par',o.blocked_by_titles.join('<br>'));
+    h+=attr('waiting_for','En attente de',o.waiting_for.map(function(t){
+      return esc(t);}).join('<br>'));
+    h+=attr('downstream','Débloque',o.downstream.map(function(id){const t=
+      obj('task:'+id);return t?esc(t.title):esc(id);}).join('<br>'));
+    h+=attr('outcomes','Résultats',o.outcomes.map(function(r){
+      return esc(r.outcome+' @ '+r.recorded_at.slice(0,10));}).join('<br>'));
+  }else{
+    h+=attr('health','Santé',esc(t(o.health||'')));
+    h+=attr('domain','Domaine',esc(o.domain));
+    h+=attr('urgency','Urgence',esc(t(o.urgency)));
+    h+=attr('impact','Impact',esc(t(o.impact)));
+    h+=attr('deadline','Échéance',esc(o.deadline||''));
+    h+=attr('aliases','Alias de recherche',(o.aliases||[]).join(', '));
+    h+=attr('description','Description',esc(o.notes||''));
+    h+=attr('note_count','Notes',
+      o.note_count?('<strong>'+o.note_count+'</strong> · '+
+        esc(o.note_latest||'')):'');
+  }
   h+=attr('provenance','Provenance',esc(o.provenance));
-  h+=attr('confidence','Confidence',esc(o.confidence));
+  h+=attr('confidence','Confiance',esc(o.confidence));
   h+='</dl>';
+  // Two rows of actions: what one does every day, then the rest behind a
+  // disclosure. Fifteen flat buttons on an empty project was the "factory".
   h+='<div class="actions">';
-  if(isTask(o)){h+='<button class="small primary" onclick="completeOutcome(\''+
-    o.ref_id+'\')">Terminé…</button>'+
-    '<button class="small" onclick="openOutcomeForm(\''+
-    o.ref_id+'\')">Enregistrer un résultat…</button>'+
-    '<button class="small" onclick="promoteTask(\''+o.ref_id+
-    '\')">Promouvoir</button>'+
-    '<button class="small" onclick="calibrateTask(\''+o.ref_id+
-    '\')">Calibrer…</button>'+
-    '<button class="small" onclick="recordOutcome(\''+o.ref_id+
-    '\',\'BLOCKED\')">Bloquer</button>'+
-    '<button class="small" onclick="recordOutcome(\''+o.ref_id+
-    '\',\'DEFERRED\')">Reporter</button>'+
-    '<button class="small" onclick="mutateTask(\''+o.ref_id+
-    '\',{status:\'TODO\'})">Réactiver</button>'+
-    '<button class="small" onclick="openObject(\''+o.id+'\')">Ouvrir</button>'+
-    '<button class="small" onclick="openTask(\''+o.ref_id+'\')">Modifier</button>'+
-    '<button class="small danger" onclick="trashObject(\'task\',\''+
-    o.ref_id+'\')">Corbeille</button>';}
-  else{h+='<button class="small primary" onclick="mutateProject(\''+
-    o.project_id+'\',{status:\'COMPLETED\'})">Terminer</button>'+
-    '<button class="small" onclick="parkProject(\''+o.project_id+
-    '\',\'IDEA\')">Idée</button>'+
-    '<button class="small" onclick="parkProject(\''+o.project_id+
-    '\',\'SOMEDAY\')">Un jour</button>'+
-    '<button class="small" onclick="demoteProject(\''+o.project_id+
-    '\')">Rétrograder…</button>'+
-    '<button class="small" onclick="mutateProject(\''+o.project_id+
-    '\',{status:\'DEFERRED\'})">Reporter</button>'+
-    '<button class="small" onclick="mutateProject(\''+o.project_id+
-    '\',{status:\'ACTIVE\'})">Réactiver</button>'+
-    '<button class="small" onclick="openObject(\''+o.id+'\')">Ouvrir</button>'+
-    '<button class="small" onclick="openProjectForm(\''+o.project_id+
-    '\')">Modifier</button>'+
-    '<button class="small" onclick="explainProject(\''+o.project_id+
-    '\')">Expliquer</button>'+
-    '<button class="small" onclick="openProjectUpdate(\''+o.project_id+
-    '\')">Mettre à jour</button>'+
-    '<button class="small" onclick="openTaskForm(\''+o.project_id+
-    '\')">Ajouter une tâche</button>'+
-    '<button class="small" onclick="runEnrichment(\''+o.project_id+
-    '\',\'next_actions\')">Prochaines actions</button>'+
-    '<button class="small" onclick="runEnrichment(\''+o.project_id+
-    '\',\'generate_wbs\')">Générer le WBS</button>'+
-    '<button class="small" onclick="runEnrichment(\''+o.project_id+
-    '\',\'suggest_dependencies\')">Suggérer des dépendances</button>'+
-    '<button class="small" onclick="runEnrichment(\''+o.project_id+
-    '\',\'suggest_deliverables\')">Suggérer des livrables</button>';}
+  h+='<button class="small" onclick="openObject(\''+o.id+'\')">Ouvrir</button>';
+  if(isTask(o)){
+    if(o.status!=='COMPLETED'){h+='<button class="small primary" '+
+      'onclick="completeOutcome(\''+o.ref_id+'\')">Terminer</button>';}
+    h+='<button class="small" onclick="openTask(\''+o.ref_id+
+      '\')">Modifier</button>';
+    h+='<button class="small" onclick="openOutcomeForm(\''+o.ref_id+
+      '\')">Enregistrer un résultat…</button>';
+  }else{
+    h+='<button class="small" onclick="openProjectForm(\''+o.project_id+
+      '\')">Modifier</button>';
+    h+='<button class="small primary" onclick="openTaskForm(\''+
+      o.project_id+'\')">Ajouter une tâche</button>';
+  }
   h+='</div>';
-  if(!isTask(o)){h+='<div class="bar"><span class="muted">AI engine:'+
-    '</span><select class="inline" id="enr-engine-'+esc(o.project_id)+
-    '">'+enrEngineOptions()+'</select><span class="muted">suggestions stay '+
-    'SUGGESTED until accepted</span></div>'+
-    '<div id="ai-suggestions-'+esc(o.project_id)+'"></div>';}
-  h+='<div class="bar"><span class="muted">Personal highlight:</span>';
+  h+='<details class="inspector-more"><summary>Plus d’actions</summary>'+
+    '<div class="actions">';
+  if(isTask(o)){
+    h+='<button class="small" onclick="promoteTask(\''+o.ref_id+
+      '\')">Promouvoir</button>'+
+      '<button class="small" onclick="calibrateTask(\''+o.ref_id+
+      '\')">Calibrer…</button>'+
+      '<button class="small" onclick="recordOutcome(\''+o.ref_id+
+      '\',\'BLOCKED\')">Bloquer</button>'+
+      '<button class="small" onclick="recordOutcome(\''+o.ref_id+
+      '\',\'DEFERRED\')">Reporter</button>'+
+      '<button class="small" onclick="mutateTask(\''+o.ref_id+
+      '\',{status:\'TODO\'})">Réactiver</button>';
+    if(o.priority_reasons.length){h+='<span class="muted">pourquoi : '+
+      esc(reasonFr(o.priority_reasons[0]))+'</span>';}
+    h+='<button class="small danger" onclick="trashObject(\'task\',\''+
+      o.ref_id+'\')">Corbeille</button>';
+  }else{
+    if(o.status!=='COMPLETED'){h+='<button class="small" '+
+      'onclick="mutateProject(\''+o.project_id+
+      '\',{status:\'COMPLETED\'})">Terminer</button>';}
+    h+='<button class="small" onclick="parkProject(\''+o.project_id+
+      '\',\'IDEA\')">Idée</button>'+
+      '<button class="small" onclick="parkProject(\''+o.project_id+
+      '\',\'SOMEDAY\')">Un jour</button>'+
+      '<button class="small" onclick="mutateProject(\''+o.project_id+
+      '\',{status:\'DEFERRED\'})">Reporter</button>'+
+      '<button class="small" onclick="mutateProject(\''+o.project_id+
+      '\',{status:\'ACTIVE\'})">Réactiver</button>'+
+      '<button class="small" onclick="explainProject(\''+o.project_id+
+      '\')">Expliquer</button>'+
+      '<button class="small" onclick="openProjectUpdate(\''+o.project_id+
+      '\')">Mettre à jour</button>'+
+      '<button class="small" onclick="demoteProject(\''+o.project_id+
+      '\')">Rétrograder…</button>';
+    const noengine=!S.importEngines;
+    h+='<span class="muted">Moteur IA :</span><select class="inline" '+
+      'id="enr-engine-'+esc(o.project_id)+'">'+enrEngineOptions()+'</select>';
+    [['next_actions','Prochaines actions'],['generate_wbs','Générer le WBS'],
+     ['suggest_dependencies','Suggérer des dépendances'],
+     ['suggest_deliverables','Suggérer des livrables']].forEach(function(pair){
+      h+='<button class="small" onclick="runEnrichment(\''+o.project_id+
+        '\',\''+pair[0]+'\')">'+pair[1]+'</button>';});
+    if(noengine){h+='<span class="muted">aucun moteur disponible : les '+
+      'suggestions restent proposées tant qu’elles ne sont pas acceptées'+
+      '</span>';}
+  }
+  h+='</div></details>';
+  h+='<div class="bar"><span class="muted">Surlignage personnel :</span>';
   ['yellow','purple','blue','green','red','orange','teal','grey'].forEach(
     function(c){h+='<button class="colourbtn hl-'+c+'" style="background:'+
-      c+'" title="'+c+'" onclick="setHighlight(\''+o.id+'\',\''+c+'\')"></button>';});
-  h+='<button class="small" onclick="setHighlight(\''+o.id+'\',null)">clear</button>'+
-    '</div>';
-  h+='<div class="bar"><span class="muted">Identity colour ('+
-    esc(S.prefs.color_by)+' override):</span>'+
+      c+'" title="'+c+'" onclick="setHighlight(\''+o.id+'\',\''+c+
+      '\')"></button>';});
+  h+='<button class="small" onclick="setHighlight(\''+o.id+
+    '\',null)">effacer</button></div>';
+  h+='<div class="bar"><span class="muted">Couleur d’identité ('+
+    esc(t(S.prefs.color_by))+') :</span>'+
     '<input type="color" class="inline" id="id-colour" value="'+
     colourOf(o)+'">'+
-    '<button class="small" onclick="setIdentityColour()">Apply</button></div>';
+    '<button class="small" onclick="setIdentityColour()">Appliquer</button></div>';
+  if(!isTask(o)){h+='<div id="ai-suggestions-'+esc(o.project_id)+'"></div>';}
   el.innerHTML=h;
   if(!isTask(o)){loadEnrichment(o.project_id,false);}}
 // --- inspector edit mode (full-width working surface) ------------------------
@@ -2637,7 +2676,10 @@ function projectEditHtml(id){
       esc(p.deadline||'')+'">'));
   h+=editSection('Context',
     editField('Description','<textarea id="pf-description" rows="3">'+
-      esc(p.description||'')+'</textarea>',true));
+      esc(p.description||'')+'</textarea>',true)+
+    editField('Alias de recherche (virgules)',
+      '<input id="pf-aliases" value="'+esc((p.aliases||[]).join(', '))+
+      '" placeholder="synonyme, acronyme, nom du tiers">',true));
   h+=editSection('Provenance',
     editMeta('Project id',p.ref_id)+
     editMeta('Provenance',p.provenance)+
@@ -2908,7 +2950,8 @@ function buildProjectBody(){return {
     name:$('pf-name').value,objective:$('pf-objective').value,
     status:$('pf-status').value,domain:$('pf-domain').value,
     urgency:$('pf-urgency').value,impact:$('pf-impact').value,
-    deadline:$('pf-deadline').value,description:$('pf-description').value};}
+    deadline:$('pf-deadline').value,description:$('pf-description').value,
+    aliases:$('pf-aliases').value};}
 async function saveProject(){const id=$('pf-id').value;
   const body=buildProjectBody();
   try{if(id){await api('/api/projects/'+encodeURIComponent(id),'POST',body);}
@@ -3953,15 +3996,145 @@ function renderTrash(){
   $('view-root').innerHTML=h;}
 
 // --- global search / command palette ---------------------------------------
+// Recall is the "find the dossier, resume the work" surface. The palette makes
+// the query; the recall panel resolves it into bounded, labelled context
+// (ADR-043). Both are read-only: a lookup never writes.
 function makeSearchRun(kind,refId){
   return function(){
     closeCommandPalette();
     if(kind==='task')selectObject('task:'+refId);
     else if(kind==='project')selectObject('project:'+refId);
+    else if(kind==='decision')setView('decisions');
+    else if(kind==='source'||kind==='signal')setView('signals');
     else if(kind==='change')setView('changes');
-    else if(kind==='signal')setView('signals');
+    else if(kind==='dossier')openRecall(refId);
   };}
+function openRecall(q){
+  S.recallQuery=String(q||'');
+  const input=$('recall-input');
+  if(input)input.value=S.recallQuery;
+  const overlay=$('recall-overlay');
+  if(overlay)overlay.classList.add('open');
+  if(S.recallQuery)runRecall(S.recallQuery);
+  else{const body=$('recall-body');
+    if(body)body.innerHTML='<p class="muted">Saisir un mot, un nom, un '+
+      'montant ou une référence.</p>';}}
+function closeRecall(){$('recall-overlay').classList.remove('open');}
+function recallKey(e){
+  if(e.key==='Enter'){e.preventDefault();runRecall(e.target.value);}}
+function runRecall(q){
+  const query=String(q||'').trim();
+  S.recallQuery=query;
+  const body=$('recall-body');
+  if(!body)return;
+  if(!query){body.innerHTML='<p class="muted">Saisir un mot.</p>';return;}
+  body.innerHTML='<p class="muted">Recherche…</p>';
+  api('/api/recall?q='+encodeURIComponent(query)+'&limit=3').then(
+    function(res){
+      if(S.recallQuery!==query)return;  // stale response guard
+      body.innerHTML=recallHtml(res);
+    }).catch(function(err){body.innerHTML='<p class="muted">'+esc(err.message)+
+      '</p>';});}
+// One line per *distinct* match, with a real separator. The previous version
+// concatenated kind + title + reason inside inline spans ("… Paristitre") and
+// repeated the same dossier for every hit.
+function recallKindLabel(kind){
+  return ({project:'dossier', task:'tâche', decision:'décision', note:'note',
+    source:'source', signal:'signal', change:'changement'})[kind] || kind;}
+function recallHitLabel(h){
+  // `reason` is already written for a human ("alias exact", "titre",
+  // "prochaine action"); the technical field name adds nothing here.
+  return '<div style="margin:.15rem 0"><span class="chip">'+
+    esc(recallKindLabel(h.kind))+'</span> '+esc(h.title)+
+    (h.reason?' <span class="muted">— '+esc(h.reason)+'</span>':'')+'</div>';}
+function recallHtml(res){
+  const dossiers=res.dossiers||[];
+  if(!dossiers.length){
+    return '<p class="muted">Aucun dossier. '+
+      'Cette information peut être capturée sans rien modifier.</p>'+
+      '<div class="bar"><button class="small" onclick="recallCapture()">'+
+      'Capturer cette information</button></div>';}
+  let h='<p class="muted">'+dossiers.length+' dossier(s) · dérivé du '+
+    'portefeuille, non canonique</p>';
+  dossiers.forEach(function(d){
+    const counts=d.counts||{};
+    h+='<div class="card" style="margin:.5rem 0;padding:.6rem .7rem">'+
+      '<div class="bar" style="justify-content:space-between">'+
+      '<strong>'+esc(d.title)+'</strong>'+
+      '<span class="pill">'+esc(t(d.status))+' · '+esc(t(d.health||''))+
+      '</span></div>'+
+      '<div class="muted">'+esc(d.domain||'')+' · '+counts.open+'/'+
+      counts.tasks+' ouvertes · '+counts.completed+' terminées'+
+      (d.deadline?' · échéance '+esc(d.deadline):'')+'</div>'+
+      (d.aliases&&d.aliases.length?'<div class="muted">alias : '+
+        esc(d.aliases.join(', '))+'</div>':'')+
+      recallSection('Prochaines actions',d.next_actions,'title')+
+      recallQuestions(d.questions)+
+      recallSection('Notes',d.notes,'title')+
+      recallSection('Bloqué',d.blocked,'title')+
+      recallSection('En attente',d.waiting,'title')+
+      recallSection('Sources',d.sources,'title')+
+      recallSection('Signaux',d.signals,'title')+
+      '<div class="bar"><button class="small" onclick="recallOpen(\''+
+      esc(d.project_id)+'\')">Ouvrir le dossier</button>'+
+      '<button class="small" onclick="recallCapture()">Ajouter une '+
+      'information</button></div></div>';});
+  // Deduplicate by object *and* by displayed text: an attached note and the
+  // signal that carried it show the same paragraph, which reads as noise.
+  const seen={};
+  const seenText={};
+  const matched=(res.results||[]).filter(function(r){
+    const key=r.kind+':'+r.ref_id;
+    if(seen[key])return false;
+    seen[key]=true;
+    const text=String(r.title||'').trim();
+    if(text&&seenText[text])return false;
+    seenText[text]=true;
+    return true;}).slice(0,6);
+  if(matched.length){
+    h+='<div class="detail-block"><h4>Correspondances ('+matched.length+
+      ')</h4><div class="body">';
+    matched.forEach(function(r){h+=recallHitLabel(r);});
+    h+='</div></div>';}
+  return h;}
+function recallQuestions(items){
+  if(!items||!items.length)return '';
+  let h='<div class="detail-block"><h4>Questions ouvertes ('+items.length+
+    ')</h4><div class="body">';
+  items.slice(0,5).forEach(function(q){
+    h+='- '+esc(q.text)+(q.answered?' <span class="muted">(réponse '+
+      'enregistrée)</span>':' <span class="muted">(sans réponse)</span>')+
+      '<br>';});
+  return h+'</div></div>';}
+function recallSection(label,items,key){
+  if(!items||!items.length)return '';
+  let h='<div class="detail-block"><h4>'+esc(label)+'</h4><div class="body">';
+  items.slice(0,5).forEach(function(item){
+    const text=item&&item[key]!=null?item[key]:String(item||'');
+    h+='- '+esc(text)+(item&&item.reason?' · '+esc(item.reason):'')+
+      (item&&item.state?' · '+esc(t(item.state)):'')+'<br>';});
+  return h+'</div></div>';}
+function recallOpen(projectId){
+  const id = 'project:' + projectId;
+  closeRecall();
+  // "Ouvrir le dossier" must produce a visible result. The Inspector is
+  // hidden when the pane is collapsed, and a project is not part of every view
+  // (Today lists tasks, not projects), so selecting alone changes nothing on
+  // screen. Switch to the listing view, drop the view filter that could hide
+  // the row, un-collapse the Inspector, then select and confirm.
+  S.search = '';
+  S.view = 'list';
+  S.showAdvanced = false;
+  ensureInspectorOpen();
+  selectObject(id);
+  persistPrefs({view: 'list'});
+  const o = obj(id);
+  notice('Dossier ouvert : ' + ((o && o.title) || projectId));
+}
+function recallCapture(){closeRecall();openCapture();}
 var COMMANDS=[
+  {kind:'action',label:'Contexte d’un dossier',hint:'retrouver et reprendre',
+   run:function(){closeCommandPalette();openRecall('');}},
   {kind:'action',label:'Capture rapide',hint:'texte, fichier, note',
    run:function(){closeCommandPalette();openCapture();}},
   {kind:'action',label:'Nouvelle tâche',hint:'créer une action',
@@ -4014,9 +4187,14 @@ function commandInput(value){
   S.commandTimer=setTimeout(function(){
     api('/api/search?q='+encodeURIComponent(query)+'&limit=20').then(
       function(res){
-        const results=(res.results||[]).map(function(r){
-          return {kind:r.kind,label:r.title,hint:r.hint||r.reason||'',
-            run:makeSearchRun(r.kind,r.ref_id)};});
+        const results=(res.dossiers||[]).slice(0,3).map(function(d){
+          return {kind:'dossier',label:d.title,
+            hint:'contexte · '+d.reason,
+            run:makeSearchRun('dossier',query)};});
+        (res.results||[]).forEach(function(r){
+          results.push({kind:r.kind,label:r.title,
+            hint:r.hint||r.reason||'',
+            run:makeSearchRun(r.kind,r.ref_id)});});
         const actions=COMMANDS.filter(function(c){
           return String(c.label).toLowerCase().indexOf(query.toLowerCase())
             >=0;});
@@ -4181,12 +4359,13 @@ function renderSignals(){
     '<div class="bar"><input id="signal-file" type="file" '+
     'accept=".odt,.docx,.pdf,.md,.markdown,.txt,.text,.eml,.mbox" '+
     'style="max-width:280px">'+
-    '<input id="signal-source" placeholder="source (ex. mail notaire)" '+
+    '<input id="signal-source" placeholder="source (ex. mail greffe)" '+
     'value="manuel" style="max-width:220px">'+
     '<select id="signal-project" class="inline">'+
     '<option value="">(aucun projet)</option>'+projectOpts+'</select>'+
     '<button class="small primary" onclick="analyzeSignal()">Analyser'+
-    '</button></div></div>';
+    '</button></div>'+
+    '<div id="intake-preview"></div></div>';
   const pendingCount=bundles.filter(function(b){
     return (b.proposals||[]).some(function(p){return p.state==='PENDING';});
   }).length;
@@ -4210,7 +4389,14 @@ async function postSignal(body){
         'Signal analysé · '+sources+' source(s) · '+proposals+
         ' proposition(s)'});
   }catch(err){notice(err.message);}}
-function analyzeSignal(){
+// --- paste -> propose -> validate -> attach (ADR-046) ------------------------
+//
+// The text path never writes on "Analyser": it asks the server for a dry
+// routing + proposal preview, shows the destination it *proposes* and why, and
+// waits for an explicit "Intégrer au dossier". A file still uses the immediate
+// signal path (its content is only known server-side after upload).
+let intakeState = null;
+async function analyzeSignal(){
   const source=($('signal-source').value||'manuel').trim()||'manuel';
   const project=$('signal-project').value||'';
   const file=$('signal-file').files[0];
@@ -4228,8 +4414,123 @@ function analyzeSignal(){
   }
   const text=$('signal-text').value;
   if(!text.trim()){notice('Colle un texte ou dépose un fichier');return;}
-  postSignal({text:text,source_ref:source,project_hint:project});
-}
+  if(project){postSignal({text:text,source_ref:source,project_hint:project});
+    return;}
+  try{
+    const res=await api('/api/intake','POST',{text:text,source_ref:source});
+    intakeState={text:text,source:source,route:res.route,
+      proposals:res.proposals||[],kinds:res.note_kinds||['NOTE'],
+      signal:res.signal};
+    renderIntake();
+  }catch(err){notice(err.message);}}
+function renderIntake(){
+  const el=$('intake-preview');if(!el)return;
+  if(!intakeState){el.innerHTML='';return;}
+  const route=intakeState.route;
+  const cands=route.candidates||[];
+  let h='<div class="card" style="margin-top:.6rem"><h4 style="margin:0 0 .4rem">'+
+    'Où ranger ce message ?</h4>';
+  if(!cands.length){
+    h+='<p class="muted">Aucun dossier ne correspond. Choisissez-en un '+
+      'ci-dessous ou renoncez.</p>';
+  }else if(route.abstain){
+    h+='<p class="muted">Rattachement non proposé : '+esc(route.reason)+
+      '. Choisissez le dossier si vous le savez.</p>';
+  }else{
+    h+='<p class="muted">Proposé : <strong>'+
+      esc(cands[0].title)+'</strong> — '+esc(cands[0].reason)+'</p>';
+  }
+  h+='<div class="bar">';
+  const chosen=route.abstain?null:cands[0].project_id;
+  cands.forEach(function(c,i){
+    const checked=(c.project_id===chosen)?' checked':'';
+    h+='<label class="small"><input type="radio" name="intake-project" '+
+      'value="'+esc(c.project_id)+'"'+checked+'> '+esc(c.title)+
+      ' <span class="muted">('+c.score+')</span></label>';
+  });
+  h+='</div>';
+  if(!cands.length){
+    h+='<div class="bar"><select id="intake-project-manual" class="inline">'+
+      objects().filter(function(o){return o.kind==='project';}).map(
+        function(o){return '<option value="'+esc(o.ref_id)+'">'+
+          esc(o.title)+'</option>';}).join('')+'</select></div>';
+  }
+  h+='<div class="bar"><input id="intake-alias" placeholder="mémoriser un '+
+    'alias (ex. nom de l\'expéditeur)" style="max-width:250px"></div>';
+  if(route.abstain){
+    h+='<div class="bar"><input id="intake-new-project" placeholder="créer '+
+      'un dossier pour ce message…" style="max-width:250px">'+
+      '<button class="small" onclick="createIntakeProject()">Créer ce '+
+      'dossier</button></div>';
+  }
+  h+='<div class="bar"><label class="small">Nature '+
+    '<select id="intake-kind" class="inline">'+
+    intakeState.kinds.map(function(k){return '<option value="'+esc(k)+'"'+
+      (k==='FACT'?' selected':'')+'>'+esc(t(k))+'</option>';}).join('')+
+    '</select></label></div>';
+  if(intakeState.proposals.length){
+    h+='<div class="detail-block"><h4>Propositions détectées ('+
+      intakeState.proposals.length+')</h4><div class="body">'+
+      intakeState.proposals.map(function(p){return '- '+esc(p.op)+' · '+
+        esc(p.title);}).join('<br>')+
+      '<br><span class="muted">Elles resteront à valider une par une dans '+
+      'la liste ci-dessous.</span></div></div>';
+  }else{
+    h+='<p class="muted">Aucune proposition : le message sera conservé '+
+      'comme note, sans rien modifier au portefeuille.</p>';
+  }
+  h+='<div class="bar"><button class="primary small" '+
+    'onclick="confirmIntake()">Intégrer au dossier</button>'+
+    '<button class="small" onclick="cancelIntake()">Annuler</button></div></div>';
+  el.innerHTML=h;}
+function intakeProject(){
+  const radios=document.querySelectorAll('input[name="intake-project"]');
+  for(let i=0;i<radios.length;i++){if(radios[i].checked)return radios[i].value;}
+  const manual=$('intake-project-manual');
+  return manual?manual.value:'';}
+function cancelIntake(){intakeState=null;renderIntake();}
+async function createIntakeProject(){
+  if(!intakeState)return;
+  const nameEl=$('intake-new-project');
+  const name=nameEl?String(nameEl.value||'').trim():'';
+  if(!name){notice('Donnez un nom au nouveau dossier');return;}
+  const kindEl=$('intake-kind');
+  const aliasEl=$('intake-alias');
+  try{
+    const created=await api('/api/projects','POST',{
+      name:name,objective:'Créé depuis un message collé.'});
+    const res=await api('/api/intake/confirm','POST',{
+      text:intakeState.text,source_ref:intakeState.source,
+      project_id:created.project_id,
+      note_kind:kindEl?kindEl.value:'NOTE',
+      remember_alias:aliasEl?(aliasEl.value||'').trim():''});
+    intakeState=null;
+    const el=$('signal-text');if(el)el.value='';
+    renderIntake();
+    await refresh({keepNotice:true,notice:'Dossier « '+name+
+      ' » créé · message intégré'+
+      (res.pending&&res.pending.length?' · '+res.pending.length+
+        ' proposition(s) à valider':'')});
+  }catch(err){notice(err.message);}}
+async function confirmIntake(){
+  if(!intakeState)return;
+  const project=intakeProject();
+  if(!project){notice('Choisissez un dossier');return;}
+  const kindEl=$('intake-kind');
+  try{
+    const aliasEl=$('intake-alias');
+    const res=await api('/api/intake/confirm','POST',{
+      text:intakeState.text,source_ref:intakeState.source,
+      project_id:project,note_kind:kindEl?kindEl.value:'NOTE',
+      remember_alias:aliasEl?(aliasEl.value||'').trim():''});
+    intakeState=null;
+    const el=$('signal-text');if(el)el.value='';
+    renderIntake();
+    await refresh({keepNotice:true,notice:
+      'Intégré au dossier · note conservée'+
+      (res.pending&&res.pending.length?' · '+res.pending.length+
+        ' proposition(s) à valider':''),actions:[]});
+  }catch(err){notice(err.message);}}
 async function acceptProposal(signalId,proposalId){
   try{await api('/api/signals/'+encodeURIComponent(signalId)+
       '/proposals/'+encodeURIComponent(proposalId)+'/accept','POST',{});
@@ -4426,7 +4727,7 @@ function openProjectUpdate(projectId){
     '<label>Risques</label><textarea id="up-risks" rows="2"></textarea>'+
     '<label>Décision</label><input id="up-decision" placeholder="ex. '+
     'continuer, défer, changer de périmètre">'+
-    '<label>Prochaine étape</label><input id="up-next" placeholder="ex. relancer le notaire">';
+    '<label>Prochaine étape</label><input id="up-next" placeholder="ex. relancer le greffe">';
   $('update-overlay').classList.add('open');}
 function closeProjectUpdate(){$('update-overlay').classList.remove('open');}
 async function saveProjectUpdate(){
@@ -4467,12 +4768,60 @@ function initKeyboardShortcuts(){
     if(e.key==='r'){e.preventDefault();boot();return;}
     if(e.key==='/'){e.preventDefault();
       const search=$('f-search');if(search)search.focus();return;}
+    if(e.key==='g'){e.preventDefault();openRecall('');return;}
     const selected=S.selection?obj(S.selection):null;
     if(e.key==='d'&&selected&&selected.kind==='task'){
       e.preventDefault();completeOutcome(selected.ref_id);return;}
     if(e.key==='s'&&selected&&selected.kind==='task'){
       e.preventDefault();recordOutcome(selected.ref_id,'DEFERRED');return;}
   });}
+// --- what to do now, even when the plan is empty --------------------------
+//
+// Reported from real use: opening the app showed zero planned tasks, so the
+// first screen answered nothing. Two causes, both legitimate: the working
+// window is over, or nothing is dimensioned. In both cases the screen must
+// still say what the three priorities are, and why they are not planned.
+function todayFallback(plan){
+  const over = Number(plan.remaining_plan_capacity||0) <= 0;
+  const candidates=(plan.deferred||[]).slice(0,3);
+  const pool=candidates.length?candidates:
+    (plan.unknown_effort||[]).slice(0,3);
+  let h='<div class="card" style="border-left:4px solid #f58518">'+
+    '<strong>'+(over?'Fenêtre de travail terminée pour aujourd’hui'
+      :'Rien n’est planifiable en l’état')+'</strong>';
+  if(over){
+    h+='<p class="muted" style="margin:.35rem 0">La capacité restante du jour '+
+      'est épuisée : le plan est vide, ce n’est pas une erreur. Voici les '+
+      'priorités à traiter en premier demain.</p>';
+  }else{
+    const unknown=(plan.unknown_effort||[]).length;
+    h+='<p class="muted" style="margin:.35rem 0">Aucune tâche ne peut être '+
+      'dimensionnée dans la capacité restante'+
+      (unknown?' ('+unknown+' prêtes sans estimation)':'')+
+      '. Aucun effort n’est inventé.</p>';
+  }
+  if(pool.length){
+    h+='<h4 style="margin:.5rem 0 .2rem">Les 3 premières priorités</h4><ul>';
+    pool.forEach(function(item){
+      h+='<li><a onclick="selectObject(\'task:'+esc(item.task_id)+'\')">'+
+        esc(item.title)+'</a>'+
+        (item.effort_minutes?' <span class="muted">'+fmtMin(
+          item.effort_minutes)+'</span>':'')+
+        (item.reasons&&item.reasons.length?'<div class="muted">'+
+          esc(reasonFr(item.reasons[0]))+'</div>':'')+'</li>';
+    });
+    h+='</ul>';
+  }else{
+    h+='<p class="muted">Aucune tâche prête : rien à proposer.</p>';
+  }
+  h+='<div class="bar">';
+  if(!over){h+='<button class="small primary" '+
+    'onclick="estimateUnestimated()">Estimer les tâches sans estimation</button>';}
+  h+='<button class="small" onclick="setView(\'tomorrow\')">Planifier demain'+
+    '</button><span class="muted">cliquez une priorité pour ouvrir son '+
+    'contexte</span></div></div>';
+  return h;}
+
 function renderToday(){
   const plan=S.views.today_plan;
   if(!plan){$('view-root').innerHTML='<p class="muted">aucun plan</p>';return;}
@@ -4490,6 +4839,7 @@ function renderToday(){
     '<span class="muted">sélectionnez des tâches ci-dessous pour un envoi '+
     'délibéré vers Super Productivity</span></div>';
   h+=agendaHtml(plan);
+  if(!planned.length){h+=todayFallback(plan);}
   h+=handoffSection();
   h+='<h3>Base recommandée (prêt et priorité)</h3>'+
     '<table><tr><th title="Sélection pour export">Exp.</th><th>#</th>'+
@@ -4499,8 +4849,8 @@ function renderToday(){
     planned.map(function(item,index){
       return decisionRow(obj('task:'+item.task_id),index+1,item.reasons);
     }).join('')+'</table>';
-  if(!planned.length){h+='<p class="muted">rien ne tient dans la capacité '+
-    'restante aujourd’hui</p>';}
+  if(!planned.length){h+='<p class="muted">Aucune tâche dimensionnée dans la '+
+    'capacité restante — voir les priorités ci-dessus.</p>';}
   if((plan.unknown_effort||[]).length){
     h+='<h3>Prêtes mais effort inconnu ('+plan.unknown_effort.length+')</h3>'+
       '<p class="muted">Elles peuvent être faites mais ne peuvent pas être '+
@@ -5078,17 +5428,43 @@ function capItemRow(item){
     '</div></div>';}
 function renderCapturePreview(res){
   const c=res.counts||{};const inst=res.instrumentation||{};
+  // A written message is not a list. Say it plainly and offer the right
+  // surface instead of a wall of "no clear signal" rows.
+  if(res.looks_like_message){
+    $('capture-preview').innerHTML='<div class="card" '+
+      'style="background:#fff7ed;border-color:#fdba74"><strong>'+
+      'Ce texte est un message écrit, pas une liste.</strong>'+
+      '<p class="muted" style="margin:.4rem 0">Il n’a pas été découpé : '+
+      'aucune tâche n’est proposée.</p>'+
+      '<div class="bar"><button class="small primary" '+
+      'onclick="captureToIntake()">Conserver et rattacher à un dossier'+
+      '</button></div>'+
+      '<p class="muted" style="margin:.4rem 0 0">Aperçu seulement · rien '+
+      'n’est écrit.</p></div>';
+    $('capture-actions').style.display='none';
+    return;}
   let h='<div class="card" style="background:#f8fafc"><strong>'+c.items+
-    '</strong> élément(s) · '+c.matched_existing+' correspondance(s) · '+
+    '</strong> ligne(s) à découper';
+  if(c.ignored){h+=' · '+c.ignored+' ignorée(s)';}
+  h+=' · '+c.matched_existing+' correspondance(s) · '+
     c.duplicates+' doublon(s) · '+c.new_tasks+' nouvelle(s) tâche(s) · '+
     c.possible_projects+' projet(s) possible(s) · '+c.possible_ideas+
-    ' idée(s) possible(s)<div class="muted">'+
-    'moteur '+esc(inst.engine||'')+' · modèle '+esc(inst.model||'')+' · '+
-    (inst.elapsed_ms||0)+'ms · coût $'+(inst.cost_usd||0)+
-    ' · aperçu seulement, rien n’est écrit</div></div>';
+    ' idée(s) possible(s)';
+  if(res.hint){h+='<div class="muted">'+esc(res.hint)+'</div>';}
+  h+='<div class="muted">aperçu seulement, rien n’est écrit</div></div>';
   h+=(res.items||[]).map(capItemRow).join('');
   $('capture-preview').innerHTML=h;
-  $('capture-actions').style.display='';}
+  $('capture-actions').style.display=(res.items||[]).length?'':'none';}
+// Hand the captured text to Intake: the content is preserved, the destination
+// becomes the human's choice (ADR-046).
+function captureToIntake(){
+  const text=($('capture-text')||{}).value||'';
+  closeCapture();
+  setView('signals');
+  const el=$('signal-text');
+  if(el){el.value=text;}
+  const src=$('signal-source');if(src)src.value='capture';
+  if(text.trim())analyzeSignal();}
 function captureDecisionFor(item){
   const action=$('cap-action-'+item.capture_id).value;
   const title=$('cap-title-'+item.capture_id).value;
@@ -5336,6 +5712,7 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "<tr><td>d</td><td>Terminer la tâche sélectionnée</td></tr>",
         "<tr><td>s</td><td>Reporter la tâche sélectionnée</td></tr>",
         "<tr><td>/</td><td>Recherche</td></tr>",
+        "<tr><td>g</td><td>Contexte d’un dossier</td></tr>",
         "<tr><td>Ctrl/Cmd+K</td><td>Palette de commandes</td></tr>",
         "</table><div class='bar' style='justify-content:flex-end'>",
         "<button class='primary' onclick='closeHelp()'>Fermer</button>",
@@ -5358,6 +5735,17 @@ def render_page(cockpit: engine.Cockpit) -> str:
         "style='max-width:900px'><div id='explain-body'></div>",
         "<div class='bar' style='justify-content:flex-end'>",
         "<button class='primary' onclick='closeExplain()'>Fermer</button>",
+        "</div></div></div>",
+        # Context Recall: a word -> the dossier and its resumable context
+        "<div class='overlay' id='recall-overlay'><div class='modal' ",
+        "style='max-width:920px'><h3>Contexte du dossier</h3>",
+        "<input id='recall-input' class='inline' style='width:100%' ",
+        "placeholder='un mot, un nom, un montant, une référence…' "
+        "autocomplete='off' ",
+        "onkeydown='recallKey(event)'>",
+        "<div id='recall-body'></div>",
+        "<div class='bar' style='justify-content:flex-end'>",
+        "<button onclick='closeRecall()'>Fermer</button>",
         "</div></div></div>",
         # Global search / command palette
         "<div class='overlay' id='command-overlay'><div class='command-panel'>",

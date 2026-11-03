@@ -224,6 +224,50 @@ It reports the real portfolio-health counts, then measures the explicit
 project-status repair on a temporary copy (the real portfolio is never
 modified).
 
+### Context Recall (V0.8)
+
+Context Recall answers the resumption question, not a keyword question:
+
+```bash
+scripts/mvp aliases --project mon-dossier --set "surnom, acronyme"  # declare synonyms
+scripts/mvp recall "surnom"                                        # word -> dossier
+```
+
+In the cockpit, `g` opens **Contexte du dossier**. A word, a name, an amount or
+an identifier resolves to the dossiers it points at, and each dossier shows its
+current status, health, open actions, blockers, external waiting, recent
+changes, linked inbound sources and the reason each match appeared. The panel
+is read-only and derived (`canonical: false`); nothing is written by a lookup.
+
+Aliases are **declared by the human**, never inferred: an alias is an exact
+identity match (score 110), above an exact title (100). This is what makes
+a word that exists only in your head resolve a dossier even though it appears
+nowhere in the stored data.
+Search now also covers decisions, inbound sources (`.eml`/`.mbox`/documents),
+signals, the change journal and imported vocabulary, with a derived index
+cached by file signature. See ADR-042, ADR-043 and ADR-044.
+
+Portfolio documents are now **schema v2** (additive `aliases`). A v1 document
+is read and upgraded in memory, and the first write takes a
+`pre-migration-v1` backup before persisting v2.
+
+### Paste a message (Intake, V0.9)
+
+**`i`** (Entrée → Signaux) → coller le message → **Analyser**.
+
+The screen then says where it thinks the message belongs, and why:
+
+- **« Proposé : ORCINVEST — … — le texte nomme « orcinvest » »** when it is sure;
+- **« Rattachement non proposé : score insuffisant »** when it is not — the
+  candidates remain clickable, but nothing is assigned silently;
+- re-pasting the same text is idempotent.
+
+**Intégrer au dossier** is the only write: it records the provenance (signal
+with hash), attaches the message as a searchable **note** to the dossier, and
+leaves every detected proposal to be accepted or rejected one by one.
+
+Before that click, nothing is written: `/api/intake` is a dry run (ADR-046).
+
 ### Quick Capture (daily input)
 
 ```bash
@@ -415,6 +459,7 @@ GET  /api/projects/{id}/timeline
 | `d` | complete selected task |
 | `s` | defer selected task |
 | `/` | search |
+| `g` | dossier context (Context Recall) |
 | `Ctrl/Cmd+K` | command palette |
 
 ### Documentation
@@ -422,7 +467,7 @@ GET  /api/projects/{id}/timeline
 - `GUIDE_UTILISATEUR.md` — step-by-step test plan for tomorrow;
 - `docs/guides/MVP_DAILY_GUIDE.md` — daily workflow;
 - `docs/guides/MVP_OPERATIONS.md` — backups, trash, sources, IMAP, privacy;
-- `docs/development/MVP_ROADMAP.md` — V0.0 → V0.7 status and exit criteria;
+- `docs/development/MVP_ROADMAP.md` — V0.0 → V0.8 status and exit criteria;
 - `docs/adr/README.md` — ADR index;
 - `CHANGELOG.md` — release-level summary.
 
@@ -434,6 +479,27 @@ scripts/mvp demo          # seed + plan + cockpit.html + cockpit.json
 
 Deterministic, privacy-safe: deadlines are relative to an injected date, no
 personal identifiers, no real amounts, no network access.
+
+### Usage simulation (all surfaces)
+
+```bash
+.venv/bin/python scripts/mvp_ui_simulation.py            # data root local_data/mvp
+.venv/bin/python scripts/mvp_ui_simulation.py --json     # machine output
+.venv/bin/python scripts/mvp_ui_simulation.py --skip-api # UI only
+```
+
+Drives the shipped page code in node against the real `/api/views` payload:
+every view, every entry surface (capture, forms, import, review, palette,
+recall, estimate, assistant, explain, update, outcome, export, detail sheet),
+the chained gestures of a session, and every HTTP route of the dashboard.
+
+It answers one question per surface: *did the shipped code run without
+throwing and produce something visible?* It is a screen-level contract check,
+not a browser and not a substitute for a human looking at the screen.
+
+The source data root is **never written**: the simulation works on a temporary
+copy. It is also a pytest gate, so a view or route that renders nothing fails
+the quality gate instead of being discovered in use.
 
 ## Operator product layer (M017-M019)
 

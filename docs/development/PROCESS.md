@@ -15,12 +15,17 @@ Every non-trivial change follows this sequence:
 1. **Issue** — state the goal, non-goals, acceptance criteria, constraints, and evidence required.
 2. **Branch** — create a focused branch from `main`.
 3. **Implementation** — make the smallest coherent change that satisfies the issue.
-4. **Quality gate** — run the single repository quality command.
-5. **Review** — inspect the diff, architecture implications, tests, and risks.
-6. **Pull request** — explain what changed, why, and how it was validated.
-7. **CI** — GitHub Actions must pass.
-8. **Merge** — merge only after acceptance criteria and Definition of Done are satisfied.
-9. **Evidence** — retain executable evidence that the milestone or feature works.
+4. **Quality gate** — run the single repository quality command (L1).
+5. **Surface check** — the headless usage simulation must report no anomaly for
+   every view, entry surface and route touched (L2).
+6. **Gesture acceptance** — the human performs the gesture on real data and
+   records the observed result in `docs/development/GESTURE_ACCEPTANCE.md`
+   (L3). Required for any change that adds or alters a user surface.
+7. **Review** — inspect the diff, architecture implications, tests, and risks.
+8. **Pull request** — explain what changed, why, and how it was validated.
+9. **CI** — GitHub Actions must pass.
+10. **Merge** — merge only after acceptance criteria and Definition of Done are satisfied.
+11. **Evidence** — retain executable evidence that the milestone or feature works.
 
 ## Branching
 
@@ -120,6 +125,14 @@ Examples:
 
 A milestone is closed only when its gate is demonstrably satisfied.
 
+## Completion
+
+A task is not complete because an agent reports success or because code was written.
+It is complete only when the acceptance criteria and `DEFINITION_OF_DONE.md` are satisfied.
+
+For a user-facing change, completion additionally requires a recorded gesture:
+see `GESTURE_ACCEPTANCE.md`.
+
 ## Continuous improvement
 
 When a recurring failure or inefficiency is discovered, prefer this loop:
@@ -128,6 +141,25 @@ When a recurring failure or inefficiency is discovered, prefer this loop:
 
 Update this process, `AGENTS.md`, tests, CI, or tooling so that important lessons become
 part of the system rather than relying on memory.
+
+### Worked example (2026-11-03)
+
+- **Incident** — five interface defects found by the user in one afternoon
+  (alias invisible in the visible search field, "open the dossier" with no
+  visible effect, wrong dossier proposed from an incidental mention, a
+  multi-word alias never matching, quick capture shredding a letter). The gate
+  was green throughout: 5 392 tests, Ruff, mypy.
+- **Lesson** — the tests proved that code runs, not that a gesture succeeds.
+  A second lesson followed: sequencing. The Phase 0 audit listed an attached
+  `Note` as change #1 of the smallest critical path; it was deferred to
+  "Phase 2" while everything around it shipped, which is why the loop felt
+  empty.
+- **Rule** — `GESTURE_ACCEPTANCE.md`: three evidence levels (L1 tests, L2
+  surface simulation, L3 human gesture), a pre-flight checklist built from
+  those five defects, and a register that a change cannot skip.
+- **Automation** — `tests/unit/test_mvp_ui_handlers.py` (no wired handler may
+  be undefined; no view may be targeted but undeclared or unreachable) and the
+  existing `scripts/mvp_ui_simulation.py` gate (117 surfaces).
 
 ## Human decision gates (Process V2)
 
