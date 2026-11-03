@@ -1,5 +1,18 @@
 # Changelog
 
+## V0.8.0 — Context Recall (2026-11-03)
+
+- alias de dossier déclarés par l’humain (schéma portefeuille v2) ;
+- migration v1 → v2 additive, avec sauvegarde `pre-migration-v1` avant la
+  première écriture ;
+- index de récupération unifié : projets, tâches, décisions, sources entrantes,
+  signaux, journal, vocabulaire d’import ;
+- explication du match (`matched_field` + `reason`) sur chaque résultat ;
+- resolver contextuel `mot → dossier → contexte de reprise` ;
+- panneau **Contexte du dossier** (touche `g`), palette groupée par dossier ;
+- commandes `mvp aliases` et `mvp recall` ;
+- cache d’index par signature de fichiers (recherche p50 ≈ 6 ms).
+
 ## V0.7.0 — Bounded Assistance (2026-10-28)
 
 - explication déterministe d’un projet ;

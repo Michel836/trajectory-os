@@ -224,6 +224,33 @@ It reports the real portfolio-health counts, then measures the explicit
 project-status repair on a temporary copy (the real portfolio is never
 modified).
 
+### Context Recall (V0.8)
+
+Context Recall answers the resumption question, not a keyword question:
+
+```bash
+scripts/mvp aliases --project mon-dossier --set "surnom, acronyme"  # declare synonyms
+scripts/mvp recall "surnom"                                        # word -> dossier
+```
+
+In the cockpit, `g` opens **Contexte du dossier**. A word, a name, an amount or
+an identifier resolves to the dossiers it points at, and each dossier shows its
+current status, health, open actions, blockers, external waiting, recent
+changes, linked inbound sources and the reason each match appeared. The panel
+is read-only and derived (`canonical: false`); nothing is written by a lookup.
+
+Aliases are **declared by the human**, never inferred: an alias is an exact
+identity match (score 110), above an exact title (100). This is what makes
+a word that exists only in your head resolve a dossier even though it appears
+nowhere in the stored data.
+Search now also covers decisions, inbound sources (`.eml`/`.mbox`/documents),
+signals, the change journal and imported vocabulary, with a derived index
+cached by file signature. See ADR-042, ADR-043 and ADR-044.
+
+Portfolio documents are now **schema v2** (additive `aliases`). A v1 document
+is read and upgraded in memory, and the first write takes a
+`pre-migration-v1` backup before persisting v2.
+
 ### Quick Capture (daily input)
 
 ```bash
@@ -415,6 +442,7 @@ GET  /api/projects/{id}/timeline
 | `d` | complete selected task |
 | `s` | defer selected task |
 | `/` | search |
+| `g` | dossier context (Context Recall) |
 | `Ctrl/Cmd+K` | command palette |
 
 ### Documentation
@@ -422,7 +450,7 @@ GET  /api/projects/{id}/timeline
 - `GUIDE_UTILISATEUR.md` — step-by-step test plan for tomorrow;
 - `docs/guides/MVP_DAILY_GUIDE.md` — daily workflow;
 - `docs/guides/MVP_OPERATIONS.md` — backups, trash, sources, IMAP, privacy;
-- `docs/development/MVP_ROADMAP.md` — V0.0 → V0.7 status and exit criteria;
+- `docs/development/MVP_ROADMAP.md` — V0.0 → V0.8 status and exit criteria;
 - `docs/adr/README.md` — ADR index;
 - `CHANGELOG.md` — release-level summary.
 

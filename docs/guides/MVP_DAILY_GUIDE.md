@@ -66,6 +66,22 @@ scripts/mvp dashboard --root chemin/vers/donnees
 
 ## 4. Pendant la journée
 
+### Retrouver un dossier (Context Recall)
+
+`g` ou commande **Contexte d’un dossier**.
+
+- saisir un mot, un nom, un montant ou une référence ;
+- les dossiers apparaissent, triés par meilleure correspondance ;
+- chaque dossier affiche son statut, sa santé, ses prochaines actions, ses
+  blocages, ses attentes, ses sources liées et la raison du match ;
+- **Ouvrir le dossier** pour reprendre le travail ;
+- **Ajouter une information** ouvre la capture sans quitter le dossier.
+
+Une recherche ne modifie rien. Si un mot connu n’est pas retrouvé, c’est que
+l’alias n’a pas été déclaré : ajoutez-le dans l’édition du projet
+(**Alias de recherche**) ou via
+`scripts/mvp aliases --project ID --set "surnom, acronyme"`.
+
 ### Capture rapide
 
 `c` ou bouton **Capture rapide**.
@@ -222,6 +238,7 @@ Résumé de la semaine, sans écriture.
 | `d` | terminer la tâche sélectionnée |
 | `s` | reporter la tâche sélectionnée |
 | `/` | recherche |
+| `g` | contexte d’un dossier |
 | `Ctrl/Cmd+K` | palette de commandes |
 
 ---

@@ -10,7 +10,7 @@ confidentialité.
 Sous le data root (par défaut `local_data/mvp/`) :
 
 ```text
-portfolio.json                 portefeuille canonique
+portfolio.json                 portefeuille canonique (schéma v2)
 outcomes.jsonl                 ledger append-only des résultats
 changes.jsonl                  journal des changements
 ui_state.json                  préférences de présentation
@@ -28,6 +28,32 @@ enrichment/                    suggestions IA par projet
 ```
 
 Le portefeuille reste la seule source de vérité métier.
+
+### Schéma du portefeuille
+
+`portfolio.json` est en **schéma v2** depuis V0.8 (ajout additif
+`projects[].aliases`). Un fichier v1 reste lisible : il est surchargé en
+mémoire et la **première** écriture prend une sauvegarde
+`portfolio-<horodatage>-pre-migration-v1.json` avant de persister le v2. Une
+version inconnue est refusée (`UNSUPPORTED_MVP_SCHEMA`).
+
+```bash
+scripts/mvp aliases                      # lister les alias déclarés
+scripts/mvp aliases --project mon-dossier  # alias d’un projet
+scripts/mvp aliases --project mon-dossier --set "surnom, acronyme"
+scripts/mvp recall "surnom" --json         # contexte résolu (lecture seule)
+```
+
+### Index de récupération
+
+L’index de recherche est **dérivé et reconstructible** : il est bâti depuis
+`portfolio.json`, `changes.jsonl`, `inbox/signals.jsonl`,
+`inbox/sources.jsonl` et `imports/*.json`, puis mis en cache par signature de
+fichiers (mtime + taille). Le supprimer ne coûte rien ; aucun index n’est une
+source de vérité.
+
+Un sidecar absent ou illisible est ignoré : la recherche reste disponible. Une
+requête de plus de 200 caractères est refusée, jamais tronquée.
 
 ---
 
