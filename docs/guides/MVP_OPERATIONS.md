@@ -241,6 +241,29 @@ TRAJECTORY_MVP_ASSISTANT_ENGINE=local
 
 ---
 
+## 8 bis. Vérifier toutes les surfaces
+
+Avant de conclure qu'une version est utilisable, lancer la simulation d'usage :
+
+```bash
+.venv/bin/python scripts/mvp_ui_simulation.py           # portefeuille par défaut
+.venv/bin/python scripts/mvp_ui_simulation.py --json    # sortie exploitable
+```
+
+Elle couvre les 24 vues, les 15 surfaces d'entrée (capture, formulaires, import,
+revue, palette, contexte, estimation, assistant, explication, mise à jour,
+résultat, export, fiche détaillée), 19 gestes enchaînés et toutes les routes
+HTTP du dashboard.
+
+- une racine de données **source n'est jamais modifiée** : tout passe par une
+  copie temporaire ;
+- elle répond à « le code livré s'exécute-t-il sans erreur et produit-il
+  quelque chose de visible ? » — pas à « est-ce que c'est agréable à l'usage » ;
+- un échec indique la surface exacte (vue, entrée, geste, route) et le message.
+
+Elle est aussi exécutée par le quality gate : une vue qui ne rend rien fait
+échouer `bash scripts/quality.sh`.
+
 ## 9. Dépannage
 
 ### Le dashboard ne s’ouvre pas

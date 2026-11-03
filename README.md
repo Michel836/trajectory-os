@@ -463,6 +463,27 @@ scripts/mvp demo          # seed + plan + cockpit.html + cockpit.json
 Deterministic, privacy-safe: deadlines are relative to an injected date, no
 personal identifiers, no real amounts, no network access.
 
+### Usage simulation (all surfaces)
+
+```bash
+.venv/bin/python scripts/mvp_ui_simulation.py            # data root local_data/mvp
+.venv/bin/python scripts/mvp_ui_simulation.py --json     # machine output
+.venv/bin/python scripts/mvp_ui_simulation.py --skip-api # UI only
+```
+
+Drives the shipped page code in node against the real `/api/views` payload:
+every view, every entry surface (capture, forms, import, review, palette,
+recall, estimate, assistant, explain, update, outcome, export, detail sheet),
+the chained gestures of a session, and every HTTP route of the dashboard.
+
+It answers one question per surface: *did the shipped code run without
+throwing and produce something visible?* It is a screen-level contract check,
+not a browser and not a substitute for a human looking at the screen.
+
+The source data root is **never written**: the simulation works on a temporary
+copy. It is also a pytest gate, so a view or route that renders nothing fails
+the quality gate instead of being discovered in use.
+
 ## Operator product layer (M017-M019)
 
 One unified operator CLI projects and controls the canonical goal-execution
