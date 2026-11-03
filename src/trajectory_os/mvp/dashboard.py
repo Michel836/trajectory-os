@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import binascii
 import contextlib
+import hashlib
 import json
 import os
 from collections.abc import Callable, Mapping
@@ -49,6 +50,9 @@ from trajectory_os.mvp import (
     trash,
     uistate,
     visualization,
+)
+from trajectory_os.mvp import (
+    intake as intake_module,
 )
 from trajectory_os.mvp import (
     recall as recall_module,
@@ -285,6 +289,26 @@ class Dashboard:
             "sensitivity": sensitive,
             "content_hash": signal["content_hash"],
         })
+        # A message usually carries questions, and questions are what make a
+        # dossier resumable. They are extracted deterministically and attached
+        # as their own notes, so the dossier can list them (ADR-045).
+        questions: list[dict[str, Any]] = []
+        for question in intake_module.extract_questions(text):
+            digest = hashlib.sha256(
+                question.encode("utf-8")).hexdigest()[:32]
+            created = mutations.add_note(self.root, {
+                "project_id": project_id,
+                "text": question,
+                "kind": model.NK_QUESTION,
+                "source_ref": source_ref,
+                "sensitivity": sensitive,
+                "content_hash": "q:" + digest,
+            })
+            questions.append({
+                "note_id": created["note_id"],
+                "text": question,
+                "duplicate": created["duplicate"],
+            })
         remembered = ""
         alias = payload.get("remember_alias")
         if isinstance(alias, str) and alias.strip():
@@ -315,6 +339,7 @@ class Dashboard:
             "signal_id": signal["signal_id"],
             "note": note,
             "remembered_alias": remembered,
+            "questions": questions,
             "applied": applied,
             "rejected": rejected,
             "pending": remaining,

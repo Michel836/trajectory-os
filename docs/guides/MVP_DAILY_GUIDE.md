@@ -96,6 +96,17 @@ l’alias n’a pas été déclaré : ajoutez-le dans l’édition du projet
   le découper : elle l’annonce et propose **« Conserver et rattacher à un
   dossier »**, qui bascule vers l’intake.
 
+### Ouvrir l'application : que faire maintenant ?
+
+**Aujourd'hui** répond toujours à « quoi faire », même quand rien n'est
+planifiable :
+
+- si la capacité restante est épuisée : « Fenêtre de travail terminée » et les
+  **3 priorités** à traiter en premier ;
+- si aucune tâche n'est dimensionnée : la même liste, avec
+  **Estimer les tâches sans estimation** ;
+- chaque priorité est cliquable : le contexte du dossier s'ouvre à droite.
+
 ### Coller un message (intake)
 
 **Entrée → Signaux** → coller le message → **Analyser**.
@@ -111,7 +122,9 @@ l’alias n’a pas été déclaré : ajoutez-le dans l’édition du projet
    correctement ;
 5. choisir la nature (fait, question, réponse, décision, référence, événement) ;
 6. **Intégrer au dossier** : le message devient une **note** du dossier,
-   cherchable, avec sa provenance ;
+   cherchable, avec sa provenance ; ses **questions** (phrases terminées par
+   « ? ») deviennent des notes de nature `QUESTION`, listées dans le contexte
+   du dossier sous « Questions ouvertes » ;
 7. les propositions détectées restent à valider une par une dans la liste.
 
 Un nom de dossier cité **au milieu** d'un texte ne suffit pas à le

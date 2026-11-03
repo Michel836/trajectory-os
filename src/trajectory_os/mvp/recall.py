@@ -691,6 +691,26 @@ def _context_for_project(root: str | Path, project_id: str,
         record for record in _safe_sources(root)
         if record.project_hint == project_id
     ][:MAX_CONTEXT_ITEMS]
+    portfolio = store.load_portfolio(root)
+    project_notes = portfolio.notes_of(project_id) if portfolio else ()
+    notes = [
+        {"note_id": note.note_id, "kind": note.kind, "title": note.title,
+         "captured_at": note.captured_at, "source_ref": note.source_ref}
+        for note in project_notes
+        if note.kind != model.NK_QUESTION
+    ][:MAX_CONTEXT_ITEMS]
+    # Open questions: a QUESTION note with no ANSWER note carrying the same
+    # source. There is no explicit link yet (that is the next increment), so the
+    # wording stays honest: "sans réponse enregistrée".
+    answered_sources = {note.source_ref for note in project_notes
+                        if note.kind == model.NK_ANSWER and note.source_ref}
+    questions = [
+        {"note_id": note.note_id, "text": note.text,
+         "captured_at": note.captured_at, "source_ref": note.source_ref,
+         "answered": note.source_ref in answered_sources}
+        for note in project_notes
+        if note.kind == model.NK_QUESTION
+    ][:MAX_CONTEXT_ITEMS]
     waiting = [
         item for item in explanation["blockers"]
         if item["state"] == readiness.RS_WAITING
@@ -713,6 +733,8 @@ def _context_for_project(root: str | Path, project_id: str,
             "open": explanation["open_tasks"],
             "completed": explanation["completed_tasks"],
         },
+        "notes": notes,
+        "questions": questions,
         "next_actions": explanation["next_actions"][:MAX_CONTEXT_ITEMS],
         "blocked": blocked,
         "waiting": waiting,

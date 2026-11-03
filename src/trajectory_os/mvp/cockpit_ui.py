@@ -4033,6 +4033,8 @@ function recallHtml(res){
       (d.aliases&&d.aliases.length?'<div class="muted">alias : '+
         esc(d.aliases.join(', '))+'</div>':'')+
       recallSection('Prochaines actions',d.next_actions,'title')+
+      recallQuestions(d.questions)+
+      recallSection('Notes',d.notes,'title')+
       recallSection('Bloqué',d.blocked,'title')+
       recallSection('En attente',d.waiting,'title')+
       recallSection('Sources',d.sources,'title')+
@@ -4048,6 +4050,15 @@ function recallHtml(res){
     matched.forEach(function(r){h+='<div>'+recallHitLabel(r)+'</div>';});
     h+='</div></div>';}
   return h;}
+function recallQuestions(items){
+  if(!items||!items.length)return '';
+  let h='<div class="detail-block"><h4>Questions ouvertes ('+items.length+
+    ')</h4><div class="body">';
+  items.slice(0,5).forEach(function(q){
+    h+='- '+esc(q.text)+(q.answered?' <span class="muted">(réponse '+
+      'enregistrée)</span>':' <span class="muted">(sans réponse)</span>')+
+      '<br>';});
+  return h+'</div></div>';}
 function recallSection(label,items,key){
   if(!items||!items.length)return '';
   let h='<div class="detail-block"><h4>'+esc(label)+'</h4><div class="body">';
@@ -4717,6 +4728,53 @@ function initKeyboardShortcuts(){
     if(e.key==='s'&&selected&&selected.kind==='task'){
       e.preventDefault();recordOutcome(selected.ref_id,'DEFERRED');return;}
   });}
+// --- what to do now, even when the plan is empty --------------------------
+//
+// Reported from real use: opening the app showed zero planned tasks, so the
+// first screen answered nothing. Two causes, both legitimate: the working
+// window is over, or nothing is dimensioned. In both cases the screen must
+// still say what the three priorities are, and why they are not planned.
+function todayFallback(plan){
+  const over = Number(plan.remaining_plan_capacity||0) <= 0;
+  const candidates=(plan.deferred||[]).slice(0,3);
+  const pool=candidates.length?candidates:
+    (plan.unknown_effort||[]).slice(0,3);
+  let h='<div class="card" style="border-left:4px solid #f58518">'+
+    '<strong>'+(over?'Fenêtre de travail terminée pour aujourd’hui'
+      :'Rien n’est planifiable en l’état')+'</strong>';
+  if(over){
+    h+='<p class="muted" style="margin:.35rem 0">La capacité restante du jour '+
+      'est épuisée : le plan est vide, ce n’est pas une erreur. Voici les '+
+      'priorités à traiter en premier demain.</p>';
+  }else{
+    const unknown=(plan.unknown_effort||[]).length;
+    h+='<p class="muted" style="margin:.35rem 0">Aucune tâche ne peut être '+
+      'dimensionnée dans la capacité restante'+
+      (unknown?' ('+unknown+' prêtes sans estimation)':'')+
+      '. Aucun effort n’est inventé.</p>';
+  }
+  if(pool.length){
+    h+='<h4 style="margin:.5rem 0 .2rem">Les 3 premières priorités</h4><ul>';
+    pool.forEach(function(item){
+      h+='<li><a onclick="selectObject(\'task:'+esc(item.task_id)+'\')">'+
+        esc(item.title)+'</a>'+
+        (item.effort_minutes?' <span class="muted">'+fmtMin(
+          item.effort_minutes)+'</span>':'')+
+        (item.reasons&&item.reasons.length?'<div class="muted">'+
+          esc(reasonFr(item.reasons[0]))+'</div>':'')+'</li>';
+    });
+    h+='</ul>';
+  }else{
+    h+='<p class="muted">Aucune tâche prête : rien à proposer.</p>';
+  }
+  h+='<div class="bar">';
+  if(!over){h+='<button class="small primary" '+
+    'onclick="estimateUnestimated()">Estimer les tâches sans estimation</button>';}
+  h+='<button class="small" onclick="setView(\'tomorrow\')">Planifier demain'+
+    '</button><span class="muted">cliquez une priorité pour ouvrir son '+
+    'contexte</span></div></div>';
+  return h;}
+
 function renderToday(){
   const plan=S.views.today_plan;
   if(!plan){$('view-root').innerHTML='<p class="muted">aucun plan</p>';return;}
@@ -4734,6 +4792,7 @@ function renderToday(){
     '<span class="muted">sélectionnez des tâches ci-dessous pour un envoi '+
     'délibéré vers Super Productivity</span></div>';
   h+=agendaHtml(plan);
+  if(!planned.length){h+=todayFallback(plan);}
   h+=handoffSection();
   h+='<h3>Base recommandée (prêt et priorité)</h3>'+
     '<table><tr><th title="Sélection pour export">Exp.</th><th>#</th>'+
@@ -4743,8 +4802,8 @@ function renderToday(){
     planned.map(function(item,index){
       return decisionRow(obj('task:'+item.task_id),index+1,item.reasons);
     }).join('')+'</table>';
-  if(!planned.length){h+='<p class="muted">rien ne tient dans la capacité '+
-    'restante aujourd’hui</p>';}
+  if(!planned.length){h+='<p class="muted">Aucune tâche dimensionnée dans la '+
+    'capacité restante — voir les priorités ci-dessus.</p>';}
   if((plan.unknown_effort||[]).length){
     h+='<h3>Prêtes mais effort inconnu ('+plan.unknown_effort.length+')</h3>'+
       '<p class="muted">Elles peuvent être faites mais ne peuvent pas être '+

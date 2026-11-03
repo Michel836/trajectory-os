@@ -21,7 +21,11 @@
 - capture rapide : un **message écrit** est refusé explicitement (au lieu de
   produire une douzaine de lignes « aucun signal »), avec bascule vers l’intake ;
 - capture rapide : salutation, signature et coordonnées **ignorées** et
-  comptées, motifs réécrits en français.
+  comptées, motifs réécrits en français ;
+- **questions ouvertes** : les phrases interrogatives d'un message collé
+  deviennent des notes `QUESTION`, listées dans le contexte du dossier ;
+- **Aujourd’hui** répond même à plan vide : « fenêtre terminée » ou « rien de
+  dimensionnable », puis les **3 priorités** cliquables et l’action d’estimation.
 
 ## V0.8.0 — Context Recall (2026-11-03)
 

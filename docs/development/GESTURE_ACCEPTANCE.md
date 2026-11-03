@@ -64,6 +64,33 @@ Un geste refusé par l'humain rouvre l'incrément, quel que soit l'état du gate
 Ces cinq lignes sont la justification de cette règle. Elles ne doivent pas
 disparaître : elles sont la preuve que L1+L2 ne suffisent pas.
 
+## 4 bis. Gestes d'acceptation V1 — en attente de L3
+
+Définis par l'utilisateur le 2026-11-03 comme la définition d'« utilisable ».
+Les trois doivent aboutir. **Aucun n'est coché : la colonne « Observé » est
+remplie par l'humain.**
+
+| # | Geste | Attendu | L1 | L2 | L3 (observé / verdict) |
+|---|---|---|---|---|---|
+| G1 | Je colle un message et je valide | il atterrit dans le bon dossier, et ses **questions ouvertes** sont listées | ✅ | ✅ | ☐ |
+| G2 | J'ouvre l'application | je vois **3 choses à faire**, avec le contexte à un clic | ✅ | ✅ | ☐ |
+| G3 | Je tape n'importe quel mot | je retrouve le dossier en **moins de 5 s** et je reprends | ✅ | ✅ | ☐ |
+
+Mesures de référence au 2026-11-03 (portefeuille réel, copie) :
+
+- **G1** — dossier proposé `orcinvest` avec la raison « le texte nomme
+  « orcinvest » (97 %) ; le texte contient l'alias « orc » » ; note attachée ;
+  **2 questions** extraites et listées dans le contexte du dossier.
+- **G2** — plan du jour vide (fenêtre de travail terminée, capacité restante
+  0 min) : l'écran affiche malgré tout **3 priorités cliquables** avec leur
+  effort et leur raison, plus « Estimer les tâches sans estimation ».
+- **G3** — `alvis`, `bioverify`, `mollie`, `companies house` → 1 à 5 résultats
+  en **6,5 à 6,8 ms**.
+
+Limites connues, à vérifier pendant la validation : un mot qui n'existe dans
+aucune donnée ni alias restera introuvable ; une question n'est pas encore
+reliée à sa réponse.
+
 ## 5. Format d'une entrée
 
 ```text

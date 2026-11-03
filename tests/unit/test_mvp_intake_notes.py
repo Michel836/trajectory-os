@@ -586,3 +586,123 @@ def test_create_a_dossier_then_attach_the_message(tmp_path: Path) -> None:
     assert "service social" in notes[0].text
     assert any(hit["kind"] == "note"
                for hit in recall.search(root, "service social")["results"])
+
+
+# --- (a) the dossier lists its open questions --------------------------------
+
+
+def test_extract_questions_is_deterministic_and_bounded() -> None:
+    from trajectory_os.mvp import intake
+
+    text = ("Bonjour.\n\n"
+            "Pouvez-vous me confirmer si le prénom doit être corrigé avant "
+            "la vérification ?\n\n"
+            "Et si cela couvre aussi Companies House ?\n\n"
+            "OK ?\n\n"
+            "Pouvez-vous me confirmer si le prénom doit être corrigé avant "
+            "la vérification ?")
+    questions = intake.extract_questions(text)
+    assert len(questions) == 2, questions
+    assert all(question.endswith("?") for question in questions)
+    assert "OK ?" not in questions
+    assert len(set(questions)) == len(questions)
+    assert intake.extract_questions(text, maximum=1) == questions[:1]
+    assert intake.extract_questions("") == []
+
+
+def test_confirm_creates_a_note_per_question(tmp_path: Path) -> None:
+    from test_mvp_dashboard_api import _request, _server
+
+    root = str(tmp_path)
+    _seed(root)
+    text = ("Mollie — AML\n\nBonjour.\n\n"
+            "Pouvez-vous confirmer si le prénom doit être corrigé avant la "
+            "vérification ?\n\n"
+            "Et si cela satisfait aussi Companies House pour le directeur ?\n")
+    with _server(root) as port:
+        status, done = _request(port, "POST", "/api/intake/confirm", {
+            "text": text, "source_ref": "email:mollie",
+            "project_id": "case-alpha", "note_kind": "FACT"})
+        assert status == 200
+        assert len(done["questions"]) == 2
+    portfolio = store.load_portfolio(root)
+    assert portfolio is not None
+    kinds = [note.kind for note in portfolio.notes_of("case-alpha")]
+    assert kinds.count(model.NK_QUESTION) == 2
+    assert model.NK_FACT in kinds
+
+
+def test_open_questions_appear_in_the_dossier_context(tmp_path: Path) -> None:
+    from test_mvp_dashboard_api import _request, _server
+
+    root = str(tmp_path)
+    _seed(root)
+    text = ("BioVerify\n\n"
+            "Pouvez-vous confirmer si le prénom doit être corrigé avant la "
+            "vérification ?\n")
+    with _server(root) as port:
+        _request(port, "POST", "/api/intake/confirm", {
+            "text": text, "source_ref": "email:mollie",
+            "project_id": "case-alpha", "note_kind": "FACT"})
+    payload = recall.resolve(root, "bioverify")
+    dossier = payload["dossiers"][0]
+    assert dossier["project_id"] == "case-alpha"
+    assert len(dossier["questions"]) == 1
+    assert dossier["questions"][0]["answered"] is False
+    assert dossier["notes"]
+
+
+def test_re_pasting_does_not_duplicate_questions(tmp_path: Path) -> None:
+    from test_mvp_dashboard_api import _request, _server
+
+    root = str(tmp_path)
+    _seed(root)
+    text = ("BioVerify\n\n"
+            "Pouvez-vous confirmer si le prénom doit être corrigé ?\n")
+    payload = {"text": text, "source_ref": "email:mollie",
+               "project_id": "case-alpha", "note_kind": "FACT"}
+    with _server(root) as port:
+        _request(port, "POST", "/api/intake/confirm", payload)
+        done = _request(port, "POST", "/api/intake/confirm", payload)[1]
+    assert all(question["duplicate"] for question in done["questions"])
+    portfolio = store.load_portfolio(root)
+    assert portfolio is not None
+    assert len(portfolio.notes_of("case-alpha")) == 2
+
+
+# --- (b) the first screen answers "what do I do?" ---------------------------
+
+
+def test_today_view_shows_three_priorities_when_nothing_is_planned() -> None:
+    from trajectory_os.mvp import cockpit_ui
+
+    js = cockpit_ui.PAGE_JS
+    assert "function todayFallback" in js
+    assert "Les 3 premières priorités" in js
+    assert "Fenêtre de travail terminée" in js
+    assert "Estimer les tâches sans estimation" in js
+    assert "todayFallback(plan)" in js
+
+
+def test_today_fallback_renders_on_a_planned_out_day(tmp_path: Path) -> None:
+    """With an elapsed working window and no estimate, the view still answers."""
+    from trajectory_os.mvp import model, store, visualization
+
+    root = str(tmp_path)
+    store.save_portfolio(root, model.Portfolio(
+        schema_version=model.SCHEMA_VERSION, name="t",
+        projects=(model.Project(project_id="p", name="Projet P",
+                                objective="o"),),
+        tasks=tuple(
+            model.Task(task_id=f"t{index}", project_id="p",
+                       title=f"Tâche {index}", estimated_minutes=30)
+            for index in range(3)),
+    ))
+    views = visualization.build_views(root)
+    plan = views["today_plan"]
+    # a plan with no planned task must carry the material for the fallback
+    assert plan["planned"] == []
+    assert plan["deferred"] or plan["unknown_effort"]
+    first = (plan["deferred"] or plan["unknown_effort"])[0]
+    for key in ("task_id", "title", "reasons"):
+        assert key in first
