@@ -985,6 +985,15 @@ const ADVANCED_VIEWS = {
   review:['heatmap','goal_flow']
 };
 const FR = {
+  // colour-by values and the small vocabulary reused by the Inspector
+  'domain':'domaine','project':'projet','status':'statut','urgency':'urgence',
+  'impact':'impact','Area/domain':'Domaine','Workstream':'Flux de travail',
+  'Work package':'Lot de travail','Readiness':'Prêt','Priority':'Priorité',
+  'Estimated':'Estimé','Actual':'Réel','Deadline':'Échéance',
+  'Next action':'Prochaine action','Prerequisites':'Dépend de',
+  'Dependencies':'Dépend de','Blockers':'Bloqué par','Waiting for':'En attente de',
+  'Downstream':'Débloque','Deliverables':'Livrable','Outcomes':'Résultats',
+  'Why':'Pourquoi','Notes':'Notes','Description':'Description',
   'Today':'Aujourd’hui','Inbox':'Entrée','Waiting':'En attente',
   'Decisions':'Décisions','Ready':'Prêt','Tomorrow':'Demain','Week':'Semaine',
   'List':'Liste','Kanban':'Kanban','WBS':'WBS',
