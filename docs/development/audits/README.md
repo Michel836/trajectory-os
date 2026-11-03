@@ -15,4 +15,7 @@ Audits preserve measured state before configuration changes; benchmark reports r
 - `AI_STACK_SCOPE_DISCOVERY_2026-08-28.md` — frozen unknown-scope substantive-feature benchmark: Pi passed cleanly; Aider demonstrated genuine repo-map scope discovery and disposable-index Git isolation, but only 1/3 isolated-index replications passed the full canonical gate, so Pi + Qwen3.8 remains the conservative default for unknown-scope substantive work.
 - `CONTEXT_RECALL_PHASE0_2026-11-03.md` — read-only repository audit (baseline 5310 tests, measured `alvis` miss, three coexisting domain models, multi-file atomicity debt) and the Phase 1 plan that became ADR-042/043/044.
 
+- `docs/development/GESTURE_ACCEPTANCE.md` — the rule derived from the five
+  interface defects found in real use on 2026-11-03, and its register.
+
 Do not commit raw local logs, hostnames, tokens, credentials, or personal/client data here.

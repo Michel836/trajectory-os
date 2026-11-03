@@ -46,6 +46,10 @@ Do not bypass this lifecycle for convenience.
 - Never commit personal or client data.
 - Every feature requires tests.
 - Run the canonical quality gate before declaring work complete.
+- **A UI increment is not delivered until the human has performed the gesture
+  on real data and described the result** (`docs/development/GESTURE_ACCEPTANCE.md`).
+- A green gate is never evidence of usage: it proves the code runs, not that
+  the gesture succeeds. Never report "functional" from tests alone.
 - Prefer typed Python.
 - Prefer explicit domain models.
 - Keep provider-specific integrations behind adapters.
@@ -95,3 +99,8 @@ Every substantial agent task should finish with:
 
 A task is not complete because an agent reports success. It is complete only when the
 acceptance criteria and applicable items in `docs/development/DEFINITION_OF_DONE.md` are satisfied.
+
+For any change that adds or alters a user surface, an additional condition applies:
+the human must have performed the gesture and recorded it in the register of
+`docs/development/GESTURE_ACCEPTANCE.md`. Until then the honest status is
+"gate green, gesture pending" — never "functional".
