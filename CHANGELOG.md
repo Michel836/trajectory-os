@@ -24,6 +24,9 @@
   comptées, motifs réécrits en français ;
 - **questions ouvertes** : les phrases interrogatives d'un message collé
   deviennent des notes `QUESTION`, listées dans le contexte du dossier ;
+- **Inspecteur** : la fiche montre les champs de **son** type d’objet (plus de
+  champs de tâche vides sur un projet), le nombre de notes et leur extrait, les
+  alias, et regroupe les actions secondaires ; libellés français ;
 - **Aujourd’hui** répond même à plan vide : « fenêtre terminée » ou « rien de
   dimensionnable », puis les **3 priorités** cliquables et l’action d’estimation.
 

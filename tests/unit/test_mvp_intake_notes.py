@@ -72,7 +72,8 @@ def _seed(root: str | Path) -> None:
         ),
         tasks=(
             model.Task(task_id="alpha.pay", project_id="case-alpha",
-                       title="Payer le cabinet", estimated_minutes=30),
+                       title="Payer le cabinet", estimated_minutes=30,
+                       next_action="Appeler le cabinet avant vendredi"),
             model.Task(task_id="beta.renew", project_id="case-beta",
                        title="Relancer le greffe", estimated_minutes=15),
         ),
@@ -769,3 +770,95 @@ def test_duplicate_correspondences_are_collapsed() -> None:
     assert "seenText" in js
     assert "Correspondances (" in js
     assert "recallKindLabel" in js
+
+
+# --- the Inspector must show the object that is selected ---------------------
+
+
+def _inspector_html(tmp_path: Path, keys: list[str]) -> dict[str, str]:
+    """Render the shipped Inspector for real objects, in node."""
+    import json
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - node is optional
+        pytest.skip("node not available")
+
+    from test_mvp_duplicate_ui import _STUBS
+
+    from trajectory_os.mvp import cockpit_ui, visualization
+
+    root = str(tmp_path)
+    _seed(root)
+    mutations.add_note(root, {
+        "project_id": "case-alpha",
+        "text": "Bonjour,\n\nLe cabinet a répondu favorablement.\n"})
+    views = visualization.build_views(root)
+    work = Path(tempfile.mkdtemp())
+    (work / "views.json").write_text(json.dumps(views), encoding="utf-8")
+    (work / "prefs.json").write_text(json.dumps(views["preferences"]),
+                                     encoding="utf-8")
+    script = work / "inspector.js"
+    script.write_text(_STUBS + "\n" + cockpit_ui.PAGE_JS + "\n" + r"""
+const fs = require('fs');
+S.views = JSON.parse(fs.readFileSync(process.env.VIEWS, 'utf8'));
+S.prefs = JSON.parse(fs.readFileSync(process.env.PREFS, 'utf8'));
+const out = {};
+JSON.parse(process.env.KEYS).forEach(function(key){
+  selectObject(key);
+  out[key] = $('inspector-body').innerHTML;
+});
+console.log('###OUT###' + JSON.stringify(out));
+""", encoding="utf-8")
+    result = subprocess.run(
+        [node, str(script)], capture_output=True, text=True, check=False,
+        env=dict(os.environ, VIEWS=str(work / "views.json"),
+                 PREFS=str(work / "prefs.json"), KEYS=json.dumps(keys)))
+    assert result.returncode == 0, result.stderr
+    for line in result.stdout.splitlines():
+        if line.startswith("###OUT###"):
+            return json.loads(line[len("###OUT###"):])
+    raise AssertionError("no inspector output")
+
+
+def test_project_inspector_has_no_task_only_fields(tmp_path: Path) -> None:
+    """A project sheet used to list every task field with an em dash."""
+    html = _inspector_html(tmp_path, ["project:case-alpha"])["project:case-alpha"]
+    text = html.replace("<", " <")
+    for forbidden in ("Réel", "Écart d’estimation", "Flux de travail",
+                      "Lot de travail", "Prêt", "Priorité"):
+        assert forbidden not in text, forbidden
+    # no placeholder row
+    assert ">—<" not in html
+    # the note that exists is shown, with its content and not the greeting
+    assert "Notes" in text
+    assert "Le cabinet a répondu" in text
+    assert "Bonjour" not in text
+    # and the aliases of the dossier are visible
+    assert "Alias de recherche" in text
+
+
+def test_task_inspector_keeps_its_own_fields(tmp_path: Path) -> None:
+    html = _inspector_html(tmp_path, ["task:alpha.pay"])["task:alpha.pay"]
+    text = html.replace("<", " <")
+    for expected in ("Projet", "Prêt", "Estimé", "Prochaine action",
+                     "Appeler le cabinet avant vendredi"):
+        assert expected in text, expected
+    assert ">—<" not in html
+
+
+def test_inspector_pills_are_separated_and_actions_grouped(
+        tmp_path: Path) -> None:
+    html = _inspector_html(tmp_path, ["project:case-alpha"])["project:case-alpha"]
+    # "ProjetFait" came from two pills emitted without any separator
+    assert "</span><span class=\"pill" not in html
+    # the wall of buttons is behind a disclosure
+    assert "<details" in html and "Plus d’actions" in html
+    assert "Surlignage personnel" in html
+    assert "Appliquer" in html
+    for english in ("Personal highlight", "Identity colour", "Apply",
+                    "AI engine", "Select a project or task"):
+        assert english not in html, english

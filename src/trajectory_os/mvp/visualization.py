@@ -32,6 +32,7 @@ from trajectory_os.intelligence import model as intel_model
 from trajectory_os.mvp import (
     calibration,
     changes,
+    classification,
     model,
     planning,
     project_review,
@@ -550,6 +551,14 @@ def _task_object(
     }
 
 
+def _note_excerpt(notes: Sequence[model.Note]) -> str:
+    """Readable excerpt of the newest note attached to a project."""
+    if not notes:
+        return ""
+    newest = max(notes, key=lambda note: (note.captured_at, note.note_id))
+    return classification.excerpt(newest.text)
+
+
 def _project_object(
     project: model.Project,
     tasks: Sequence[model.Task],
@@ -563,6 +572,7 @@ def _project_object(
     total = len(tasks)
     estimated = sum(task.estimated_minutes or 0 for task in tasks)
     actual = sum(task.actual_minutes or 0 for task in tasks)
+    project_notes = portfolio.notes_of(project.project_id)
     remaining = sum(task.estimated_minutes or 0 for task in tasks
                     if task.status not in model.TASK_TERMINAL_STATUSES)
     project_task_ids = {task.task_id for task in tasks}
@@ -598,6 +608,8 @@ def _project_object(
         "project": project.name,
         "domain": project.domain,
         "aliases": list(project.aliases),
+        "note_count": len(project_notes),
+        "note_latest": _note_excerpt(project_notes),
         "workstream": "",
         "work_package": "",
         "deliverable": "",
